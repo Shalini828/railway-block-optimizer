@@ -1,4 +1,4 @@
-import { Link } from "@tanstack/react-router";
+import { Link, useLocation } from "@tanstack/react-router";
 import {
   Activity,
   BarChart3,
@@ -27,8 +27,12 @@ const NAV = [
 
 export function AppShell({ children }: { children: ReactNode }) {
   const { role, setRole, signedIn, signIn, signOut } = useAbps();
+  const location = useLocation();
 
-  if (!signedIn) {
+  const isHomePage = location.pathname === "/";
+
+  // 1. NOT SIGNED IN & NOT ON HOME PAGE -> SHOW LOGIN SCREEN
+  if (!signedIn && !isHomePage) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background px-4 py-10">
         <div className="w-full max-w-xl rounded-xl border border-border bg-card p-8 shadow-[var(--shadow-panel)]">
@@ -69,6 +73,30 @@ export function AppShell({ children }: { children: ReactNode }) {
     );
   }
 
+  // 2. NOT SIGNED IN & ON HOME PAGE -> SHOW PUBLIC LANDING PAGE 
+  if (!signedIn && isHomePage) {
+    return (
+      <div className="min-h-screen bg-background text-foreground flex flex-col">
+        <header className="sticky top-0 z-20 border-b border-border bg-background/85 backdrop-blur px-6 py-4 flex items-center justify-between">
+           <div className="flex items-center gap-2">
+             <div className="rounded-md p-1.5" style={{ background: "var(--gradient-brain)" }}>
+               <TrainFront className="size-5 text-primary-foreground" />
+             </div>
+             <span className="font-semibold tracking-tight">IR-ABPS</span>
+           </div>
+           {/* Directs to a protected route to force the login prompt */}
+           <Button asChild size="sm">
+             <Link to="/optimizer">Sign In to Dashboard</Link>
+           </Button>
+        </header>
+        <main className="flex-1 px-4 py-10 sm:px-6 max-w-7xl mx-auto w-full">
+          {children}
+        </main>
+      </div>
+    );
+  }
+
+  // 3. SIGNED IN -> SHOW FULL SIDEBAR DASHBOARD LAYOUT
   return (
     <div className="min-h-screen bg-background text-foreground">
       <aside className="fixed inset-y-0 left-0 hidden w-64 flex-col border-r border-border bg-sidebar lg:flex">
