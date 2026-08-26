@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AnalyticsRouteImport } from './routes/analytics'
 import { Route as ConflictsRouteImport } from './routes/conflicts'
+import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as OptimizerRouteImport } from './routes/optimizer'
 import { Route as PlannerRouteImport } from './routes/planner'
 import { Route as RequestsRouteImport } from './routes/requests'
@@ -29,6 +30,11 @@ const AnalyticsRoute = AnalyticsRouteImport.update({
 const ConflictsRoute = ConflictsRouteImport.update({
   id: '/conflicts',
   path: '/conflicts',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DashboardRoute = DashboardRouteImport.update({
+  id: '/dashboard',
+  path: '/dashboard',
   getParentRoute: () => rootRouteImport,
 } as any)
 const OptimizerRoute = OptimizerRouteImport.update({
@@ -51,6 +57,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/analytics': typeof AnalyticsRoute
   '/conflicts': typeof ConflictsRoute
+  '/dashboard': typeof DashboardRoute
   '/optimizer': typeof OptimizerRoute
   '/planner': typeof PlannerRoute
   '/requests': typeof RequestsRoute
@@ -59,6 +66,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/analytics': typeof AnalyticsRoute
   '/conflicts': typeof ConflictsRoute
+  '/dashboard': typeof DashboardRoute
   '/optimizer': typeof OptimizerRoute
   '/planner': typeof PlannerRoute
   '/requests': typeof RequestsRoute
@@ -68,6 +76,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/analytics': typeof AnalyticsRoute
   '/conflicts': typeof ConflictsRoute
+  '/dashboard': typeof DashboardRoute
   '/optimizer': typeof OptimizerRoute
   '/planner': typeof PlannerRoute
   '/requests': typeof RequestsRoute
@@ -75,15 +84,28 @@ export interface FileRoutesById {
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    '/' | '/analytics' | '/conflicts' | '/optimizer' | '/planner' | '/requests'
+    | '/'
+    | '/analytics'
+    | '/conflicts'
+    | '/dashboard'
+    | '/optimizer'
+    | '/planner'
+    | '/requests'
   fileRoutesByTo: FileRoutesByTo
   to:
-    '/' | '/analytics' | '/conflicts' | '/optimizer' | '/planner' | '/requests'
+    | '/'
+    | '/analytics'
+    | '/conflicts'
+    | '/dashboard'
+    | '/optimizer'
+    | '/planner'
+    | '/requests'
   id:
     | '__root__'
     | '/'
     | '/analytics'
     | '/conflicts'
+    | '/dashboard'
     | '/optimizer'
     | '/planner'
     | '/requests'
@@ -93,6 +115,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AnalyticsRoute: typeof AnalyticsRoute
   ConflictsRoute: typeof ConflictsRoute
+  DashboardRoute: typeof DashboardRoute
   OptimizerRoute: typeof OptimizerRoute
   PlannerRoute: typeof PlannerRoute
   RequestsRoute: typeof RequestsRoute
@@ -119,6 +142,13 @@ declare module '@tanstack/react-router' {
       path: '/conflicts'
       fullPath: '/conflicts'
       preLoaderRoute: typeof ConflictsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dashboard': {
+      id: '/dashboard'
+      path: '/dashboard'
+      fullPath: '/dashboard'
+      preLoaderRoute: typeof DashboardRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/optimizer': {
@@ -149,6 +179,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AnalyticsRoute: AnalyticsRoute,
   ConflictsRoute: ConflictsRoute,
+  DashboardRoute: DashboardRoute,
   OptimizerRoute: OptimizerRoute,
   PlannerRoute: PlannerRoute,
   RequestsRoute: RequestsRoute,

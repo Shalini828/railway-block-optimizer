@@ -1,7 +1,7 @@
 // IR-ABPS mock data engine: departments, requisitions, corridors, trains, AI optimizer.
 
 export type Dept = "TMS" | "SMMS" | "TDMS";
-export type RoleId = "admin" | "track" | "snt" | "trd";
+export type RoleId = "admin" | "control" | "engineering" | "traction";
 
 export type Role = {
   id: RoleId;
@@ -14,31 +14,31 @@ export type Role = {
 export const ROLES: Role[] = [
   {
     id: "admin",
-    name: "Sr. DRM (Planning)",
-    title: "Chief Section Controller / DRM Planning",
+    name: "Senior Officer / DRM Planning",
+    title: "ADMIN / SENIOR OFFICER",
     dept: "COA",
-    system: "COA + BDMS",
+    system: "COA + BDMS (Full Authority)",
   },
   {
-    id: "track",
+    id: "control",
+    name: "Chief Controller",
+    title: "CONTROL OFFICE",
+    dept: "COA",
+    system: "COA Live Monitoring",
+  },
+  {
+    id: "engineering",
     name: "SSE / P.Way",
-    title: "Track Engineer (Engineering)",
+    title: "ENGINEERING TEAM",
     dept: "TMS",
-    system: "TMS",
+    system: "TMS Requisition Portal",
   },
   {
-    id: "snt",
-    name: "SSE / S&T",
-    title: "Signal & Telecom Engineer",
-    dept: "SMMS",
-    system: "SMMS",
-  },
-  {
-    id: "trd",
+    id: "traction",
     name: "SSE / TRD",
-    title: "Traction Distribution Engineer",
+    title: "TRACTION TEAM",
     dept: "TDMS",
-    system: "TDMS",
+    system: "TDMS Isolation & Power",
   },
 ];
 
@@ -367,8 +367,6 @@ export type AiPlanItem = {
   expectedDelay: number;
 };
 
-// ---- Algorithms -----------------------------------------------------------
-
 export function criticalityScore(r: Requisition): number {
   const crit = r.criticality === "High" ? 40 : r.criticality === "Medium" ? 25 : 12;
   const overdue = Math.min(r.daysOverdue * 2.2, 30);
@@ -405,7 +403,6 @@ export function runOptimizer(reqs: Requisition[]): {
     .map((r) => ({ ...r, score: criticalityScore(r) }))
     .sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
 
-  // Shadow clustering by section+line
   const groups = new Map<string, Requisition[]>();
   for (const r of scored) {
     const key = `${r.section}::${r.line}`;

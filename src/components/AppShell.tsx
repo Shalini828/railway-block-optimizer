@@ -5,19 +5,30 @@ import {
   BrainCircuit,
   CalendarRange,
   ClipboardList,
+  KeyRound,
   LayoutDashboard,
+  Lock,
   LogOut,
   ShieldAlert,
   TrainFront,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
+import { toast } from "sonner";
 import { useAbps } from "@/context/AbpsContext";
-import { ROLES } from "@/lib/abps-data";
+import { ROLES, type RoleId } from "@/lib/abps-data";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 const NAV = [
-  { to: "/", label: "Control Dashboard", icon: LayoutDashboard },
+  { to: "/dashboard", label: "Control Dashboard", icon: LayoutDashboard },
   { to: "/requests", label: "Requisition Portal", icon: ClipboardList },
   { to: "/optimizer", label: "IR-ABPS Brain", icon: BrainCircuit },
   { to: "/planner", label: "Gantt Planner", icon: CalendarRange },
@@ -26,77 +37,127 @@ const NAV = [
 ] as const;
 
 export function AppShell({ children }: { children: ReactNode }) {
-  const { role, setRole, signedIn, signIn, signOut } = useAbps();
+  const { role, signedIn, signIn, signOut } = useAbps();
   const location = useLocation();
 
+  const [selectedRoleId, setSelectedRoleId] = useState<RoleId>("admin");
+  const [password, setPassword] = useState("");
+  const [errorMsg, setErrorMsg] = useState("");
+
   const isHomePage = location.pathname === "/";
+
+  const handleLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (password === "12345") {
+      setErrorMsg("");
+      setPassword("");
+      signIn(selectedRoleId);
+      toast.success("Authenticated successfully.");
+    } else {
+      setErrorMsg("Incorrect password. Please enter the valid role password.");
+    }
+  };
 
   // 1. NOT SIGNED IN & NOT ON HOME PAGE -> SHOW LOGIN SCREEN
   if (!signedIn && !isHomePage) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background px-4 py-10">
-        <div className="w-full max-w-xl rounded-xl border border-border bg-card p-8 shadow-[var(--shadow-panel)]">
+        <div className="w-full max-w-md rounded-xl border border-border bg-card p-8 shadow-[var(--shadow-panel)]">
           <div className="flex items-center gap-3">
             <div className="rounded-lg p-2" style={{ background: "var(--gradient-brain)" }}>
               <TrainFront className="size-6 text-primary-foreground" />
             </div>
             <div>
               <h1 className="text-xl font-semibold">IR-ABPS Control Access</h1>
-              <p className="text-sm text-muted-foreground">
-                AI-Powered Automatic Block Planning System — Indian Railways
+              <p className="text-xs text-muted-foreground">
+                AI-Powered Automatic Block Planning System
               </p>
             </div>
           </div>
-          <p className="mt-6 text-sm text-muted-foreground">
-            Select a role to enter the control room. Role-based access controls which
-            approvals and department ledgers are available.
-          </p>
-          <div className="mt-5 grid gap-3">
-            {ROLES.map((r) => (
-              <button
-                key={r.id}
-                onClick={() => signIn(r.id)}
-                className="flex items-center justify-between rounded-lg border border-border bg-secondary/40 px-4 py-3 text-left transition-colors hover:border-primary hover:bg-accent"
+
+          <form onSubmit={handleLogin} className="mt-6 space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="role-select">Select Access Role</Label>
+              <Select
+                value={selectedRoleId}
+                onValueChange={(val) => {
+                  setSelectedRoleId(val as RoleId);
+                  setErrorMsg("");
+                }}
               >
-                <span>
-                  <span className="block text-sm font-medium">{r.title}</span>
-                  <span className="block text-xs text-muted-foreground">
-                    {r.name} · {r.system}
-                  </span>
-                </span>
-                <Badge variant="outline">1-Click Switch</Badge>
-              </button>
-            ))}
-          </div>
+                <SelectTrigger id="role-select" className="w-full">
+                  <SelectValue placeholder="Select role" />
+                </SelectTrigger>
+                <SelectContent>
+                  {ROLES.map((r) => (
+                    <SelectItem key={r.id} value={r.id}>
+                      {r.title}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="role-password">Role Password</Label>
+              <div className="relative">
+                <Input
+                  id="role-password"
+                  type="password"
+                  value={password}
+                  onChange={(e) => {
+                    setPassword(e.target.value);
+                    if (errorMsg) setErrorMsg("");
+                  }}
+                  placeholder="Enter role password"
+                  className="pr-10"
+                  required
+                />
+                <Lock className="absolute right-3 top-2.5 size-4 text-muted-foreground" />
+              </div>
+              {errorMsg && (
+                <p className="text-xs font-medium text-destructive">{errorMsg}</p>
+              )}
+            </div>
+
+            <Button type="submit" className="w-full">
+              <KeyRound className="mr-2 size-4" /> Sign In
+            </Button>
+
+            <div className="pt-2 text-center">
+              <Link to="/" className="text-xs text-muted-foreground hover:text-foreground">
+                ← Back to Homepage
+              </Link>
+            </div>
+          </form>
         </div>
       </div>
     );
   }
 
-  // 2. NOT SIGNED IN & ON HOME PAGE -> SHOW PUBLIC LANDING PAGE 
-  if (!signedIn && isHomePage) {
+  // 2. PUBLIC LANDING HEADER FOR HOMEPAGE (ONLY VISIBLE WHEN LOGGED OUT)
+  if (isHomePage && !signedIn) {
     return (
-      <div className="min-h-screen bg-background text-foreground flex flex-col">
-        <header className="sticky top-0 z-20 border-b border-border bg-background/85 backdrop-blur px-6 py-4 flex items-center justify-between">
-           <div className="flex items-center gap-2">
-             <div className="rounded-md p-1.5" style={{ background: "var(--gradient-brain)" }}>
-               <TrainFront className="size-5 text-primary-foreground" />
-             </div>
-             <span className="font-semibold tracking-tight">IR-ABPS</span>
-           </div>
-           {/* Directs to a protected route to force the login prompt */}
-           <Button asChild size="sm">
-             <Link to="/optimizer">Sign In to Dashboard</Link>
-           </Button>
+      <div className="flex min-h-screen flex-col bg-background text-foreground">
+        <header className="sticky top-0 z-20 flex items-center justify-between border-b border-border bg-background/85 px-6 py-4 backdrop-blur">
+          <Link to="/" className="flex items-center gap-2">
+            <div className="rounded-md p-1.5" style={{ background: "var(--gradient-brain)" }}>
+              <TrainFront className="size-5 text-primary-foreground" />
+            </div>
+            <span className="font-semibold tracking-tight">IR-ABPS</span>
+          </Link>
+          <Button asChild size="sm">
+            <Link to="/dashboard">Sign In to Dashboard</Link>
+          </Button>
         </header>
-        <main className="flex-1 px-4 py-10 sm:px-6 max-w-7xl mx-auto w-full">
+        <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-10 sm:px-6">
           {children}
         </main>
       </div>
     );
   }
 
-  // 3. SIGNED IN -> SHOW FULL SIDEBAR DASHBOARD LAYOUT
+  // 3. AUTHENTICATED DASHBOARD LAYOUT
   return (
     <div className="min-h-screen bg-background text-foreground">
       <aside className="fixed inset-y-0 left-0 hidden w-64 flex-col border-r border-border bg-sidebar lg:flex">
@@ -114,7 +175,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             <Link
               key={n.to}
               to={n.to}
-              activeOptions={{ exact: n.to === "/" }}
+              activeOptions={{ exact: n.to === "/dashboard" }}
               activeProps={{ className: "bg-accent text-accent-foreground" }}
               inactiveProps={{ className: "text-muted-foreground hover:bg-accent/60" }}
               className="flex items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-colors"
@@ -142,20 +203,8 @@ export function AppShell({ children }: { children: ReactNode }) {
               </p>
             </div>
             <div className="flex items-center gap-2">
-              <div className="hidden gap-1 sm:flex">
-                {ROLES.map((r) => (
-                  <Button
-                    key={r.id}
-                    size="sm"
-                    variant={r.id === role.id ? "default" : "outline"}
-                    onClick={() => setRole(r.id)}
-                  >
-                    {r.dept}
-                  </Button>
-                ))}
-              </div>
               <Button size="sm" variant="ghost" onClick={signOut}>
-                <LogOut className="size-4" /> Exit
+                <LogOut className="size-4" /> Sign Out
               </Button>
             </div>
           </div>
@@ -164,7 +213,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               <Link
                 key={n.to}
                 to={n.to}
-                activeOptions={{ exact: n.to === "/" }}
+                activeOptions={{ exact: n.to === "/dashboard" }}
                 activeProps={{ className: "bg-accent text-accent-foreground" }}
                 className="whitespace-nowrap rounded-md px-3 py-1.5 text-xs text-muted-foreground"
               >
