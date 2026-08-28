@@ -1,5 +1,6 @@
 import psycopg
-
+import os
+from dotenv import load_dotenv
 
 # ==========================================
 # SETTINGS
@@ -14,11 +15,11 @@ MAX_CONSOLIDATION_GAP = 15     # 15 minutes
 # ==========================================
 
 connection = psycopg.connect(
-    host="localhost",
-    port=5432,
-    dbname="railway_block_planning",
-    user="postgres",
-    password="REDACTED"
+    host=os.getenv("DB_HOST"),
+    port=os.getenv("DB_PORT"),
+    dbname=os.getenv("DB_NAME"),
+    user=os.getenv("DB_USER"),
+    password=os.getenv("DB_PASSWORD")
 )
 
 cursor = connection.cursor()
@@ -430,10 +431,10 @@ for group in groups:
 
     if duration > 0:
 
-       utilization = (
-    occupied_minutes
-    / MAX_BLOCK_DURATION
-) * 100
+        utilization = (
+            occupied_minutes
+            / duration
+        ) * 100
 
     else:
 

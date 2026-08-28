@@ -1,16 +1,17 @@
 import psycopg
-
+import os
+from dotenv import load_dotenv
 
 # ==========================================
 # DATABASE CONNECTION
 # ==========================================
 
 connection = psycopg.connect(
-    host="localhost",
-    port=5432,
-    dbname="railway_block_planning",
-    user="postgres",
-    password="REDACTED"
+    host=os.getenv("DB_HOST"),
+    port=os.getenv("DB_PORT"),
+    dbname=os.getenv("DB_NAME"),
+    user=os.getenv("DB_USER"),
+    password=os.getenv("DB_PASSWORD")
 )
 
 cursor = connection.cursor()
@@ -305,57 +306,42 @@ for index, conflict in enumerate(
         print(
             f"  Request A: {conflict['request_a']}"
         )
-
         print(
             f"  Task A   : {conflict['task_a']}"
         )
-
         print(
             f"  Time A   : {conflict['time_a']}"
         )
-
         print(
             f"  Request B: {conflict['request_b']}"
         )
-
         print(
             f"  Task B   : {conflict['task_b']}"
         )
-
         print(
             f"  Time B   : {conflict['time_b']}"
         )
-
-
     else:
-
         print(
             f"  Block    : {conflict['request_id']}"
         )
-
         print(
             f"  Task     : {conflict['task_id']}"
         )
-
         print(
             f"  Block time: {conflict['block_time']}"
         )
-
         print(
             f"  Train    : "
             f"{conflict['train_number']} "
             f"({conflict['train_name']})"
         )
-
         print(
             f"  Train type: {conflict['train_type']}"
         )
-
         print(
             f"  Train time: {conflict['train_time']}"
         )
-
-
     print("-" * 48)
 
 
@@ -377,21 +363,15 @@ severity_count = {
 
 
 for conflict in conflicts:
-
     severity = conflict["severity"]
-
     severity_count[severity] += 1
-
 
 for severity, count in severity_count.items():
 
     if count > 0:
-
         print(
             f"{severity:<10} {count} conflicts"
         )
-
-
 print()
 print("================================================")
 print("Unified conflict detection complete.")

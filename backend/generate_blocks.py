@@ -1,4 +1,6 @@
 import psycopg
+import os
+from dotenv import load_dotenv
 import random
 from datetime import date, time, timedelta
 
@@ -6,11 +8,11 @@ from datetime import date, time, timedelta
 TODAY = date(2026, 8, 27)
 
 connection = psycopg.connect(
-    host="localhost",
-    port=5432,
-    dbname="railway_block_planning",
-    user="postgres",
-    password="REDACTED"
+    host=os.getenv("DB_HOST"),
+    port=os.getenv("DB_PORT"),
+    dbname=os.getenv("DB_NAME"),
+    user=os.getenv("DB_USER"),
+    password=os.getenv("DB_PASSWORD")
 )
 
 cursor = connection.cursor()
