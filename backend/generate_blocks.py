@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 import random
 from datetime import date, time, timedelta
 
+load_dotenv()
 
 TODAY = date(2026, 8, 27)
 

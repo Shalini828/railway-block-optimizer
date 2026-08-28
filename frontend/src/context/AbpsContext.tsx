@@ -18,8 +18,18 @@ import {
   type RoleId,
 } from "@/lib/abps-data";
 
+type Train = {
+  id: string;
+  name: string;
+  type: string;
+  status: string;
+  corridor: string;
+  nextStation: string;
+};
+
 type Ctx = {
   role: Role;
+  trains: Train[];
   setRole: (id: RoleId) => void;
   signedIn: boolean;
   signIn: (id: RoleId) => void;
@@ -44,6 +54,7 @@ export function AbpsProvider({ children }: { children: ReactNode }) {
   const [role, setRoleState] = useState<Role>(ROLES[0] as Role);
   const [signedIn, setSignedIn] = useState(false);
   const [reqs, setReqs] = useState<Requisition[]>(REQUISITIONS);
+  const [trains, setTrains] = useState<Train[]>([]);
   const [plan, setPlan] = useState<AiPlanItem[]>([]);
   const [conflicts, setConflicts] = useState<Conflict[]>([]);
   const [signedOff, setSignedOff] = useState<string[]>([]);
@@ -90,9 +101,26 @@ export function AbpsProvider({ children }: { children: ReactNode }) {
     if (found) setRoleState(found);
   };
 
+  useEffect(() => {
+  fetch("http://127.0.0.1:8000/trains/")
+    .then((res) => {
+      if (!res.ok) {
+        throw new Error("Failed to fetch trains");
+      }
+      return res.json();
+    })
+    .then((data: Train[]) => {
+      setTrains(data);
+    })
+    .catch((error) => {
+      console.error("Train API error:", error);
+    });
+}, []);
+
   const value: Ctx = {
-    role,
-    setRole,
+  role,
+  setRole,
+  trains,
     signedIn,
     signIn: (id) => {
       setRole(id);

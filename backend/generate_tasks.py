@@ -3,6 +3,8 @@ import os
 from dotenv import load_dotenv
 from datetime import date
 
+load_dotenv()
+
 connection = psycopg.connect(
     host=os.getenv("DB_HOST"),
     port=os.getenv("DB_PORT"),
@@ -10,7 +12,6 @@ connection = psycopg.connect(
     user=os.getenv("DB_USER"),
     password=os.getenv("DB_PASSWORD")
 )
-
 
 cursor = connection.cursor()
 

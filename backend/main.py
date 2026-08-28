@@ -1,6 +1,10 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from routes.trains import router as trains_router
+from routes.block_requests import router as block_requests_router
+from routes.optimization import router as optimization_router
+from routes.conflict_detection import router as conflict_router
+from routes.optimized_plan import router as optimized_plan_router
 
 app = FastAPI(
     title="Railway Block Optimizer API",
@@ -11,7 +15,10 @@ app = FastAPI(
 # Allow React frontend to communicate with FastAPI
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=[
+    "http://localhost:8080",
+    "http://localhost:5173",
+],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -33,3 +40,7 @@ def health():
     }
 
 app.include_router(trains_router)
+app.include_router(block_requests_router)
+app.include_router(optimization_router)
+app.include_router(conflict_router)
+app.include_router(optimized_plan_router)

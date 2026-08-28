@@ -4,6 +4,8 @@ from dotenv import load_dotenv
 import random
 from datetime import date, timedelta
 
+load_dotenv()
+
 
 # -----------------------------
 # SETTINGS

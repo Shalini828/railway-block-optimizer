@@ -3,6 +3,7 @@ import os
 from dotenv import load_dotenv
 from faker import Faker
 
+load_dotenv()
 fake = Faker()
 
 # Connect to PostgreSQL
