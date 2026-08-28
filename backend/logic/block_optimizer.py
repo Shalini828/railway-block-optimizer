@@ -430,10 +430,10 @@ for group in groups:
 
     if duration > 0:
 
-        utilization = (
-            occupied_minutes
-            / duration
-        ) * 100
+       utilization = (
+    occupied_minutes
+    / MAX_BLOCK_DURATION
+) * 100
 
     else:
 
