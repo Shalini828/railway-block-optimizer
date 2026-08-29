@@ -161,7 +161,6 @@ def get_train_conflicts(
 
 groups = []
 
-
 for request in requests:
 
     (
@@ -279,10 +278,13 @@ for request in requests:
             }
         )
 
+print("GROUPS CREATED:", len(groups))
+
 
 # ==========================================
 # CREATE OPTIMIZED BLOCKS
 # ==========================================
+
 
 optimized_blocks = []
 
@@ -292,12 +294,13 @@ block_number = 1
 
 for group in groups:
 
+    print("PROCESSING GROUP:", group["corridor"], group["date"])
+
     corridor = group["corridor"]
     block_date = group["date"]
 
     start_time = group["start"]
     end_time = group["end"]
-
 
     start_minutes = time_to_minutes(
         start_time
@@ -307,16 +310,18 @@ for group in groups:
         end_time
     )
 
+    duration = end_minutes - start_minutes
 
-    duration = (
-        end_minutes - start_minutes
-    )
+    if duration < 0:
+        duration += 1440
 
 
     # ======================================
     # TRAIN CONFLICTS
-    # ======================================
 
+    # ======================================
+    # TRAIN CONFLICTS
+    # ======================================
     train_conflicts = get_train_conflicts(
         corridor,
         block_date,
@@ -372,7 +377,6 @@ for group in groups:
 
     intervals = []
 
-
     for request in group["requests"]:
 
         request_start = time_to_minutes(
@@ -382,6 +386,10 @@ for group in groups:
         request_end = time_to_minutes(
             request[6]
         )
+
+        # Handle overnight requests
+        if request_end < request_start:
+            request_end += 1440
 
         intervals.append(
             (
@@ -497,8 +505,42 @@ cursor.execute(
 # ==========================================
 # INSERT OPTIMIZED BLOCKS
 # ==========================================
-
 for block in optimized_blocks:
+
+    department_count = 0
+
+    if block["tasks"]:
+
+        task_ids = [
+            request[1]
+            for request in block["tasks"]
+        ]
+
+        cursor.execute(
+            """
+            SELECT COUNT(DISTINCT department)
+            FROM maintenance_tasks
+            WHERE task_id = ANY(%s)
+            """,
+            (task_ids,)
+        )
+
+        department_count = cursor.fetchone()[0]
+        print("DEPARTMENT COUNT:", department_count)
+
+    print(
+        "BEFORE INSERT:",
+        block["block_id"],
+        "CORRIDOR =", block["corridor"],
+        "DATE =", block["date"],
+        "START =", block["start"],
+        "END =", block["end"],
+        "DURATION =", block["duration"],
+        "UTILIZATION =", block["utilization"],
+        "TRAIN IMPACT =", block["train_impact"],
+        "TASKS =", len(block["tasks"]),
+        "DEPARTMENTS =", department_count
+    )
 
     cursor.execute(
         """
@@ -512,12 +554,13 @@ for block in optimized_blocks:
             duration_min,
             utilization_percent,
             train_impact_score,
-            number_of_tasks
+            number_of_tasks,
+            number_of_departments
         )
         VALUES
         (
             %s, %s, %s, %s, %s,
-            %s, %s, %s, %s
+            %s, %s, %s, %s, %s
         )
         """,
         (
@@ -529,9 +572,12 @@ for block in optimized_blocks:
             block["duration"],
             block["utilization"],
             block["train_impact"],
-            len(block["tasks"])
+            len(block["tasks"]),
+            department_count
         )
     )
+
+    print("OPTIMIZED BLOCK INSERTED:", block["block_id"])
 
 
     # ======================================
@@ -557,6 +603,20 @@ for block in optimized_blocks:
                 task_id
             )
         )
+    cursor.execute(
+    """
+    UPDATE optimized_blocks ob
+    SET number_of_departments = (
+        SELECT COUNT(DISTINCT mt.department)
+        FROM block_tasks bt
+        JOIN maintenance_tasks mt
+            ON bt.task_id = mt.task_id
+        WHERE bt.block_id = ob.block_id
+    )
+    WHERE ob.block_id = %s
+    """,
+    (block["block_id"],)
+)
 
 
     # ======================================
