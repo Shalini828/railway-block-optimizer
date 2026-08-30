@@ -5,6 +5,7 @@ from routes.block_requests import router as block_requests_router
 from routes.optimization import router as optimization_router
 from routes.conflict_detection import router as conflict_router
 from routes.optimized_plan import router as optimized_plan_router
+from routes.dashboard import router as dashboard_router
 
 app = FastAPI(
     title="Railway Block Optimizer API",
@@ -44,3 +45,4 @@ app.include_router(block_requests_router)
 app.include_router(optimization_router)
 app.include_router(conflict_router)
 app.include_router(optimized_plan_router)
+app.include_router(dashboard_router)

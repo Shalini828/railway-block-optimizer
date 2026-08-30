@@ -44,6 +44,12 @@ type Ctx = {
   approveAll: () => void;
   signedOff: string[];
   savedMinutes: number;
+  kpis: {
+    availability: string;
+    scheduled: number;
+    blockHours: string;
+    trainDelay: number;
+  };
 };
 
 const AbpsContext = createContext<Ctx | null>(null);
@@ -55,6 +61,32 @@ export function AbpsProvider({ children }: { children: ReactNode }) {
   const [signedIn, setSignedIn] = useState(false);
   const [reqs, setReqs] = useState<Requisition[]>(REQUISITIONS);
   const [trains, setTrains] = useState<Train[]>([]);
+  const [kpis, setKpis] = useState({
+  availability: "0.0",
+  scheduled: 0,
+  blockHours: "0.0",
+  trainDelay: 0,
+});
+  useEffect(() => {
+    fetch("http://127.0.0.1:8000/dashboard/kpis")
+      .then((res) => {
+        if (!res.ok) {
+          throw new Error("Failed to fetch dashboard KPIs");
+        }
+        return res.json();
+      })
+      .then((data) => {
+        setKpis({
+          availability: String(data.asset_availability_percent),
+          scheduled: data.scheduled_blocks,
+          blockHours: String(data.total_block_hours),
+          trainDelay: data.train_delay_impact_minutes,
+        });
+      })
+      .catch((error) => {
+        console.error("Dashboard KPI API error:", error);
+      });
+  }, []);
   const [plan, setPlan] = useState<AiPlanItem[]>([]);
   const [conflicts, setConflicts] = useState<Conflict[]>([]);
   const [signedOff, setSignedOff] = useState<string[]>([]);
@@ -167,7 +199,8 @@ export function AbpsProvider({ children }: { children: ReactNode }) {
       );
     },
     signedOff,
-    savedMinutes: plan.reduce((s, p) => s + p.savedMinutes, 0),
+savedMinutes: plan.reduce((s, p) => s + p.savedMinutes, 0),
+kpis,
   };
 
   return <AbpsContext.Provider value={value}>{children}</AbpsContext.Provider>;
@@ -180,15 +213,15 @@ export function useAbps() {
 }
 
 export function useKpis() {
-  const { reqs, savedMinutes, plan } = useAbps();
+  const { kpis } = useAbps();
+
   return useMemo(() => {
-    const scheduled = reqs.filter((r) => r.slot).length;
     return {
-      availability: (96.4 + Math.min(savedMinutes / 400, 2.1)).toFixed(1),
-      scheduled,
-      monthly: scheduled * 4 + 12,
-      shadowHours: (savedMinutes / 60).toFixed(1),
-      punctuality: Math.round(savedMinutes * 1.8 + plan.length * 12),
+      availability: kpis.availability,
+      scheduled: kpis.scheduled,
+      monthly: kpis.scheduled * 4,
+      shadowHours: kpis.blockHours,
+      punctuality: kpis.trainDelay,
     };
-  }, [reqs, savedMinutes, plan]);
+  }, [kpis]);
 }
