@@ -31,9 +31,22 @@ stations = [
 
 traffic_levels = ["LOW", "MEDIUM", "HIGH"]
 
+# Get valid division IDs from the database
+cursor.execute("""
+    SELECT division_id
+    FROM zones_divisions
+""")
+
+division_ids = [row[0] for row in cursor.fetchall()]
+
+if not division_ids:
+    print("❌ No divisions found!")
+    connection.close()
+    exit()
+
 for i, (source, destination) in enumerate(stations, start=2):
     corridor_id = f"C{i:02d}"
-    division_id = random.randint(1, 6)
+    division_id = random.choice(division_ids)
 
     corridor_name = f"{source}-{destination} Main Corridor"
 

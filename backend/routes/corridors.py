@@ -6,8 +6,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 router = APIRouter(
-    prefix="/trains",
-    tags=["Trains"]
+    prefix="/corridors",
+    tags=["Corridors"]
 )
 
 
@@ -22,25 +22,24 @@ def get_connection():
 
 
 @router.get("/")
-def get_trains():
+def get_corridors():
 
     conn = get_connection()
     cursor = conn.cursor()
 
     cursor.execute("""
         SELECT
-            train_id,
-            train_number,
-            train_name,
-            train_type,
             corridor_id,
-            travel_date,
-            arrival_time,
-            departure_time,
-            direction,
-            operational_priority
-        FROM trains
-        ORDER BY travel_date, departure_time
+            division_id,
+            corridor_name,
+            source_station,
+            destination_station,
+            distance_km,
+            traffic_level,
+            electrified,
+            max_block_duration_min
+        FROM corridors
+        ORDER BY corridor_id
     """)
 
     rows = cursor.fetchall()
@@ -50,18 +49,18 @@ def get_trains():
     cursor.close()
     conn.close()
 
-    trains = []
+    corridors = []
 
     for row in rows:
-        train = {}
+        corridor = {}
 
         for column, value in zip(columns, row):
-            train[column] = str(value) if value is not None else None
+            corridor[column] = str(value) if value is not None else None
 
-        trains.append(train)
+        corridors.append(corridor)
 
     return {
         "status": "success",
-        "train_count": len(trains),
-        "trains": trains
+        "corridor_count": len(corridors),
+        "corridors": corridors
     }

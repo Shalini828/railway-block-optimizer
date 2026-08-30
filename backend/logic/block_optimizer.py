@@ -645,11 +645,23 @@ for block in optimized_blocks:
             )
         )
 
-
 # ==========================================
 # SAVE
 # ==========================================
 
+# MARK PROCESSED REQUESTS AS OPTIMIZED
+for block in optimized_blocks:
+    for request in block["tasks"]:
+        request_id = request[0]
+
+        cursor.execute(
+            """
+            UPDATE block_requests
+            SET request_status = 'OPTIMIZED'
+            WHERE request_id = %s
+            """,
+            (request_id,)
+        )
 connection.commit()
 
 

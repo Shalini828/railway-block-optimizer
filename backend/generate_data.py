@@ -26,7 +26,8 @@ zones = [
     "Central Railway"
 ]
 
-for i, zone in enumerate(zones, start=2):
+for i, zone in enumerate(zones, start=1):
+    
     division_name = f"Division {i}"
     headquarters = fake.city()
 
