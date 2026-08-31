@@ -51,6 +51,7 @@ cursor.execute("""
     ORDER BY
         br.corridor_id,
         br.requested_date,
+        mt.priority_score DESC,
         br.requested_start
 """)
 
@@ -315,13 +316,10 @@ for group in groups:
     if duration < 0:
         duration += 1440
 
-
-    # ======================================
-    # TRAIN CONFLICTS
-
     # ======================================
     # TRAIN CONFLICTS
     # ======================================
+
     train_conflicts = get_train_conflicts(
         corridor,
         block_date,
@@ -329,13 +327,25 @@ for group in groups:
         end_time
     )
 
+    # ======================================
+    # SAFETY CONSTRAINT
+    # ======================================
+
+    if train_conflicts:
+        print(
+            "BLOCK REJECTED - TRAIN CONFLICT:",
+            corridor,
+            block_date,
+            start_time,
+            end_time
+        )
+        continue
 
     # ======================================
     # TRAIN IMPACT SCORE
     # ======================================
 
     train_impact_score = 0
-
 
     for train in train_conflicts:
 
@@ -475,15 +485,22 @@ for group in groups:
             "end": end_time,
             "duration": duration,
             "utilization": utilization,
-            "train_impact": train_impact_score,
+            "optimization_score": round(
+                (utilization * 0.5)
+                + ((100 - train_impact_score) * 0.5),
+                2
+            ),
             "tasks": group["requests"],
-            "train_conflicts": train_conflicts
+            "train_conflicts": train_conflicts,
+            "reason": (
+                f"Grouped {number_of_tasks} maintenance tasks on "
+                f"corridor {corridor} into a {duration}-minute maintenance block "
+                f"with {utilization}% utilization."
+            ),
         }
     )
 
-
     block_number += 1
-
 
 # ==========================================
 # DELETE PREVIOUS OPTIMIZATION
@@ -500,7 +517,6 @@ cursor.execute(
 cursor.execute(
     "DELETE FROM optimized_blocks"
 )
-
 
 # ==========================================
 # INSERT OPTIMIZED BLOCKS
@@ -537,7 +553,7 @@ for block in optimized_blocks:
         "END =", block["end"],
         "DURATION =", block["duration"],
         "UTILIZATION =", block["utilization"],
-        "TRAIN IMPACT =", block["train_impact"],
+        "TRAIN IMPACT =", block.get("train_impact", 0),
         "TASKS =", len(block["tasks"]),
         "DEPARTMENTS =", department_count
     )
@@ -554,13 +570,14 @@ for block in optimized_blocks:
             duration_min,
             utilization_percent,
             train_impact_score,
+            optimization_score,
             number_of_tasks,
             number_of_departments
         )
         VALUES
         (
             %s, %s, %s, %s, %s,
-            %s, %s, %s, %s, %s
+            %s, %s, %s, %s, %s, %s
         )
         """,
         (
@@ -571,7 +588,8 @@ for block in optimized_blocks:
             block["end"],
             block["duration"],
             block["utilization"],
-            block["train_impact"],
+            block.get("train_impact", 0),
+            block["optimization_score"],
             len(block["tasks"]),
             department_count
         )
@@ -706,7 +724,7 @@ for block in optimized_blocks:
         f"{str(block['end'])[:5]:<14}"
         f"{len(block['tasks']):<8}"
         f"{block['utilization']:<8}"
-        f"{block['train_impact']}"
+        f"{block.get('train_impact', 0)}"
     )
 
 
