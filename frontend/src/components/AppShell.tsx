@@ -33,6 +33,7 @@ const NAV = [
   { to: "/optimizer", label: "IR-ABPS Brain", icon: BrainCircuit },
   { to: "/planner", label: "Gantt Planner", icon: CalendarRange },
   { to: "/conflicts", label: "Conflicts & Approvals", icon: ShieldAlert },
+  { to: "/maintenance-tasks", label: "Maintenance Tasks", icon: ClipboardList },
   { to: "/analytics", label: "Impact Analytics", icon: BarChart3 },
 ] as const;
 

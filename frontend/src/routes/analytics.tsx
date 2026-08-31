@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
 import { Download, FileText } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -14,8 +15,8 @@ import {
   YAxis,
 } from "recharts";
 import { PageHeader } from "@/components/AppShell";
-import { useAbps, useKpis } from "@/context/AbpsContext";
-import { BLOCK_MIX, DAYS, DEPT_LABEL, UPTIME_SERIES, fmt } from "@/lib/abps-data";
+import { useAbps } from "@/context/AbpsContext";
+import { DAYS, DEPT_LABEL, fmt } from "@/lib/abps-data";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -45,10 +46,79 @@ export const Route = createFileRoute("/analytics")({
   }),
   component: AnalyticsPage,
 });
+type AnalyticsData = {
+  asset_availability_percent: number;
+  total_assets: number;
+  operational_assets: number;
+  scheduled_blocks: number;
+  total_block_hours: number;
+  train_delay_impact_minutes: number;
+  average_optimization_score: number;
+  single_department_blocks: number;
+  coordinated_blocks: number;
+  total_maintenance_tasks: number;
+  pending_maintenance_tasks: number;
+  completed_maintenance_tasks: number;
+  critical_maintenance_tasks: number;
 
+    department_availability: {
+    department: string;
+    total_assets: number;
+    operational_assets: number;
+    availability_percent: number;
+  }[];
+
+    post_block_report: {
+    block_id: string;
+    corridor_name: string;
+    source_station: string;
+    destination_station: string;
+    block_date: string;
+    start_time: string;
+    end_time: string;
+    duration_min: number;
+    train_impact_score: number;
+    optimization_score: number;
+    block_status: string;
+    departments: string;
+  }[];
+};
 function AnalyticsPage() {
-  const { reqs, plan } = useAbps();
-  const kpi = useKpis();
+  const { reqs } = useAbps();
+
+  const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
+
+  useEffect(() => {
+    fetch("http://127.0.0.1:8000/analytics/")
+      .then((res) => {
+        if (!res.ok) {
+          throw new Error("Failed to fetch analytics");
+        }
+        return res.json();
+      })
+      .then((data: AnalyticsData) => {
+        setAnalytics(data);
+      })
+      .catch((error) => {
+        console.error("Analytics API error:", error);
+        toast.error("Could not load analytics.");
+      });
+  }, []);
+     const blockMixData = analytics
+    ? [
+        {
+          type: "Blocks",
+          single: analytics.single_department_blocks,
+          coordinated: analytics.coordinated_blocks,
+        },
+      ]
+    : [];
+    const departmentAvailability = analytics
+  ? analytics.department_availability.map((item) => ({
+      department: item.department,
+      availability: item.availability_percent,
+    }))
+  : [];
 
   const download = (kind: "CSV" | "PDF") => {
     const rows = [
@@ -94,22 +164,47 @@ function AnalyticsPage() {
       />
 
       <div className="grid gap-4 sm:grid-cols-3">
-        <Kpi label="Asset availability" value={`${kpi.availability}%`} />
-        <Kpi label="Shadow savings" value={`${kpi.shadowHours} hrs`} />
-        <Kpi label="Delay minutes saved" value={`${kpi.punctuality} min`} />
-      </div>
+  <Kpi
+    label="Asset availability"
+    value={
+      analytics
+        ? `${analytics.asset_availability_percent}%`
+        : "Loading..."
+    }
+  />
+
+  <Kpi
+    label="Total block hours"
+    value={
+      analytics
+        ? `${analytics.total_block_hours} hrs`
+        : "Loading..."
+    }
+  />
+
+  <Kpi
+    label="Train delay impact"
+    value={
+      analytics
+        ? `${analytics.train_delay_impact_minutes} min`
+        : "Loading..."
+    }
+  />
+</div>
 
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Asset uptime — Track / Signal / OHE</CardTitle>
+            <CardTitle className="text-base">
+  Asset availability by department
+</CardTitle>
           </CardHeader>
           <CardContent className="h-72">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={UPTIME_SERIES}>
+              <LineChart data={departmentAvailability}>
                 <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" />
-                <XAxis dataKey="week" stroke="var(--muted-foreground)" fontSize={12} />
-                <YAxis domain={[92, 100]} stroke="var(--muted-foreground)" fontSize={12} />
+                <XAxis dataKey="department" stroke="var(--muted-foreground)" fontSize={12} />
+                <YAxis domain={[0, 100]} stroke="var(--muted-foreground)" fontSize={12} />
                 <Tooltip
                   contentStyle={{
                     background: "var(--card)",
@@ -119,9 +214,13 @@ function AnalyticsPage() {
                   }}
                 />
                 <Legend />
-                <Line type="monotone" dataKey="track" stroke="var(--eng)" strokeWidth={2} />
-                <Line type="monotone" dataKey="signal" stroke="var(--snt)" strokeWidth={2} />
-                <Line type="monotone" dataKey="ohe" stroke="var(--trd)" strokeWidth={2} />
+                <Line
+  type="monotone"
+  dataKey="availability"
+  name="Asset availability"
+  stroke="var(--primary)"
+  strokeWidth={2}
+/>
               </LineChart>
             </ResponsiveContainer>
           </CardContent>
@@ -135,9 +234,9 @@ function AnalyticsPage() {
           </CardHeader>
           <CardContent className="h-72">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={BLOCK_MIX}>
+              <BarChart data={blockMixData}>
                 <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" />
-                <XAxis dataKey="month" stroke="var(--muted-foreground)" fontSize={12} />
+                <XAxis dataKey="type" stroke="var(--muted-foreground)" fontSize={12} />
                 <YAxis stroke="var(--muted-foreground)" fontSize={12} />
                 <Tooltip
                   contentStyle={{
@@ -169,39 +268,54 @@ function AnalyticsPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Cluster</TableHead>
-                <TableHead>Section / Line</TableHead>
-                <TableHead>Departments</TableHead>
-                <TableHead>Window</TableHead>
-                <TableHead>Downtime saved</TableHead>
-                <TableHead>Expected delay</TableHead>
+                <TableHead>Block ID</TableHead>
+<TableHead>Route</TableHead>
+<TableHead>Departments</TableHead>
+<TableHead>Window</TableHead>
+<TableHead>Duration</TableHead>
+<TableHead>Train Impact</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {plan.map((p) => (
-                <TableRow key={p.clusterId}>
-                  <TableCell className="text-xs font-medium">{p.clusterId}</TableCell>
-                  <TableCell className="text-xs">
-                    {p.section} · {p.line}
-                  </TableCell>
-                  <TableCell className="text-xs">
-                    {p.depts.map((d) => DEPT_LABEL[d]).join(", ")}
-                  </TableCell>
-                  <TableCell className="text-xs">
-                    {DAYS[p.day]} {fmt(p.start)}–{fmt(p.end)}
-                  </TableCell>
-                  <TableCell className="text-xs text-safe">{p.savedMinutes} min</TableCell>
-                  <TableCell className="text-xs text-warn">{p.expectedDelay} min</TableCell>
-                </TableRow>
-              ))}
-              {plan.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={6} className="text-center text-sm text-muted-foreground">
-                    Run the optimization engine to generate the impact report.
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
+  {analytics?.post_block_report.map((p) => (
+    <TableRow key={p.block_id}>
+      <TableCell className="text-xs font-medium">
+        {p.block_id}
+      </TableCell>
+
+      <TableCell className="text-xs">
+        {p.source_station} → {p.destination_station}
+      </TableCell>
+
+      <TableCell className="text-xs">
+        {p.departments}
+      </TableCell>
+
+      <TableCell className="text-xs">
+        {p.block_date} {p.start_time.slice(0, 5)}–{p.end_time.slice(0, 5)}
+      </TableCell>
+
+      <TableCell className="text-xs">
+        {p.duration_min} min
+      </TableCell>
+
+      <TableCell className="text-xs text-warn">
+        {p.train_impact_score}
+      </TableCell>
+    </TableRow>
+  ))}
+
+  {(!analytics || analytics.post_block_report.length === 0) && (
+    <TableRow>
+      <TableCell
+        colSpan={6}
+        className="text-center text-sm text-muted-foreground"
+      >
+        Loading post-block report...
+      </TableCell>
+    </TableRow>
+  )}
+</TableBody>
           </Table>
         </CardContent>
       </Card>

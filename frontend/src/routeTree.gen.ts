@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AnalyticsRouteImport } from './routes/analytics'
 import { Route as ConflictsRouteImport } from './routes/conflicts'
 import { Route as DashboardRouteImport } from './routes/dashboard'
+import { Route as MaintenanceTasksRouteImport } from './routes/maintenance-tasks'
 import { Route as OptimizerRouteImport } from './routes/optimizer'
 import { Route as PlannerRouteImport } from './routes/planner'
 import { Route as RequestsRouteImport } from './routes/requests'
@@ -37,6 +38,11 @@ const DashboardRoute = DashboardRouteImport.update({
   path: '/dashboard',
   getParentRoute: () => rootRouteImport,
 } as any)
+const MaintenanceTasksRoute = MaintenanceTasksRouteImport.update({
+  id: '/maintenance-tasks',
+  path: '/maintenance-tasks',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const OptimizerRoute = OptimizerRouteImport.update({
   id: '/optimizer',
   path: '/optimizer',
@@ -58,6 +64,7 @@ export interface FileRoutesByFullPath {
   '/analytics': typeof AnalyticsRoute
   '/conflicts': typeof ConflictsRoute
   '/dashboard': typeof DashboardRoute
+  '/maintenance-tasks': typeof MaintenanceTasksRoute
   '/optimizer': typeof OptimizerRoute
   '/planner': typeof PlannerRoute
   '/requests': typeof RequestsRoute
@@ -67,6 +74,7 @@ export interface FileRoutesByTo {
   '/analytics': typeof AnalyticsRoute
   '/conflicts': typeof ConflictsRoute
   '/dashboard': typeof DashboardRoute
+  '/maintenance-tasks': typeof MaintenanceTasksRoute
   '/optimizer': typeof OptimizerRoute
   '/planner': typeof PlannerRoute
   '/requests': typeof RequestsRoute
@@ -77,6 +85,7 @@ export interface FileRoutesById {
   '/analytics': typeof AnalyticsRoute
   '/conflicts': typeof ConflictsRoute
   '/dashboard': typeof DashboardRoute
+  '/maintenance-tasks': typeof MaintenanceTasksRoute
   '/optimizer': typeof OptimizerRoute
   '/planner': typeof PlannerRoute
   '/requests': typeof RequestsRoute
@@ -88,6 +97,7 @@ export interface FileRouteTypes {
     | '/analytics'
     | '/conflicts'
     | '/dashboard'
+    | '/maintenance-tasks'
     | '/optimizer'
     | '/planner'
     | '/requests'
@@ -97,6 +107,7 @@ export interface FileRouteTypes {
     | '/analytics'
     | '/conflicts'
     | '/dashboard'
+    | '/maintenance-tasks'
     | '/optimizer'
     | '/planner'
     | '/requests'
@@ -106,6 +117,7 @@ export interface FileRouteTypes {
     | '/analytics'
     | '/conflicts'
     | '/dashboard'
+    | '/maintenance-tasks'
     | '/optimizer'
     | '/planner'
     | '/requests'
@@ -116,6 +128,7 @@ export interface RootRouteChildren {
   AnalyticsRoute: typeof AnalyticsRoute
   ConflictsRoute: typeof ConflictsRoute
   DashboardRoute: typeof DashboardRoute
+  MaintenanceTasksRoute: typeof MaintenanceTasksRoute
   OptimizerRoute: typeof OptimizerRoute
   PlannerRoute: typeof PlannerRoute
   RequestsRoute: typeof RequestsRoute
@@ -151,6 +164,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DashboardRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/maintenance-tasks': {
+      id: '/maintenance-tasks'
+      path: '/maintenance-tasks'
+      fullPath: '/maintenance-tasks'
+      preLoaderRoute: typeof MaintenanceTasksRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/optimizer': {
       id: '/optimizer'
       path: '/optimizer'
@@ -180,6 +200,7 @@ const rootRouteChildren: RootRouteChildren = {
   AnalyticsRoute: AnalyticsRoute,
   ConflictsRoute: ConflictsRoute,
   DashboardRoute: DashboardRoute,
+  MaintenanceTasksRoute: MaintenanceTasksRoute,
   OptimizerRoute: OptimizerRoute,
   PlannerRoute: PlannerRoute,
   RequestsRoute: RequestsRoute,
