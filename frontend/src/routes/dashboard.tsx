@@ -10,8 +10,6 @@ import {
 } from "lucide-react";
 
 import { PageHeader } from "@/components/AppShell";
-import { useAbps, useKpis } from "@/context/AbpsContext";
-import { CORRIDORS, RISK_RADAR } from "@/lib/abps-data";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -22,6 +20,10 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
+
+// ============================================================
+// ROUTE
+// ============================================================
 
 export const Route = createFileRoute("/dashboard")({
   head: () => ({
@@ -42,80 +44,289 @@ export const Route = createFileRoute("/dashboard")({
   component: DashboardPage,
 });
 
-type Train = {
-  id: string;
-  name: string;
-  type: string;
-  status: string;
-  corridor: string;
-  nextStation: string;
+// ============================================================
+// TYPES
+// ============================================================
+
+type KPIData = {
+  overall_asset_availability: number;
+  scheduled_blocks: number;
+  shadow_block_savings: number;
+  punctuality_impact_index: number;
 };
 
+type CorridorStatus = {
+  id: string;
+  name: string;
+  from: string;
+  to: string;
+  trains_running: number;
+  window: string;
+  traffic_intensity: number;
+  tracks: string[];
+};
+
+type UrgentRisk = {
+  id: string;
+  title: string;
+  severity: string;
+  location: string;
+  description: string;
+};
+
+type TrainForecast = {
+  id: string;
+  train: string;
+  corridor: string;
+  status: string;
+  time?: string;
+  expected?: string;
+};
+
+type RequisitionPipeline = {
+  pending_ai_scheduling: number;
+  clustered_shadowed: number;
+  approved: number;
+  active: number;
+  completed: number;
+};
+
+type DashboardResponse = {
+  status: string;
+
+  kpis: KPIData;
+
+  corridor_status: CorridorStatus[];
+
+  urgent_risks: UrgentRisk[];
+
+  train_forecast: TrainForecast[];
+
+  requisition_pipeline: RequisitionPipeline;
+};
+
+// ============================================================
+// DASHBOARD
+// ============================================================
+
 function DashboardPage() {
-  const kpi = useKpis();
+  const [dashboardData, setDashboardData] =
+    useState<DashboardResponse | null>(null);
 
-  // Only get requisitions from AbpsContext.
-  // Trains are fetched directly from the backend API below.
-  const { reqs } = useAbps();
+  const [loading, setLoading] = useState(true);
 
-  const [trains, setTrains] = useState<Train[]>([]);
-  const [loadingTrains, setLoadingTrains] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  // Fetch live train data from FastAPI backend
+  // ==========================================================
+  // FETCH DASHBOARD DATA
+  // ==========================================================
+
   useEffect(() => {
-    fetch("http://127.0.0.1:8000/trains/")
-      .then((res) => {
-        if (!res.ok) {
-          throw new Error("Failed to fetch trains");
+    let cancelled = false;
+
+    const loadDashboard = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+
+        const response = await fetch(
+          "http://127.0.0.1:8000/dashboard/kpis",
+        );
+
+        if (!response.ok) {
+          throw new Error(
+            `Dashboard API returned ${response.status}`,
+          );
         }
 
-        return res.json();
-      })
-      .then((data: Train[]) => {
-        setTrains(data);
-      })
-      .catch((error) => {
-        console.error("Error fetching trains:", error);
-      })
-      .finally(() => {
-        setLoadingTrains(false);
-      });
+        const data: DashboardResponse =
+          await response.json();
+
+        if (cancelled) return;
+
+        console.log(
+          "Dashboard API data:",
+          data,
+        );
+
+        setDashboardData(data);
+      } catch (err) {
+        console.error(
+          "Error fetching dashboard data:",
+          err,
+        );
+
+        if (!cancelled) {
+          setError(
+            "Unable to load dashboard data from the backend.",
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
+
+    loadDashboard();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
+  // ==========================================================
+  // LOADING STATE
+  // ==========================================================
+
+  if (loading) {
+    return (
+      <div className="flex min-h-[400px] items-center justify-center">
+        <div className="text-sm text-muted-foreground">
+          Loading dashboard data...
+        </div>
+      </div>
+    );
+  }
+
+  // ==========================================================
+  // ERROR STATE
+  // ==========================================================
+
+  if (error || !dashboardData) {
+    return (
+      <div className="space-y-4">
+        <PageHeader
+          title="Central Executive Dashboard"
+          subtitle="Unified COA + BDMS uptime centre for the New Delhi – Varanasi corridor."
+        />
+
+        <Card>
+          <CardContent className="flex min-h-[200px] items-center justify-center">
+            <div className="text-center">
+              <AlertTriangle className="mx-auto mb-3 size-8 text-destructive" />
+
+              <p className="text-sm font-medium">
+                {error ||
+                  "Dashboard data is unavailable."}
+              </p>
+
+              <p className="mt-1 text-xs text-muted-foreground">
+                Make sure the FastAPI backend is running on
+                127.0.0.1:8000.
+              </p>
+
+              <Button
+                className="mt-4"
+                onClick={() =>
+                  window.location.reload()
+                }
+              >
+                Retry
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  const {
+    kpis: apiKpis,
+    corridor_status,
+    urgent_risks,
+    train_forecast,
+    requisition_pipeline,
+  } = dashboardData;
+
+  // ==========================================================
+  // KPI CARDS
+  // ==========================================================
 
   const kpis = [
     {
       label: "Overall Asset Availability",
-      value: `${kpi.availability}%`,
+      value: `${apiKpis.overall_asset_availability}%`,
       note: "Track + Signal + OHE composite",
       icon: Gauge,
       tone: "text-safe",
     },
+
     {
       label: "Scheduled Blocks",
-      value: `${kpi.scheduled} / wk`,
-      note: `${kpi.monthly} projected this month`,
+      value: `${apiKpis.scheduled_blocks} / wk`,
+      note: "Projected this month",
       icon: Layers,
       tone: "text-trd",
     },
+
     {
       label: "Shadow Block Savings",
-      value: `${kpi.shadowHours} hrs`,
+      value: `${apiKpis.shadow_block_savings} hrs`,
       note: "Gained via joint coordinated work",
       icon: Clock,
       tone: "text-joint",
     },
+
     {
       label: "Punctuality Impact Index",
-      value: `${kpi.punctuality} min`,
+      value: `${apiKpis.punctuality_impact_index} min`,
       note: "Train delay minutes saved",
       icon: TrainFront,
       tone: "text-warn",
     },
   ];
 
+  // ==========================================================
+  // PIPELINE DATA
+  // ==========================================================
+
+  const pipeline = [
+    {
+      label: "Pending AI Scheduling",
+      value:
+        requisition_pipeline.pending_ai_scheduling,
+    },
+
+    {
+      label: "Clustered / Shadowed",
+      value:
+        requisition_pipeline.clustered_shadowed,
+    },
+
+    {
+      label: "Approved",
+      value: requisition_pipeline.approved,
+    },
+
+    {
+      label: "Active",
+      value: requisition_pipeline.active,
+    },
+
+    {
+      label: "Completed",
+      value: requisition_pipeline.completed,
+    },
+  ];
+
+  const pipelineTotal = Math.max(
+    pipeline.reduce(
+      (sum, item) => sum + item.value,
+      0,
+    ),
+    1,
+  );
+
+  // ==========================================================
+  // RENDER
+  // ==========================================================
+
   return (
     <>
-      {/* ================= HEADER ================= */}
+      {/* =====================================================
+          HEADER
+      ====================================================== */}
 
       <PageHeader
         title="Central Executive Dashboard"
@@ -130,7 +341,9 @@ function DashboardPage() {
         }
       />
 
-      {/* ================= KPI CARDS ================= */}
+      {/* =====================================================
+          KPI CARDS
+      ====================================================== */}
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {kpis.map((k) => (
@@ -141,7 +354,9 @@ function DashboardPage() {
                   {k.label}
                 </p>
 
-                <k.icon className={`size-4 ${k.tone}`} />
+                <k.icon
+                  className={`size-4 ${k.tone}`}
+                />
               </div>
 
               <p className="mt-3 text-2xl font-semibold">
@@ -156,10 +371,15 @@ function DashboardPage() {
         ))}
       </div>
 
-      {/* ================= CORRIDOR + RISK ================= */}
+      {/* =====================================================
+          CORRIDOR + RISK
+      ====================================================== */}
 
       <div className="mt-6 grid gap-4 lg:grid-cols-3">
-        {/* LIVE CORRIDOR STATUS */}
+
+        {/* ===================================================
+            LIVE CORRIDOR STATUS
+        ==================================================== */}
 
         <Card className="lg:col-span-2">
           <CardHeader>
@@ -169,18 +389,20 @@ function DashboardPage() {
           </CardHeader>
 
           <CardContent className="space-y-4">
-            {CORRIDORS.map((c) => {
-              const runningTrains = trains.filter(
-                (t) =>
-                  t.corridor === c.id &&
-                  t.status === "Running",
-              ).length;
 
-              return (
+            {corridor_status.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                No corridor data available.
+              </p>
+            ) : (
+              corridor_status.map((c) => (
                 <div
                   key={c.id}
                   className="rounded-lg border border-border bg-secondary/30 p-4"
                 >
+
+                  {/* Corridor heading */}
+
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className="text-sm font-medium">
                       {c.name}
@@ -188,88 +410,108 @@ function DashboardPage() {
 
                     <div className="flex items-center gap-2">
                       <Badge variant="outline">
-                        {loadingTrains
-                          ? "Loading..."
-                          : `${runningTrains} trains running`}
+                        {c.trains_running} trains running
                       </Badge>
 
                       <Badge className="bg-safe/20 text-safe">
-                        Window {c.openWindow}
+                        Window {c.window}
                       </Badge>
                     </div>
                   </div>
 
+                  {/* Tracks */}
+
                   <div className="mt-3 flex flex-wrap gap-2">
-                    {c.lines.map((line) => (
+                    {c.tracks.map((track) => (
                       <span
-                        key={line}
+                        key={track}
                         className="rounded border border-border bg-background px-2 py-0.5 text-xs text-muted-foreground"
                       >
-                        {line}
+                        {track}
                       </span>
                     ))}
                   </div>
 
+                  {/* Traffic intensity */}
+
                   <div className="mt-3">
                     <div className="flex justify-between text-xs text-muted-foreground">
-                      <span>Traffic intensity</span>
-                      <span>{c.intensity}%</span>
+                      <span>
+                        Traffic intensity
+                      </span>
+
+                      <span>
+                        {c.traffic_intensity}%
+                      </span>
                     </div>
 
                     <Progress
-                      value={c.intensity}
+                      value={c.traffic_intensity}
                       className="mt-1.5 h-1.5"
                     />
                   </div>
                 </div>
-              );
-            })}
+              ))
+            )}
+
           </CardContent>
         </Card>
 
-        {/* URGENT RISK RADAR */}
+        {/* ===================================================
+            URGENT RISK RADAR
+        ==================================================== */}
 
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <AlertTriangle className="size-4 text-destructive" />
+
               Urgent Risk Radar
             </CardTitle>
           </CardHeader>
 
           <CardContent className="space-y-3">
-            {RISK_RADAR.map((r) => (
-              <div
-                key={r.id}
-                className="rounded-lg border border-border p-3"
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-sm font-medium">
-                    {r.kind}
+
+            {urgent_risks.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                No urgent risks detected.
+              </p>
+            ) : (
+              urgent_risks.map((r) => (
+                <div
+                  key={r.id}
+                  className="rounded-lg border border-border p-3"
+                >
+
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm font-medium">
+                      {r.title}
+                    </p>
+
+                    <Badge
+                      className={
+                        r.severity === "Critical"
+                          ? "bg-destructive/20 text-destructive"
+                          : r.severity === "High"
+                            ? "bg-warn/20 text-warn"
+                            : "bg-trd/20 text-trd"
+                      }
+                    >
+                      {r.severity}
+                    </Badge>
+                  </div>
+
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {r.id} · {r.location}
                   </p>
 
-                  <Badge
-                    className={
-                      r.severity === "Critical"
-                        ? "bg-destructive/20 text-destructive"
-                        : r.severity === "High"
-                          ? "bg-warn/20 text-warn"
-                          : "bg-trd/20 text-trd"
-                    }
-                  >
-                    {r.severity}
-                  </Badge>
+                  <p className="mt-2 text-xs">
+                    {r.description}
+                  </p>
+
                 </div>
-
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {r.asset} · {r.section}
-                </p>
-
-                <p className="mt-2 text-xs">
-                  {r.detail}
-                </p>
-              </div>
-            ))}
+              ))
+            )}
 
             <Button
               asChild
@@ -280,14 +522,20 @@ function DashboardPage() {
                 Open requisition ledger
               </Link>
             </Button>
+
           </CardContent>
         </Card>
       </div>
 
-      {/* ================= TRAIN FORECAST + PIPELINE ================= */}
+      {/* =====================================================
+          TRAIN FORECAST + PIPELINE
+      ====================================================== */}
 
       <div className="mt-6 grid gap-4 lg:grid-cols-2">
-        {/* COA TRAIN PATH FORECAST */}
+
+        {/* ===================================================
+            COA TRAIN PATH FORECAST
+        ==================================================== */}
 
         <Card>
           <CardHeader>
@@ -297,48 +545,58 @@ function DashboardPage() {
           </CardHeader>
 
           <CardContent className="space-y-2">
-            {loadingTrains ? (
+
+            {train_forecast.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                Loading train data...
-              </p>
-            ) : trains.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                No train data available.
+                No train forecast available.
               </p>
             ) : (
-              trains.map((train) => (
+              train_forecast.map((train) => (
                 <div
                   key={train.id}
                   className="flex items-center justify-between rounded-md border border-border px-3 py-2 text-sm"
                 >
+
                   <span>
                     <span className="font-medium">
-                      {train.id}
-                    </span>{" "}
-                    <span className="text-muted-foreground">
-                      {train.name}
+                      {train.train}
                     </span>
                   </span>
 
                   <span className="text-xs text-muted-foreground">
-                    {train.corridor} · {train.nextStation} ·{" "}
+                    {train.corridor} ·{" "}
+
+                    {train.time
+                      ? train.time
+                      : train.expected
+                        ? train.expected
+                        : ""}{" "}
+
+                    ·{" "}
+
                     <span
                       className={
-                        train.status === "Running"
+                        train.status === "On Time"
                           ? "text-safe"
-                          : "text-warn"
+                          : train.status === "Expected"
+                            ? "text-warn"
+                            : "text-muted-foreground"
                       }
                     >
                       {train.status}
                     </span>
                   </span>
+
                 </div>
               ))
             )}
+
           </CardContent>
         </Card>
 
-        {/* BDMS REQUISITION PIPELINE */}
+        {/* ===================================================
+            BDMS REQUISITION PIPELINE
+        ==================================================== */}
 
         <Card>
           <CardHeader>
@@ -347,42 +605,33 @@ function DashboardPage() {
             </CardTitle>
           </CardHeader>
 
-          <CardContent className="space-y-2">
-            {(
-              [
-                "Pending AI Scheduling",
-                "Clustered / Shadowed",
-                "Approved",
-                "Active",
-                "Completed",
-              ] as const
-            ).map((status) => {
-              const count = reqs.filter(
-                (r) => r.status === status,
-              ).length;
+          <CardContent className="space-y-3">
 
-              return (
-                <div
-                  key={status}
-                  className="flex items-center gap-3"
-                >
-                  <span className="w-44 text-xs text-muted-foreground">
-                    {status}
-                  </span>
+            {pipeline.map((item) => (
+              <div
+                key={item.label}
+                className="flex items-center gap-3"
+              >
 
-                  <Progress
-                    value={
-                      (count / Math.max(reqs.length, 1)) * 100
-                    }
-                    className="h-2"
-                  />
+                <span className="w-44 text-xs text-muted-foreground">
+                  {item.label}
+                </span>
 
-                  <span className="w-6 text-right text-xs">
-                    {count}
-                  </span>
-                </div>
-              );
-            })}
+                <Progress
+                  value={
+                    (item.value /
+                      pipelineTotal) *
+                    100
+                  }
+                  className="h-2"
+                />
+
+                <span className="w-6 text-right text-xs">
+                  {item.value}
+                </span>
+
+              </div>
+            ))}
 
             <Button
               asChild
@@ -393,8 +642,10 @@ function DashboardPage() {
                 View Gantt planner
               </Link>
             </Button>
+
           </CardContent>
         </Card>
+
       </div>
     </>
   );

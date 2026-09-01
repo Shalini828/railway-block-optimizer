@@ -46,13 +46,19 @@ class WindowRecommendationRequest(BaseModel):
 @router.post("/recommend-windows")
 def recommend_windows(request: WindowRecommendationRequest):
 
-    conn = get_connection()
-    cursor = conn.cursor()
+    conn = None
+    cursor = None
 
     try:
+        # -------------------------------------------------
+        # Open database connection
+        # -------------------------------------------------
+
+        conn = get_connection()
+        cursor = conn.cursor()
 
         # -------------------------------------------------
-        # Parse requested window
+        # Parse requested date and time
         # -------------------------------------------------
 
         requested_date = datetime.strptime(
@@ -84,6 +90,10 @@ def recommend_windows(request: WindowRecommendationRequest):
             (end_dt - start_dt).total_seconds() / 60
         )
 
+        # -------------------------------------------------
+        # Validate duration
+        # -------------------------------------------------
+
         if duration_minutes <= 0:
             return {
                 "status": "error",
@@ -96,28 +106,40 @@ def recommend_windows(request: WindowRecommendationRequest):
 
         candidates = []
 
-        # Search from 05:00 to 23:00
+        # Search between 05:00 and 23:00
         search_start = datetime.combine(
             requested_date,
-            datetime.strptime("05:00", "%H:%M").time()
+            datetime.strptime(
+                "05:00",
+                "%H:%M"
+            ).time()
         )
 
         search_end = datetime.combine(
             requested_date,
-            datetime.strptime("23:00", "%H:%M").time()
+            datetime.strptime(
+                "23:00",
+                "%H:%M"
+            ).time()
         )
 
         current_start = search_start
 
-        while current_start + timedelta(
-            minutes=duration_minutes
-        ) <= search_end:
+        while (
+            current_start
+            + timedelta(minutes=duration_minutes)
+            <= search_end
+        ):
 
-            current_end = current_start + timedelta(
-                minutes=duration_minutes
+            current_end = (
+                current_start
+                + timedelta(minutes=duration_minutes)
             )
 
-            # Don't recommend the exact same window
+            # -------------------------------------------------
+            # Don't recommend the exact same requested window
+            # -------------------------------------------------
+
             if not (
                 current_start == start_dt
                 and current_end == end_dt
@@ -125,12 +147,18 @@ def recommend_windows(request: WindowRecommendationRequest):
 
                 # -------------------------------------------------
                 # Count train conflicts
+                #
+                # A train conflicts when:
+                #
+                # arrival_time < candidate_end
+                # AND
+                # departure_time > candidate_start
                 # -------------------------------------------------
 
                 cursor.execute(
                     """
                     SELECT COUNT(*)
-                    FROM trains
+                    FROM public.trains
                     WHERE corridor_id = %s
                     AND travel_date = %s
                     AND arrival_time < %s
@@ -148,29 +176,27 @@ def recommend_windows(request: WindowRecommendationRequest):
 
                 # -------------------------------------------------
                 # Calculate utilization
+                #
+                # We cannot use maintenance_tasks here because
+                # that table does not contain corridor_id or
+                # task_date.
+                #
+                # Instead, estimate window utilization from
+                # train conflicts.
                 # -------------------------------------------------
 
-                utilization = 100.0
-
-                cursor.execute(
-                    """
-                    SELECT COUNT(*)
-                    FROM maintenance_tasks
-                    WHERE corridor_id = %s
-                    AND task_date = %s
-                    """,
-                    (
-                        request.corridor,
-                        requested_date
-                    )
-                )
-
-                task_count = cursor.fetchone()[0]
-
-                if task_count > 0:
-                    utilization = min(
-                        100.0,
-                        70.0 + (task_count * 8.0)
+                if conflicts == 0:
+                    utilization = 100.0
+                elif conflicts == 1:
+                    utilization = 80.0
+                elif conflicts == 2:
+                    utilization = 60.0
+                elif conflicts == 3:
+                    utilization = 40.0
+                else:
+                    utilization = max(
+                        20.0,
+                        100.0 - (conflicts * 15.0)
                     )
 
                 # -------------------------------------------------
@@ -179,48 +205,80 @@ def recommend_windows(request: WindowRecommendationRequest):
 
                 if conflicts == 0:
                     risk = "LOW"
+
                 elif conflicts <= 2:
                     risk = "MEDIUM"
+
                 else:
                     risk = "HIGH"
 
                 # -------------------------------------------------
-                # Score calculation
+                # Optimization score
+                #
+                # Fewer conflicts = better score
+                # Higher utilization = better score
                 # -------------------------------------------------
 
-                conflict_penalty = conflicts * 20
-                utilization_bonus = utilization * 0.25
+                conflict_penalty = conflicts * 25
+
+                utilization_bonus = (
+                    utilization * 0.20
+                )
 
                 score = (
-                    100
+                    80
                     - conflict_penalty
                     + utilization_bonus
                 )
 
                 score = max(
                     0,
-                    min(100, round(score, 2))
+                    min(
+                        100,
+                        round(score, 2)
+                    )
                 )
 
-                candidates.append({
-                    "start": current_start.strftime("%H:%M:%S"),
-                    "end": current_end.strftime("%H:%M:%S"),
-                    "duration_minutes": duration_minutes,
-                    "train_conflicts": conflicts,
-                    "utilization_percent": round(
-                        utilization,
-                        2
-                    ),
-                    "risk_level": risk,
-                    "optimization_score": score
-                })
+                # -------------------------------------------------
+                # Add candidate
+                # -------------------------------------------------
 
-            # Move by 30 minutes
-            current_start += timedelta(minutes=30)
+                candidates.append(
+                    {
+                        "start": current_start.strftime(
+                            "%H:%M:%S"
+                        ),
 
-        # -------------------------------------------------
-        # Sort best windows first
-        # -------------------------------------------------
+                        "end": current_end.strftime(
+                            "%H:%M:%S"
+                        ),
+
+                        "duration_minutes": duration_minutes,
+
+                        "train_conflicts": conflicts,
+
+                        "utilization_percent": round(
+                            utilization,
+                            2
+                        ),
+
+                        "risk_level": risk,
+
+                        "optimization_score": score
+                    }
+                )
+
+            # -------------------------------------------------
+            # Move to next candidate by 30 minutes
+            # -------------------------------------------------
+
+            current_start += timedelta(
+                minutes=30
+            )
+
+        # =================================================
+        # SORT CANDIDATES
+        # =================================================
 
         candidates.sort(
             key=lambda x: (
@@ -229,12 +287,15 @@ def recommend_windows(request: WindowRecommendationRequest):
             )
         )
 
-        # Return top 5
+        # =================================================
+        # TOP 5 RECOMMENDATIONS
+        # =================================================
+
         recommended_windows = candidates[:5]
 
-        # -------------------------------------------------
-        # Generate recommendation message
-        # -------------------------------------------------
+        # =================================================
+        # RECOMMENDATION MESSAGE
+        # =================================================
 
         if recommended_windows:
 
@@ -254,6 +315,10 @@ def recommend_windows(request: WindowRecommendationRequest):
                 "No suitable alternative maintenance "
                 "windows were found."
             )
+
+        # =================================================
+        # RESPONSE
+        # =================================================
 
         return {
             "status": "success",
@@ -276,6 +341,10 @@ def recommend_windows(request: WindowRecommendationRequest):
                 recommended_windows
         }
 
+    # =====================================================
+    # ERROR HANDLING
+    # =====================================================
+
     except Exception as e:
 
         return {
@@ -283,7 +352,14 @@ def recommend_windows(request: WindowRecommendationRequest):
             "message": str(e)
         }
 
+    # =====================================================
+    # CLOSE DATABASE
+    # =====================================================
+
     finally:
 
-        cursor.close()
-        conn.close()
+        if cursor:
+            cursor.close()
+
+        if conn:
+            conn.close()
