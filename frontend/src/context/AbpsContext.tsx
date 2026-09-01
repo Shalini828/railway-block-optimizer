@@ -6,12 +6,12 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { toast } from "sonner";
 
 import {
   REQUISITIONS,
   ROLES,
   criticalityScore,
-  runOptimizer,
   type AiPlanItem,
   type Conflict,
   type Requisition,
@@ -80,23 +80,11 @@ type Ctx = {
 
   conflicts: Conflict[];
 
-  optimize: () => {
+  optimize: () => Promise<{
     clusters: number;
     saved: number;
     conflicts: number;
-  };
-
-  getBackendRecommendation: (
-    corridor: string,
-    date: string,
-    start: string,
-    end: string,
-    blockId?: string,
-  ) => Promise<BackendRecommendation>;
-
-  backendRecommendation: BackendRecommendation | null;
-
-  recommendationLoading: boolean;
+  }>;
 
   resolveConflict: (id: string) => void;
 
@@ -128,148 +116,22 @@ const AbpsContext = createContext<Ctx | null>(null);
 
 const STORE_KEY = "ir-abps-session";
 
-const API_BASE_URL = "http://127.0.0.1:8000";
-
-// =========================================================
-// HELPER: NORMALIZE TRAIN API RESPONSE
-// =========================================================
-
-function normalizeTrains(data: unknown): Train[] {
-  // Case 1:
-  // Backend directly returns:
-  // [
-  //   {...},
-  //   {...}
-  // ]
-  if (Array.isArray(data)) {
-    return data as Train[];
-  }
-
-  // Case 2:
-  // Backend returns:
-  // {
-  //   trains: [...]
-  // }
-  if (
-    data &&
-    typeof data === "object" &&
-    Array.isArray((data as { trains?: unknown }).trains)
-  ) {
-    return (data as { trains: Train[] }).trains;
-  }
-
-  // Case 3:
-  // Backend returns:
-  // {
-  //   data: [...]
-  // }
-  if (
-    data &&
-    typeof data === "object" &&
-    Array.isArray((data as { data?: unknown }).data)
-  ) {
-    return (data as { data: Train[] }).data;
-  }
-
-  // Case 4:
-  // Backend returns:
-  // {
-  //   results: [...]
-  // }
-  if (
-    data &&
-    typeof data === "object" &&
-    Array.isArray((data as { results?: unknown }).results)
-  ) {
-    return (data as { results: Train[] }).results;
-  }
-
-  // Unknown response shape.
-  console.error("Unexpected trains API response:", data);
-
-  return [];
-}
-
-// =========================================================
-// PROVIDER
-// =========================================================
-
-export function AbpsProvider({ children }: { children: ReactNode }) {
-  // =======================================================
-  // ROLE
-  // =======================================================
-
+export function AbpsProvider({
+  children,
+}: {
+  children: ReactNode;
+}) {
   const [role, setRoleState] = useState<Role>(
-    ROLES[0] as Role,
+    ROLES[0] as Role
   );
-
-  // =======================================================
-  // AUTH
-  // =======================================================
 
   const [signedIn, setSignedIn] = useState(false);
 
-  // =======================================================
-  // REQUISITIONS
-  // =======================================================
-
-  const [reqs, setReqs] =
-    useState<Requisition[]>(REQUISITIONS);
-
-  // =======================================================
-  // TRAINS
-  // =======================================================
+  const [reqs, setReqs] = useState<Requisition[]>(
+    REQUISITIONS
+  );
 
   const [trains, setTrains] = useState<Train[]>([]);
-
-  // =======================================================
-  // PLAN
-  // =======================================================
-
-  const [plan, setPlan] =
-    useState<AiPlanItem[]>([]);
-
-  // =======================================================
-  // CONFLICTS
-  // =======================================================
-
-  const [conflicts, setConflicts] =
-    useState<Conflict[]>([]);
-
-  // =======================================================
-  // APPROVAL
-  // =======================================================
-
-  const [signedOff, setSignedOff] =
-    useState<string[]>([]);
-
-  // =======================================================
-  // REQUEST ID COUNTER
-  // =======================================================
-
-  const [counter, setCounter] =
-    useState(9000);
-
-  // =======================================================
-  // SESSION RESTORE
-  // =======================================================
-
-  const [restored, setRestored] =
-    useState(false);
-
-  // =======================================================
-  // BACKEND RECOMMENDATION
-  // =======================================================
-
-  const [backendRecommendation, setBackendRecommendation] =
-    useState<BackendRecommendation | null>(null);
-
-  const [recommendationLoading, setRecommendationLoading] =
-    useState(false);
-
-  // =======================================================
-  // DASHBOARD KPIs
-  // =======================================================
 
   const [kpis, setKpis] = useState({
     availability: "0.0",
@@ -278,74 +140,55 @@ export function AbpsProvider({ children }: { children: ReactNode }) {
     trainDelay: 0,
   });
 
-  // =========================================================
-  // DASHBOARD KPI API
-  // =========================================================
+  const [plan, setPlan] = useState<AiPlanItem[]>([]);
+
+  const [conflicts, setConflicts] = useState<Conflict[]>([]);
+
+  const [signedOff, setSignedOff] = useState<string[]>([]);
+
+  const [counter, setCounter] = useState(9000);
+
+  const [restored, setRestored] = useState(false);
+
+  // ==========================================
+  // LOAD DASHBOARD KPIs
+  // ==========================================
 
   useEffect(() => {
-    let cancelled = false;
-
-    const loadKpis = async () => {
-      try {
-        const response = await fetch(
-          `${API_BASE_URL}/dashboard/kpis`,
-        );
-
-        if (!response.ok) {
+    fetch("http://127.0.0.1:8000/dashboard/kpis")
+      .then((res) => {
+        if (!res.ok) {
           throw new Error(
-            `KPI API returned ${response.status}`,
+            "Failed to fetch dashboard KPIs"
           );
         }
 
-        const data = await response.json();
-
-        if (cancelled) return;
-
+        return res.json();
+      })
+      .then((data) => {
         setKpis({
           availability: String(
-            data.asset_availability_percent ?? "0.0",
+            data.asset_availability_percent
           ),
-
-          scheduled: Number(
-            data.scheduled_blocks ?? 0,
-          ),
-
+          scheduled: data.scheduled_blocks,
           blockHours: String(
-            data.total_block_hours ?? "0.0",
+            data.total_block_hours
           ),
-
-          trainDelay: Number(
-            data.train_delay_impact_minutes ?? 0,
-          ),
+          trainDelay:
+            data.train_delay_impact_minutes,
         });
-      } catch (error) {
+      })
+      .catch((error) => {
         console.error(
           "Dashboard KPI API error:",
-          error,
+          error
         );
-
-        // Keep safe default values.
-        if (!cancelled) {
-          setKpis({
-            availability: "0.0",
-            scheduled: 0,
-            blockHours: "0.0",
-            trainDelay: 0,
-          });
-        }
-      }
-    };
-
-    loadKpis();
-
-    return () => {
-      cancelled = true;
-    };
+      });
   }, []);
 
-  // =========================================================
+  // ==========================================
   // RESTORE SESSION
-  // =========================================================
+  // ==========================================
 
   useEffect(() => {
     try {
@@ -362,75 +205,59 @@ export function AbpsProvider({ children }: { children: ReactNode }) {
           signedOff?: string[];
         };
 
-        // Restore role.
         const found = ROLES.find(
-          (r) => r.id === s.roleId,
+          (r) => r.id === s.roleId
         );
 
         if (found) {
           setRoleState(found);
         }
 
-        // Restore login.
         if (s.signedIn) {
           setSignedIn(true);
         }
 
-        // Restore requisitions.
-        if (Array.isArray(s.reqs)) {
+        if (s.reqs) {
           setReqs(s.reqs);
         }
 
-        // Restore optimization plan.
-        if (Array.isArray(s.plan)) {
+        if (s.plan) {
           setPlan(s.plan);
         }
 
-        // Restore conflicts.
-        if (Array.isArray(s.conflicts)) {
+        if (s.conflicts) {
           setConflicts(s.conflicts);
         }
 
-        // Restore approvals.
-        if (Array.isArray(s.signedOff)) {
+        if (s.signedOff) {
           setSignedOff(s.signedOff);
         }
       }
-    } catch (error) {
-      console.error(
-        "Failed to restore session:",
-        error,
-      );
+    } catch {
+      // Ignore corrupt session snapshot
     }
 
     setRestored(true);
   }, []);
 
-  // =========================================================
+  // ==========================================
   // SAVE SESSION
-  // =========================================================
+  // ==========================================
 
   useEffect(() => {
     if (!restored) return;
 
-    try {
-      sessionStorage.setItem(
-        STORE_KEY,
-        JSON.stringify({
-          roleId: role.id,
-          signedIn,
-          reqs,
-          plan,
-          conflicts,
-          signedOff,
-        }),
-      );
-    } catch (error) {
-      console.error(
-        "Failed to save session:",
-        error,
-      );
-    }
+    sessionStorage.setItem(
+      STORE_KEY,
+      JSON.stringify({
+        roleId: role.id,
+        signedIn,
+        reqs,
+        plan,
+        conflicts,
+        signedOff,
+      })
+    );
   }, [
     restored,
     role,
@@ -441,13 +268,13 @@ export function AbpsProvider({ children }: { children: ReactNode }) {
     signedOff,
   ]);
 
-  // =========================================================
+  // ==========================================
   // ROLE
-  // =========================================================
+  // ==========================================
 
   const setRole = (id: RoleId) => {
     const found = ROLES.find(
-      (r) => r.id === id,
+      (r) => r.id === id
     );
 
     if (found) {
@@ -455,263 +282,47 @@ export function AbpsProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  // =========================================================
-  // TRAINS API
-  // =========================================================
+  // ==========================================
+  // LOAD TRAINS
+  // ==========================================
 
   useEffect(() => {
-    let cancelled = false;
-
-    const loadTrains = async () => {
-      try {
-        const response = await fetch(
-          `${API_BASE_URL}/trains/`,
-        );
-
-        if (!response.ok) {
+    fetch("http://127.0.0.1:8000/trains/")
+      .then((res) => {
+        if (!res.ok) {
           throw new Error(
-            `Train API returned ${response.status}`,
+            "Failed to fetch trains"
           );
         }
 
-        const data: unknown =
-          await response.json();
-
-        if (cancelled) return;
-
-        // IMPORTANT:
-        // Always convert backend response to an array.
-        const normalizedTrains =
-          normalizeTrains(data);
-
-        setTrains(normalizedTrains);
-
-        console.log(
-          "Loaded trains:",
-          normalizedTrains.length,
-        );
-      } catch (error) {
+        return res.json();
+      })
+      .then((data: Train[]) => {
+        setTrains(data);
+      })
+      .catch((error) => {
         console.error(
           "Train API error:",
-          error,
+          error
         );
-
-        if (!cancelled) {
-          setTrains([]);
-        }
-      }
-    };
-
-    loadTrains();
-
-    return () => {
-      cancelled = true;
-    };
+      });
   }, []);
 
-  // =========================================================
-  // ADD REQUISITION
-  // =========================================================
-
-  const addReq = (
-    r: Omit<Requisition, "id" | "status">,
-  ) => {
-    const id = `REQ-${r.dept}-${counter}`;
-
-    setCounter((c) => c + 1);
-
-    const newReq: Requisition = {
-      ...r,
-
-      id,
-
-      status: "Pending AI Scheduling",
-
-      score: criticalityScore({
-        ...r,
-        id,
-        status: "Pending AI Scheduling",
-      } as Requisition),
-    };
-
-    setReqs((prev) => [
-      newReq,
-      ...prev,
-    ]);
-  };
-
-  // =========================================================
-  // FRONTEND OPTIMIZER
-  // =========================================================
-
-  const optimize = () => {
-    const res = runOptimizer(reqs);
-
-    setReqs(res.updated);
-
-    setPlan(res.plan);
-
-    setConflicts(res.conflicts);
-
-    return {
-      clusters: res.plan.filter(
-        (p) => p.reqIds.length > 1,
-      ).length,
-
-      saved: res.plan.reduce(
-        (s, p) => s + p.savedMinutes,
-        0,
-      ),
-
-      conflicts:
-        res.conflicts.length,
-    };
-  };
-
-  // =========================================================
-  // BACKEND WINDOW RECOMMENDATION
-  // =========================================================
-
-  const getBackendRecommendation = async (
-    corridor: string,
-    date: string,
-    start: string,
-    end: string,
-    blockId?: string,
-  ): Promise<BackendRecommendation> => {
-    setRecommendationLoading(true);
-
-    try {
-      const response = await fetch(
-        `${API_BASE_URL}/optimization/recommend-windows`,
-        {
-          method: "POST",
-
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "application/json",
-          },
-
-          body: JSON.stringify({
-            corridor,
-            date,
-            start,
-            end,
-            block_id: blockId ?? null,
-          }),
-        },
-      );
-
-      const data =
-        (await response.json()) as BackendRecommendation;
-
-      if (!response.ok) {
-        throw new Error(
-          data.message ??
-            `Backend recommendation request failed (${response.status})`,
-        );
-      }
-
-      setBackendRecommendation(data);
-
-      return data;
-    } catch (error) {
-      console.error(
-        "Optimization recommendation API error:",
-        error,
-      );
-
-      const errorResult: BackendRecommendation = {
-        status: "error",
-
-        message:
-          error instanceof Error
-            ? error.message
-            : "Failed to get backend recommendation",
-      };
-
-      setBackendRecommendation(errorResult);
-
-      return errorResult;
-    } finally {
-      setRecommendationLoading(false);
-    }
-  };
-
-  // =========================================================
-  // RESOLVE CONFLICT
-  // =========================================================
-
-  const resolveConflict = (id: string) => {
-    setConflicts((prev) =>
-      prev.map((c) =>
-        c.id === id
-          ? {
-              ...c,
-              resolved: true,
-            }
-          : c,
-      ),
-    );
-  };
-
-  // =========================================================
-  // APPROVE SINGLE BLOCK
-  // =========================================================
-
-  const approve = (id: string) => {
-    setSignedOff((prev) =>
-      prev.includes(id)
-        ? prev
-        : [...prev, id],
-    );
-
-    setReqs((prev) =>
-      prev.map((r) =>
-        r.clusterId === id
-          ? {
-              ...r,
-              status: "Approved",
-            }
-          : r,
-      ),
-    );
-  };
-
-  // =========================================================
-  // APPROVE ALL
-  // =========================================================
-
-  const approveAll = () => {
-    setSignedOff(
-      plan.map((p) => p.clusterId),
-    );
-
-    setReqs((prev) =>
-      prev.map((r) =>
-        r.status === "Clustered / Shadowed"
-          ? {
-              ...r,
-              status: "Approved",
-            }
-          : r,
-      ),
-    );
-  };
-
-  // =========================================================
+  // ==========================================
   // CONTEXT VALUE
-  // =========================================================
+  // ==========================================
 
   const value: Ctx = {
-    // Role
     role,
+
     setRole,
 
-    // Trains
     trains,
 
-    // Authentication
+    // ========================================
+    // AUTH
+    // ========================================
+
     signedIn,
 
     signIn: (id) => {
@@ -723,35 +334,312 @@ export function AbpsProvider({ children }: { children: ReactNode }) {
       setSignedIn(false);
     },
 
-    // Requisitions
+    // ========================================
+    // REQUESTS
+    // ========================================
+
     reqs,
-    addReq,
 
-    // Optimization
+    addReq: (r) => {
+      const id = `REQ-${r.dept}-${counter}`;
+
+      setCounter((c) => c + 1);
+
+      setReqs((prev) => [
+        {
+          ...r,
+          id,
+          status:
+            "Pending AI Scheduling" as const,
+          score: criticalityScore({
+            ...r,
+            id,
+            status:
+              "Pending AI Scheduling",
+          } as Requisition),
+        },
+        ...prev,
+      ]);
+    },
+
+    // ========================================
+    // PLAN
+    // ========================================
+
     plan,
+
+    // ========================================
+    // CONFLICTS
+    // ========================================
+
     conflicts,
-    optimize,
 
-    // Backend recommendation
-    getBackendRecommendation,
-    backendRecommendation,
-    recommendationLoading,
+    // ========================================
+    // REAL AI OPTIMIZATION API
+    // ========================================
 
-    // Conflict
-    resolveConflict,
+    optimize: async () => {
+      try {
+        const response = await fetch(
+          "http://127.0.0.1:8000/optimization/",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+          }
+        );
 
-    // Approval
-    approve,
-    approveAll,
+        if (!response.ok) {
+          throw new Error(
+            "Optimization API failed"
+          );
+        }
+
+        const data = await response.json();
+
+        if (data.status !== "success") {
+          throw new Error(
+            data.message ||
+              "Optimization failed"
+          );
+        }
+
+        // ====================================
+        // BACKEND BLOCKS
+        // ====================================
+
+        const apiBlocks =
+          data.blocks ?? [];
+
+        // ====================================
+        // CONVERT BACKEND DATA
+        // INTO FRONTEND AiPlanItem
+        // ====================================
+
+        const convertedPlan: AiPlanItem[] =
+          apiBlocks.map((block: any) => {
+            // --------------------------------
+            // START TIME
+            // --------------------------------
+
+            const startParts =
+              block.start.split(":");
+
+            const start =
+              Number(startParts[0]) * 60 +
+              Number(startParts[1]);
+
+            // --------------------------------
+            // END TIME
+            // --------------------------------
+
+            const endParts =
+              block.end.split(":");
+
+            const end =
+              Number(endParts[0]) * 60 +
+              Number(endParts[1]);
+
+            // --------------------------------
+            // DATE → DAY
+            // Monday = 0
+            // Tuesday = 1
+            // ...
+            // Sunday = 6
+            // --------------------------------
+
+            const date = new Date(
+              `${block.date}T00:00:00`
+            );
+
+            const day =
+              (date.getDay() + 6) % 7;
+
+            // --------------------------------
+            // FRONTEND PLAN OBJECT
+            // --------------------------------
+
+            return {
+              clusterId:
+                block.block_id,
+
+              section:
+                block.corridor_name,
+
+              line:
+                `${block.source_station} → ${block.destination_station}`,
+
+              depts:
+                block.departments as AiPlanItem["depts"],
+
+              reqIds:
+                block.request_ids ?? [],
+
+              day,
+
+              start,
+
+              end,
+
+              savedMinutes:
+                block.saved_minutes ?? 0,
+
+              explanation:
+                `AI optimized ${block.number_of_tasks} maintenance task(s) ` +
+                `with ${block.utilization}% block utilization. ` +
+                `${block.number_of_departments} department(s) coordinated.`,
+
+              expectedDelay:
+                block.expected_delay ?? 0,
+            };
+          });
+
+        // ====================================
+        // UPDATE FRONTEND PLAN
+        // ====================================
+
+        setPlan(convertedPlan);
+
+        // ====================================
+        // CONFLICTS
+        // ====================================
+
+        // We will connect the backend
+        // conflict structure separately.
+        setConflicts([]);
+
+        // ====================================
+        // SUCCESS MESSAGE
+        // ====================================
+
+        toast.success(
+          `Optimization completed: ${data.requests_processed} requests → ${data.blocks_generated} blocks`
+        );
+
+        // ====================================
+        // RETURN SUMMARY
+        // ====================================
+
+        return {
+          clusters:
+            convertedPlan.filter(
+              (p) =>
+                p.reqIds.length > 1
+            ).length,
+
+          saved:
+            convertedPlan.reduce(
+              (sum, p) =>
+                sum + p.savedMinutes,
+              0
+            ),
+
+          conflicts: 0,
+        };
+      } catch (error) {
+        console.error(
+          "Optimization API error:",
+          error
+        );
+
+        toast.error(
+          "Could not run the optimization engine."
+        );
+
+        return {
+          clusters: 0,
+          saved: 0,
+          conflicts: 0,
+        };
+      }
+    },
+
+    // ========================================
+    // RESOLVE CONFLICT
+    // ========================================
+
+    resolveConflict: (id) => {
+      setConflicts((prev) =>
+        prev.map((c) =>
+          c.id === id
+            ? {
+                ...c,
+                resolved: true,
+              }
+            : c
+        )
+      );
+    },
+
+    // ========================================
+    // APPROVE
+    // ========================================
+
+    approve: (id) => {
+      setSignedOff((prev) =>
+        prev.includes(id)
+          ? prev
+          : [...prev, id]
+      );
+
+      setReqs((prev) =>
+        prev.map((r) =>
+          r.clusterId === id
+            ? {
+                ...r,
+                status:
+                  "Approved" as const,
+              }
+            : r
+        )
+      );
+    },
+
+    // ========================================
+    // APPROVE ALL
+    // ========================================
+
+    approveAll: () => {
+      setSignedOff(
+        plan.map((p) => p.clusterId)
+      );
+
+      setReqs((prev) =>
+        prev.map((r) =>
+          r.status ===
+          "Clustered / Shadowed"
+            ? {
+                ...r,
+                status:
+                  "Approved" as const,
+              }
+            : r
+        )
+      );
+    },
+
+    // ========================================
+    // SIGNED OFF
+    // ========================================
+
     signedOff,
 
-    // Saved minutes
+    // ========================================
+    // SAVED MINUTES
+    // ========================================
+
     savedMinutes: plan.reduce(
-      (s, p) => s + p.savedMinutes,
-      0,
+      (sum, p) =>
+        sum + p.savedMinutes,
+      0
     ),
 
+    // ========================================
     // KPIs
+    // ========================================
+
     kpis,
   };
 
@@ -762,40 +650,47 @@ export function AbpsProvider({ children }: { children: ReactNode }) {
   );
 }
 
-// =========================================================
-// useAbps HOOK
-// =========================================================
+// ==========================================
+// useAbps
+// ==========================================
 
 export function useAbps() {
-  const ctx = useContext(AbpsContext);
+  const ctx = useContext(
+    AbpsContext
+  );
 
   if (!ctx) {
     throw new Error(
-      "useAbps must be used inside AbpsProvider",
+      "useAbps must be used inside AbpsProvider"
     );
   }
 
   return ctx;
 }
 
-// =========================================================
-// useKpis HOOK
-// =========================================================
+// ==========================================
+// useKpis
+// ==========================================
 
 export function useKpis() {
   const { kpis } = useAbps();
 
   return useMemo(() => {
     return {
-      availability: kpis.availability,
+      availability:
+        kpis.availability,
 
-      scheduled: kpis.scheduled,
+      scheduled:
+        kpis.scheduled,
 
-      monthly: kpis.scheduled * 4,
+      monthly:
+        kpis.scheduled * 4,
 
-      shadowHours: kpis.blockHours,
+      shadowHours:
+        kpis.blockHours,
 
-      punctuality: kpis.trainDelay,
+      punctuality:
+        kpis.trainDelay,
     };
   }, [kpis]);
 }
