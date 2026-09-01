@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AnalyticsRouteImport } from './routes/analytics'
 import { Route as ConflictsRouteImport } from './routes/conflicts'
 import { Route as DashboardRouteImport } from './routes/dashboard'
+import { Route as EmergencyRouteImport } from './routes/emergency'
 import { Route as MaintenanceTasksRouteImport } from './routes/maintenance-tasks'
 import { Route as OptimizerRouteImport } from './routes/optimizer'
 import { Route as PlannerRouteImport } from './routes/planner'
@@ -36,6 +37,11 @@ const ConflictsRoute = ConflictsRouteImport.update({
 const DashboardRoute = DashboardRouteImport.update({
   id: '/dashboard',
   path: '/dashboard',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const EmergencyRoute = EmergencyRouteImport.update({
+  id: '/emergency',
+  path: '/emergency',
   getParentRoute: () => rootRouteImport,
 } as any)
 const MaintenanceTasksRoute = MaintenanceTasksRouteImport.update({
@@ -64,6 +70,7 @@ export interface FileRoutesByFullPath {
   '/analytics': typeof AnalyticsRoute
   '/conflicts': typeof ConflictsRoute
   '/dashboard': typeof DashboardRoute
+  '/emergency': typeof EmergencyRoute
   '/maintenance-tasks': typeof MaintenanceTasksRoute
   '/optimizer': typeof OptimizerRoute
   '/planner': typeof PlannerRoute
@@ -74,6 +81,7 @@ export interface FileRoutesByTo {
   '/analytics': typeof AnalyticsRoute
   '/conflicts': typeof ConflictsRoute
   '/dashboard': typeof DashboardRoute
+  '/emergency': typeof EmergencyRoute
   '/maintenance-tasks': typeof MaintenanceTasksRoute
   '/optimizer': typeof OptimizerRoute
   '/planner': typeof PlannerRoute
@@ -85,6 +93,7 @@ export interface FileRoutesById {
   '/analytics': typeof AnalyticsRoute
   '/conflicts': typeof ConflictsRoute
   '/dashboard': typeof DashboardRoute
+  '/emergency': typeof EmergencyRoute
   '/maintenance-tasks': typeof MaintenanceTasksRoute
   '/optimizer': typeof OptimizerRoute
   '/planner': typeof PlannerRoute
@@ -97,6 +106,7 @@ export interface FileRouteTypes {
     | '/analytics'
     | '/conflicts'
     | '/dashboard'
+    | '/emergency'
     | '/maintenance-tasks'
     | '/optimizer'
     | '/planner'
@@ -107,6 +117,7 @@ export interface FileRouteTypes {
     | '/analytics'
     | '/conflicts'
     | '/dashboard'
+    | '/emergency'
     | '/maintenance-tasks'
     | '/optimizer'
     | '/planner'
@@ -117,6 +128,7 @@ export interface FileRouteTypes {
     | '/analytics'
     | '/conflicts'
     | '/dashboard'
+    | '/emergency'
     | '/maintenance-tasks'
     | '/optimizer'
     | '/planner'
@@ -128,6 +140,7 @@ export interface RootRouteChildren {
   AnalyticsRoute: typeof AnalyticsRoute
   ConflictsRoute: typeof ConflictsRoute
   DashboardRoute: typeof DashboardRoute
+  EmergencyRoute: typeof EmergencyRoute
   MaintenanceTasksRoute: typeof MaintenanceTasksRoute
   OptimizerRoute: typeof OptimizerRoute
   PlannerRoute: typeof PlannerRoute
@@ -162,6 +175,13 @@ declare module '@tanstack/react-router' {
       path: '/dashboard'
       fullPath: '/dashboard'
       preLoaderRoute: typeof DashboardRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/emergency': {
+      id: '/emergency'
+      path: '/emergency'
+      fullPath: '/emergency'
+      preLoaderRoute: typeof EmergencyRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/maintenance-tasks': {
@@ -200,6 +220,7 @@ const rootRouteChildren: RootRouteChildren = {
   AnalyticsRoute: AnalyticsRoute,
   ConflictsRoute: ConflictsRoute,
   DashboardRoute: DashboardRoute,
+  EmergencyRoute: EmergencyRoute,
   MaintenanceTasksRoute: MaintenanceTasksRoute,
   OptimizerRoute: OptimizerRoute,
   PlannerRoute: PlannerRoute,

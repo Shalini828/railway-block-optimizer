@@ -1,4 +1,6 @@
 from fastapi import APIRouter
+import importlib
+import sys
 import os
 import psycopg
 from dotenv import load_dotenv
@@ -6,14 +8,14 @@ from dotenv import load_dotenv
 load_dotenv()
 
 router = APIRouter(
-    prefix="/dashboard",
-    tags=["Dashboard"],
+    prefix="/optimization",
+    tags=["Optimization"]
 )
 
 
-# ============================================================
+# ==========================================
 # DATABASE CONNECTION
-# ============================================================
+# ==========================================
 
 def get_connection():
     return psycopg.connect(
@@ -21,272 +23,213 @@ def get_connection():
         port=os.getenv("DB_PORT"),
         dbname=os.getenv("DB_NAME"),
         user=os.getenv("DB_USER"),
-        password=os.getenv("DB_PASSWORD"),
+        password=os.getenv("DB_PASSWORD")
     )
 
 
-# ============================================================
-# DASHBOARD KPIs
-# ============================================================
+# ==========================================
+# RUN OPTIMIZATION
+# ==========================================
 
-@router.get("/kpis")
-def get_dashboard_kpis():
-    """
-    Returns the KPI data required by the React dashboard.
-
-    The endpoint is intentionally defensive:
-    if a database table/query is unavailable, the dashboard
-    still receives a valid response instead of crashing.
-    """
-
-    # --------------------------------------------------------
-    # Default values
-    # --------------------------------------------------------
-
-    overall_asset_availability = 0.0
-    scheduled_blocks = 0
-    shadow_block_savings = 0.0
-    punctuality_impact_index = 0.0
-
-    pending_ai_scheduling = 0
-    clustered_shadowed = 0
-    approved = 0
-    active = 0
-    completed = 0
-
-    corridor_status = []
-    urgent_risks = []
-    train_forecast = []
-
-    # --------------------------------------------------------
-    # Database
-    # --------------------------------------------------------
+@router.post("/")
+def run_optimization():
 
     try:
+
+        # ==========================================
+        # 1. LOAD / RELOAD OPTIMIZER
+        # ==========================================
+
+        module_name = "logic.block_optimizer"
+
+        if module_name in sys.modules:
+            optimizer = importlib.reload(
+                sys.modules[module_name]
+            )
+        else:
+            optimizer = importlib.import_module(
+                module_name
+            )
+
+        # ==========================================
+        # 2. GET OPTIMIZATION RESULTS
+        # ==========================================
+
+        optimized_blocks = getattr(
+            optimizer,
+            "optimized_blocks",
+            []
+        )
+
+        requests = getattr(
+            optimizer,
+            "requests",
+            []
+        )
+
+        # ==========================================
+        # 3. CALCULATE RUN METRICS
+        # ==========================================
+
+        total_block_minutes = sum(
+            block.get("duration", 0) or 0
+            for block in optimized_blocks
+        )
+
+        average_utilization = (
+            sum(
+                block.get("utilization", 0) or 0
+                for block in optimized_blocks
+            ) / len(optimized_blocks)
+            if optimized_blocks
+            else 0
+        )
+
+        average_optimization_score = (
+            sum(
+                block.get("optimization_score", 0) or 0
+                for block in optimized_blocks
+            ) / len(optimized_blocks)
+            if optimized_blocks
+            else 0
+        )
+
+        total_train_impact = sum(
+            block.get("train_impact", 0) or 0
+            for block in optimized_blocks
+        )
+
+        total_train_conflicts = sum(
+            len(block.get("train_conflicts", []))
+            for block in optimized_blocks
+        )
+
+        # ==========================================
+        # 4. SAVE OPTIMIZATION HISTORY
+        # ==========================================
+
         conn = get_connection()
         cursor = conn.cursor()
 
-        # ----------------------------------------------------
-        # Optimization history
-        # ----------------------------------------------------
-
         try:
+
             cursor.execute(
                 """
-                SELECT
-                    COALESCE(SUM(blocks_generated), 0),
-                    COALESCE(SUM(total_train_impact), 0),
-                    COALESCE(SUM(total_train_conflicts), 0)
-                FROM optimization_history
-                """
+                INSERT INTO optimization_history (
+                    blocks_generated,
+                    requests_processed,
+                    total_block_minutes,
+                    average_utilization,
+                    average_optimization_score,
+                    total_train_impact,
+                    total_train_conflicts,
+                    status
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    len(optimized_blocks),
+                    len(requests),
+                    total_block_minutes,
+                    round(average_utilization, 2),
+                    round(average_optimization_score, 2),
+                    total_train_impact,
+                    total_train_conflicts,
+                    "SUCCESS"
+                )
             )
 
-            row = cursor.fetchone()
+            conn.commit()
 
-            if row:
-                scheduled_blocks = int(row[0] or 0)
-                shadow_block_savings = float(row[1] or 0)
-                punctuality_impact_index = float(row[2] or 0)
+        finally:
 
-        except Exception:
-            # Table/query may not exist yet.
-            conn.rollback()
+            cursor.close()
+            conn.close()
 
-        # ----------------------------------------------------
-        # Block requests
-        # ----------------------------------------------------
+        # ==========================================
+        # 5. RETURN OPTIMIZATION RESULT
+        # ==========================================
 
-        try:
-            cursor.execute(
-                """
-                SELECT
-                    COUNT(*)
-                FROM block_requests
-                """
-            )
+        return {
+            "status": "success",
+            "message": "Optimization completed successfully",
 
-            row = cursor.fetchone()
+            "requests_processed":
+                len(requests),
 
-            if row:
-                pending_ai_scheduling = int(row[0] or 0)
+            "blocks_generated":
+                len(optimized_blocks),
 
-        except Exception:
-            conn.rollback()
+            "run_metrics": {
+                "total_block_minutes":
+                    total_block_minutes,
 
-        # ----------------------------------------------------
-        # Maintenance tasks
-        # ----------------------------------------------------
+                "average_utilization":
+                    round(average_utilization, 2),
 
-        try:
-            cursor.execute(
-                """
-                SELECT
-                    COUNT(*)
-                FROM maintenance_tasks
-                """
-            )
+                "average_optimization_score":
+                    round(average_optimization_score, 2),
 
-            row = cursor.fetchone()
+                "total_train_impact":
+                    total_train_impact,
 
-            if row:
-                completed = int(row[0] or 0)
+                "total_train_conflicts":
+                    total_train_conflicts
+            },
 
-        except Exception:
-            conn.rollback()
+            "blocks": [
+                {
+                    "block_id":
+                        block["block_id"],
 
-        cursor.close()
-        conn.close()
+                    "corridor":
+                        block["corridor"],
 
-    except Exception:
-        # Dashboard should still load even if DB is unavailable.
-        pass
+                    "date":
+                        str(block["date"]),
 
-    # --------------------------------------------------------
-    # Corridor status
-    # --------------------------------------------------------
+                    "start":
+                        str(block["start"]),
 
-    corridor_status = [
-        {
-            "id": "ndls-cnb",
-            "name": "New Delhi (NDLS) – Kanpur (CNB)",
-            "from": "New Delhi (NDLS)",
-            "to": "Kanpur (CNB)",
-            "trains_running": 0,
-            "window": "11:00 – 14:00",
-            "traffic_intensity": 87,
-            "tracks": [
-                "Up Main",
-                "Down Main",
-                "Line 3 Up",
-            ],
-        },
-        {
-            "id": "cnb-ald",
-            "name": "Kanpur (CNB) – Prayagraj (ALD)",
-            "from": "Kanpur (CNB)",
-            "to": "Prayagraj (ALD)",
-            "trains_running": 0,
-            "window": "10:30 – 13:30",
-            "traffic_intensity": 64,
-            "tracks": [
-                "Up Main",
-                "Down Main",
-            ],
-        },
-        {
-            "id": "ald-bsb",
-            "name": "Prayagraj (ALD) – Varanasi (BSB)",
-            "from": "Prayagraj (ALD)",
-            "to": "Varanasi (BSB)",
-            "trains_running": 0,
-            "window": "12:00 – 15:00",
-            "traffic_intensity": 41,
-            "tracks": [
-                "Up Main",
-                "Down Main",
-            ],
-        },
-    ]
+                    "end":
+                        str(block["end"]),
 
-    # --------------------------------------------------------
-    # Urgent risk radar
-    # --------------------------------------------------------
+                    "duration":
+                        block["duration"],
 
-    urgent_risks = [
-        {
-            "id": "TRK-ENG-982",
-            "title": "IMR Track Fracture",
-            "severity": "Critical",
-            "asset": "TRK-ENG-982",
-            "location": "NDLS-CNB Down Main",
-            "description": (
-                "USFD Class IMR flaw. TSR 30 kmph imposed "
-                "if defect >48h."
-            ),
-        },
-        {
-            "id": "SIG-PNT-119",
-            "title": "Point Machine Failure",
-            "severity": "High",
-            "asset": "SIG-PNT-119",
-            "location": "DDU-BSB Up Main",
-            "description": (
-                "Repeated non-setting of points; "
-                "3 detentions logged in 24h."
-            ),
-        },
-        {
-            "id": "OHE-MAST-112",
-            "title": "OHE Hot Spot",
-            "severity": "High",
-            "asset": "OHE-MAST-112",
-            "location": "NDLS-CNB Down Main",
-            "description": (
-                "Thermal anomaly detected on OHE equipment."
-            ),
-        },
-    ]
+                    "utilization":
+                        block["utilization"],
 
-    # --------------------------------------------------------
-    # COA train path forecast
-    # --------------------------------------------------------
+                    "train_impact":
+                        block.get(
+                            "train_impact",
+                            0
+                        ),
 
-    train_forecast = [
-        {
-            "id": "forecast-1",
-            "train": "COA-001",
-            "corridor": "NDLS – CNB",
-            "status": "On Time",
-            "time": "11:15",
-        },
-        {
-            "id": "forecast-2",
-            "train": "COA-002",
-            "corridor": "CNB – ALD",
-            "status": "On Time",
-            "time": "11:45",
-        },
-        {
-            "id": "forecast-3",
-            "train": "COA-003",
-            "corridor": "ALD – BSB",
-            "status": "Expected",
-            "time": "12:20",
-        },
-        {
-            "id": "forecast-4",
-            "train": "COA-004",
-            "corridor": "NDLS – CNB",
-            "status": "Expected",
-            "time": "12:40",
-        },
-    ]
+                    "number_of_tasks":
+                        len(
+                            block.get(
+                                "tasks",
+                                []
+                            )
+                        ),
 
-    # --------------------------------------------------------
-    # Return response
-    # --------------------------------------------------------
+                    "train_conflicts":
+                        len(
+                            block.get(
+                                "train_conflicts",
+                                []
+                            )
+                        )
+                }
 
-    return {
-        "status": "success",
+                for block in optimized_blocks
+            ]
+        }
 
-        "kpis": {
-            "overall_asset_availability": overall_asset_availability,
-            "scheduled_blocks": scheduled_blocks,
-            "shadow_block_savings": shadow_block_savings,
-            "punctuality_impact_index": punctuality_impact_index,
-        },
+    except Exception as e:
 
-        "corridor_status": corridor_status,
-
-        "urgent_risks": urgent_risks,
-
-        "train_forecast": train_forecast,
-
-        "requisition_pipeline": {
-            "pending_ai_scheduling": pending_ai_scheduling,
-            "clustered_shadowed": clustered_shadowed,
-            "approved": approved,
-            "active": active,
-            "completed": completed,
-        },
-    }
+        return {
+            "status": "error",
+            "message": str(e)
+        }

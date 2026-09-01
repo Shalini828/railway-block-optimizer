@@ -10,6 +10,7 @@ import {
   Lock,
   LogOut,
   ShieldAlert,
+  Siren,
   TrainFront,
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
@@ -35,6 +36,7 @@ const NAV = [
   { to: "/conflicts", label: "Conflicts & Approvals", icon: ShieldAlert },
   { to: "/maintenance-tasks", label: "Maintenance Tasks", icon: ClipboardList },
   { to: "/analytics", label: "Impact Analytics", icon: BarChart3 },
+  { to: "/emergency", label: "Emergency Blocking", icon: Siren },
 ] as const;
 
 export function AppShell({ children }: { children: ReactNode }) {
