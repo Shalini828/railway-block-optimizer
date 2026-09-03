@@ -189,9 +189,15 @@ export function AppShell({ children }: { children: ReactNode }) {
           ))}
         </nav>
         <div className="border-t border-border px-4 py-3 text-xs text-muted-foreground">
-          <div className="flex items-center gap-1.5">
-            <Activity className="size-3.5 text-safe" />
-            COA feed live · NDLS–BSB
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5">
+              <span className="relative flex size-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-safe opacity-75"></span>
+                <span className="relative inline-flex size-2 rounded-full bg-safe"></span>
+              </span>
+              COA feed active
+            </div>
+            <span className="font-medium text-foreground">NDLS → BSB</span>
           </div>
         </div>
       </aside>
@@ -200,12 +206,18 @@ export function AppShell({ children }: { children: ReactNode }) {
         <header className="sticky top-0 z-20 border-b border-border bg-background/85 backdrop-blur">
           <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6">
             <div>
-              <p className="text-sm font-semibold">{role.title}</p>
+              <p className="text-sm font-semibold uppercase text-foreground">{role.title}</p>
               <p className="text-xs text-muted-foreground">
                 {role.name} · Access: {role.system}
               </p>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-4">
+              <div className="hidden items-center gap-1.5 rounded-full border border-border bg-secondary/50 px-3 py-1 text-xs font-medium text-safe sm:flex">
+                <span className="relative flex size-2">
+                  <span className="relative inline-flex size-2 rounded-full bg-safe"></span>
+                </span>
+                SYSTEM OPERATIONAL
+              </div>
               <Button size="sm" variant="ghost" onClick={signOut}>
                 <LogOut className="size-4" /> Sign Out
               </Button>
