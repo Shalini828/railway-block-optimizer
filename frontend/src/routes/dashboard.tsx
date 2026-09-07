@@ -95,6 +95,14 @@ interface RequisitionPipeline {
   completed: number;
 }
 
+interface DashboardAnalytics {
+  optimization_runs: number;
+  blocks_generated: number;
+  average_block_utilization: number;
+  average_train_impact: number;
+  total_optimized_block_minutes: number;
+}
+
 interface DashboardData {
   status: string;
   kpis: DashboardKPIs;
@@ -102,6 +110,8 @@ interface DashboardData {
   urgent_risks: UrgentRisk[];
   train_forecast: TrainForecast[];
   requisition_pipeline: RequisitionPipeline;
+  analytics: DashboardAnalytics;
+  last_updated: string;
 }
 
 function DashboardPage() {
@@ -203,7 +213,17 @@ const MOCK_DATA: DashboardData = {
     approved: 2,
     active: 1,
     completed: 67
-  }
+  },
+  
+  analytics: {
+  optimization_runs: 0,
+  blocks_generated: 0,
+  average_block_utilization: 0,
+  average_train_impact: 0,
+  total_optimized_block_minutes: 0,
+},
+
+last_updated: new Date().toISOString(),
 };
 
   const fetchData = async () => {

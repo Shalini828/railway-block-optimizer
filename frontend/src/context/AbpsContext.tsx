@@ -1,11 +1,4 @@
-import {
-  createContext,
-  useContext,
-  useEffect,
-  useMemo,
-  useState,
-  type ReactNode,
-} from "react";
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   REQUISITIONS,
   ROLES,
@@ -62,11 +55,11 @@ export function AbpsProvider({ children }: { children: ReactNode }) {
   const [reqs, setReqs] = useState<Requisition[]>(REQUISITIONS);
   const [trains, setTrains] = useState<Train[]>([]);
   const [kpis, setKpis] = useState({
-  availability: "0.0",
-  scheduled: 0,
-  blockHours: "0.0",
-  trainDelay: 0,
-});
+    availability: "0.0",
+    scheduled: 0,
+    blockHours: "0.0",
+    trainDelay: 0,
+  });
   useEffect(() => {
     fetch("http://127.0.0.1:8000/dashboard/kpis")
       .then((res) => {
@@ -77,10 +70,10 @@ export function AbpsProvider({ children }: { children: ReactNode }) {
       })
       .then((data) => {
         setKpis({
-          availability: String(data.asset_availability_percent),
-          scheduled: data.scheduled_blocks,
-          blockHours: String(data.total_block_hours),
-          trainDelay: data.train_delay_impact_minutes,
+          availability: String(data.kpis?.overall_asset_availability ?? 0),
+          scheduled: data.kpis?.scheduled_blocks ?? 0,
+          blockHours: String(data.kpis?.shadow_block_savings ?? 0),
+          trainDelay: data.kpis?.punctuality_impact_index ?? 0,
         });
       })
       .catch((error) => {
@@ -134,25 +127,25 @@ export function AbpsProvider({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
-  fetch("http://127.0.0.1:8000/trains/")
-    .then((res) => {
-      if (!res.ok) {
-        throw new Error("Failed to fetch trains");
-      }
-      return res.json();
-    })
-    .then((data: Train[]) => {
-      setTrains(data);
-    })
-    .catch((error) => {
-      console.error("Train API error:", error);
-    });
-}, []);
+    fetch("http://127.0.0.1:8000/trains/")
+      .then((res) => {
+        if (!res.ok) {
+          throw new Error("Failed to fetch trains");
+        }
+        return res.json();
+      })
+      .then((data: Train[]) => {
+        setTrains(data);
+      })
+      .catch((error) => {
+        console.error("Train API error:", error);
+      });
+  }, []);
 
   const value: Ctx = {
-  role,
-  setRole,
-  trains,
+    role,
+    setRole,
+    trains,
     signedIn,
     signIn: (id) => {
       setRole(id);
@@ -164,7 +157,12 @@ export function AbpsProvider({ children }: { children: ReactNode }) {
       const id = `REQ-${r.dept}-${counter}`;
       setCounter((c) => c + 1);
       setReqs((prev) => [
-        { ...r, id, status: "Pending AI Scheduling" as const, score: criticalityScore({ ...r, id, status: "Pending AI Scheduling" } as Requisition) },
+        {
+          ...r,
+          id,
+          status: "Pending AI Scheduling" as const,
+          score: criticalityScore({ ...r, id, status: "Pending AI Scheduling" } as Requisition),
+        },
         ...prev,
       ]);
     },
@@ -199,8 +197,8 @@ export function AbpsProvider({ children }: { children: ReactNode }) {
       );
     },
     signedOff,
-savedMinutes: plan.reduce((s, p) => s + p.savedMinutes, 0),
-kpis,
+    savedMinutes: plan.reduce((s, p) => s + p.savedMinutes, 0),
+    kpis,
   };
 
   return <AbpsContext.Provider value={value}>{children}</AbpsContext.Provider>;
