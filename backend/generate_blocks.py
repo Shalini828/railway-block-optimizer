@@ -1,17 +1,14 @@
+# pyrefly: ignore [missing-import]
 import psycopg
 import random
 from datetime import date, time, timedelta
 
+from db_config import DB_CONFIG
+
 
 TODAY = date(2026, 8, 27)
 
-connection = psycopg.connect(
-    host="localhost",
-    port=5432,
-    dbname="railway_block_planning",
-    user="postgres",
-    password="Sansi2305"
-)
+connection = psycopg.connect(**DB_CONFIG)
 
 cursor = connection.cursor()
 

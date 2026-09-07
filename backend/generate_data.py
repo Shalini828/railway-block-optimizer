@@ -1,24 +1,20 @@
+# pyrefly: ignore [missing-import]
 import psycopg
+# pyrefly: ignore [missing-import]
 from faker import Faker
+
+from db_config import DB_CONFIG
 
 fake = Faker()
 
-# Connect to PostgreSQL
-connection = psycopg.connect(
-    host="localhost",
-    port=5432,
-    dbname="railway_block_planning",
-    user="postgres",
-    password="Sansi2305"
-)
-
+connection = psycopg.connect(**DB_CONFIG)
 cursor = connection.cursor()
 
 zones = [
     "Northern Railway",
     "Western Railway",
-    "Eastern Railway",
     "Southern Railway",
+    "Eastern Railway",
     "Central Railway"
 ]
 
@@ -36,8 +32,7 @@ for i, zone in enumerate(zones, start=2):
     )
 
 connection.commit()
-
 cursor.close()
 connection.close()
 
-print("✅ 5 divisions generated and inserted successfully!")
+print("5 divisions generated and inserted successfully!")

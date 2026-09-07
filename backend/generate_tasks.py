@@ -1,13 +1,11 @@
+# pyrefly: ignore [missing-import]
 import psycopg
 from datetime import date
 
-connection = psycopg.connect(
-    host="localhost",
-    port=5432,
-    dbname="railway_block_planning",
-    user="postgres",
-    password="Sansi2305"
-)
+from db_config import DB_CONFIG
+
+
+connection = psycopg.connect(**DB_CONFIG)
 
 cursor = connection.cursor()
 

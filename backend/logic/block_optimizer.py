@@ -1,4 +1,5 @@
 import psycopg
+from db_config import DB_CONFIG
 
 
 # ==========================================
@@ -13,19 +14,13 @@ MAX_CONSOLIDATION_GAP = 15     # 15 minutes
 # DATABASE CONNECTION
 # ==========================================
 
-connection = psycopg.connect(
-    host="localhost",
-    port=5432,
-    dbname="railway_block_planning",
-    user="postgres",
-    password="Sansi2305"
-)
+connection = psycopg.connect(**DB_CONFIG)
 
 cursor = connection.cursor()
 
 
 # ==========================================
-# GET BLOCK REQUESTS + PRIORITY
+# GET BLOCK REQUESTS + AI PRIORITY
 # ==========================================
 
 cursor.execute("""
@@ -38,7 +33,8 @@ cursor.execute("""
         br.requested_start,
         br.requested_end,
         br.requested_duration_min,
-        COALESCE(mt.priority_score, 0)
+        COALESCE(mt.priority_score, 0),
+        COALESCE(mt.priority_category, 'LOW')
     FROM block_requests br
 
     LEFT JOIN maintenance_tasks mt
@@ -49,6 +45,7 @@ cursor.execute("""
     ORDER BY
         br.corridor_id,
         br.requested_date,
+        COALESCE(mt.priority_score, 0) DESC,
         br.requested_start
 """)
 
@@ -80,6 +77,7 @@ trains = cursor.fetchall()
 # ==========================================
 
 def time_to_minutes(t):
+
     return t.hour * 60 + t.minute
 
 
@@ -127,6 +125,7 @@ def get_train_conflicts(
         if train_corridor != corridor:
             continue
 
+
         if train_date != block_date:
             continue
 
@@ -171,7 +170,8 @@ for request in requests:
         request_start,
         request_end,
         duration,
-        priority
+        priority,
+        priority_category
     ) = request
 
 
@@ -187,6 +187,7 @@ for request in requests:
         # Same corridor
         if group["corridor"] != corridor_id:
             continue
+
 
         # Same date
         if group["date"] != request_date:
@@ -256,6 +257,12 @@ for request in requests:
 
             group["requests"].append(request)
 
+            # Keep the highest AI priority
+            group["max_priority"] = max(
+                group["max_priority"],
+                float(priority)
+            )
+
             placed = True
 
             break
@@ -273,9 +280,20 @@ for request in requests:
                 "date": request_date,
                 "start": request_start,
                 "end": request_end,
-                "requests": [request]
+                "requests": [request],
+                "max_priority": float(priority)
             }
         )
+
+
+# ==========================================
+# SORT BLOCK GROUPS BY AI PRIORITY
+# ==========================================
+
+groups.sort(
+    key=lambda group: group["max_priority"],
+    reverse=True
+)
 
 
 # ==========================================
@@ -363,10 +381,6 @@ for group in groups:
         group["requests"]
     )
 
-
-    # Calculate actual occupied time
-    # instead of blindly summing overlapping
-    # task durations.
 
     intervals = []
 
@@ -467,7 +481,8 @@ for group in groups:
             "utilization": utilization,
             "train_impact": train_impact_score,
             "tasks": group["requests"],
-            "train_conflicts": train_conflicts
+            "train_conflicts": train_conflicts,
+            "priority": group["max_priority"]
         }
     )
 
@@ -597,7 +612,7 @@ connection.commit()
 
 print()
 print("==============================================================")
-print("                 BLOCK OPTIMIZER V2")
+print("                 BLOCK OPTIMIZER V3")
 print("==============================================================")
 print()
 
@@ -616,11 +631,12 @@ print(
     f"{'CORRIDOR':<10}"
     f"{'TIME':<20}"
     f"{'TASKS':<8}"
+    f"{'PRIORITY':<10}"
     f"{'UTIL':<8}"
     f"TRAIN IMPACT"
 )
 
-print("-" * 90)
+print("-" * 105)
 
 
 for block in optimized_blocks:
@@ -631,6 +647,7 @@ for block in optimized_blocks:
         f"{str(block['start'])[:5]}-"
         f"{str(block['end'])[:5]:<14}"
         f"{len(block['tasks']):<8}"
+        f"{block['priority']:<10.2f}"
         f"{block['utilization']:<8}"
         f"{block['train_impact']}"
     )
@@ -640,6 +657,7 @@ print()
 print("==============================================================")
 print("              OPTIMIZATION COMPLETE")
 print("==============================================================")
+
 
 cursor.close()
 connection.close()

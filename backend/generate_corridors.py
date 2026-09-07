@@ -1,14 +1,10 @@
+# pyrefly: ignore [missing-import]
 import psycopg
 import random
 
-connection = psycopg.connect(
-    host="localhost",
-    port=5432,
-    dbname="railway_block_planning",
-    user="postgres",
-    password="Sansi2305"
-)
+from db_config import DB_CONFIG
 
+connection = psycopg.connect(**DB_CONFIG)
 cursor = connection.cursor()
 
 stations = [
@@ -28,7 +24,9 @@ traffic_levels = ["LOW", "MEDIUM", "HIGH"]
 
 for i, (source, destination) in enumerate(stations, start=2):
     corridor_id = f"C{i:02d}"
-    division_id = random.randint(1, 6)
+
+    # divisions currently generated are 2-6
+    division_id = random.randint(2, 6)
 
     corridor_name = f"{source}-{destination} Main Corridor"
 
@@ -72,4 +70,4 @@ connection.commit()
 cursor.close()
 connection.close()
 
-print("✅ 10 corridors generated and inserted successfully!")
+print("10 corridors generated and inserted successfully!")
