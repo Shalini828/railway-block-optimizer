@@ -1,0 +1,737 @@
+import psycopg
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+# ==========================================
+# SETTINGS
+# ==========================================
+
+MAX_BLOCK_DURATION = 240       # 4 hours
+MAX_CONSOLIDATION_GAP = 15     # 15 minutes
+
+
+# ==========================================
+# DATABASE CONNECTION
+# ==========================================
+
+connection = psycopg.connect(
+    host=os.getenv("DB_HOST"),
+    port=os.getenv("DB_PORT"),
+    dbname=os.getenv("DB_NAME"),
+    user=os.getenv("DB_USER"),
+    password=os.getenv("DB_PASSWORD")
+)
+
+cursor = connection.cursor()
+
+
+# ==========================================
+# GET BLOCK REQUESTS + PRIORITY
+# ==========================================
+
+cursor.execute("""
+    SELECT
+        br.request_id,
+        br.task_id,
+        br.team_id,
+        br.corridor_id,
+        br.requested_date,
+        br.requested_start,
+        br.requested_end,
+        br.requested_duration_min,
+        COALESCE(mt.priority_score, 0)
+    FROM block_requests br
+
+    LEFT JOIN maintenance_tasks mt
+        ON br.task_id = mt.task_id
+
+    WHERE br.request_status = 'PENDING'
+
+    ORDER BY
+        br.corridor_id,
+        br.requested_date,
+        mt.priority_score DESC,
+        br.requested_start
+""")
+
+requests = cursor.fetchall()
+
+
+# ==========================================
+# GET TRAINS
+# ==========================================
+
+cursor.execute("""
+    SELECT
+        train_id,
+        train_number,
+        train_name,
+        train_type,
+        corridor_id,
+        travel_date,
+        arrival_time,
+        departure_time
+    FROM trains
+""")
+
+trains = cursor.fetchall()
+
+
+# ==========================================
+# TIME FUNCTIONS
+# ==========================================
+
+def time_to_minutes(t):
+    return t.hour * 60 + t.minute
+
+
+def minutes_to_time(minutes):
+
+    minutes = minutes % (24 * 60)
+
+    hour = minutes // 60
+    minute = minutes % 60
+
+    return f"{hour:02d}:{minute:02d}:00"
+
+
+# ==========================================
+# TRAIN CONFLICT DETECTION
+# ==========================================
+
+def get_train_conflicts(
+    corridor,
+    block_date,
+    start_time,
+    end_time
+):
+
+    conflicts = []
+
+    block_start = time_to_minutes(start_time)
+    block_end = time_to_minutes(end_time)
+
+
+    for train in trains:
+
+        (
+            train_id,
+            train_number,
+            train_name,
+            train_type,
+            train_corridor,
+            train_date,
+            arrival,
+            departure
+        ) = train
+
+
+        if train_corridor != corridor:
+            continue
+
+        if train_date != block_date:
+            continue
+
+
+        train_start = time_to_minutes(arrival)
+        train_end = time_to_minutes(departure)
+
+
+        if (
+            block_start < train_end
+            and train_start < block_end
+        ):
+
+            conflicts.append(
+                {
+                    "train_id": train_id,
+                    "train_number": train_number,
+                    "train_name": train_name,
+                    "train_type": train_type
+                }
+            )
+
+
+    return conflicts
+
+
+# ==========================================
+# GROUP COMPATIBLE REQUESTS
+# ==========================================
+
+groups = []
+
+for request in requests:
+
+    (
+        request_id,
+        task_id,
+        team_id,
+        corridor_id,
+        request_date,
+        request_start,
+        request_end,
+        duration,
+        priority
+    ) = request
+
+
+    start = time_to_minutes(request_start)
+    end = time_to_minutes(request_end)
+
+
+    placed = False
+
+
+    for group in groups:
+
+        # Same corridor
+        if group["corridor"] != corridor_id:
+            continue
+
+        # Same date
+        if group["date"] != request_date:
+            continue
+
+
+        group_start = time_to_minutes(
+            group["start"]
+        )
+
+        group_end = time_to_minutes(
+            group["end"]
+        )
+
+
+        # Distance between request and group
+
+        if start > group_end:
+
+            gap = start - group_end
+
+        elif group_start > end:
+
+            gap = group_start - end
+
+        else:
+
+            gap = 0
+
+
+        # New combined window
+
+        combined_start = min(
+            group_start,
+            start
+        )
+
+        combined_end = max(
+            group_end,
+            end
+        )
+
+
+        combined_duration = (
+            combined_end - combined_start
+        )
+
+
+        # ----------------------------------
+        # CONSOLIDATION CONDITIONS
+        # ----------------------------------
+
+        if (
+            gap <= MAX_CONSOLIDATION_GAP
+            and combined_duration <= MAX_BLOCK_DURATION
+        ):
+
+            group["start"] = min(
+                group["start"],
+                request_start
+            )
+
+            group["end"] = max(
+                group["end"],
+                request_end
+            )
+
+            group["requests"].append(request)
+
+            placed = True
+
+            break
+
+
+    # --------------------------------------
+    # CREATE NEW GROUP
+    # --------------------------------------
+
+    if not placed:
+
+        groups.append(
+            {
+                "corridor": corridor_id,
+                "date": request_date,
+                "start": request_start,
+                "end": request_end,
+                "requests": [request]
+            }
+        )
+
+print("GROUPS CREATED:", len(groups))
+
+
+# ==========================================
+# CREATE OPTIMIZED BLOCKS
+# ==========================================
+
+
+optimized_blocks = []
+
+
+block_number = 1
+
+
+for group in groups:
+
+    print("PROCESSING GROUP:", group["corridor"], group["date"])
+
+    corridor = group["corridor"]
+    block_date = group["date"]
+
+    start_time = group["start"]
+    end_time = group["end"]
+
+    start_minutes = time_to_minutes(
+        start_time
+    )
+
+    end_minutes = time_to_minutes(
+        end_time
+    )
+
+    duration = end_minutes - start_minutes
+
+    if duration < 0:
+        duration += 1440
+
+    # ======================================
+    # TRAIN CONFLICTS
+    # ======================================
+
+    train_conflicts = get_train_conflicts(
+        corridor,
+        block_date,
+        start_time,
+        end_time
+    )
+
+    # ======================================
+    # SAFETY CONSTRAINT
+    # ======================================
+
+    if train_conflicts:
+        print(
+            "BLOCK REJECTED - TRAIN CONFLICT:",
+            corridor,
+            block_date,
+            start_time,
+            end_time
+        )
+        continue
+
+    # ======================================
+    # TRAIN IMPACT SCORE
+    # ======================================
+
+    train_impact_score = 0
+
+    for train in train_conflicts:
+
+        if train["train_type"] == "EXPRESS":
+
+            train_impact_score += 40
+
+        elif train["train_type"] == "PASSENGER":
+
+            train_impact_score += 25
+
+        elif train["train_type"] == "FREIGHT":
+
+            train_impact_score += 15
+
+        else:
+
+            train_impact_score += 20
+
+
+    train_impact_score = min(
+        train_impact_score,
+        100
+    )
+
+
+    # ======================================
+    # MAINTENANCE UTILIZATION
+    # ======================================
+
+    number_of_tasks = len(
+        group["requests"]
+    )
+
+
+    # Calculate actual occupied time
+    # instead of blindly summing overlapping
+    # task durations.
+
+    intervals = []
+
+    for request in group["requests"]:
+
+        request_start = time_to_minutes(
+            request[5]
+        )
+
+        request_end = time_to_minutes(
+            request[6]
+        )
+
+        # Handle overnight requests
+        if request_end < request_start:
+            request_end += 1440
+
+        intervals.append(
+            (
+                request_start,
+                request_end
+            )
+        )
+
+
+    intervals.sort()
+
+
+    occupied_start = None
+    occupied_end = None
+    occupied_minutes = 0
+
+
+    for start, end in intervals:
+
+        if occupied_start is None:
+
+            occupied_start = start
+            occupied_end = end
+
+        elif start <= occupied_end:
+
+            occupied_end = max(
+                occupied_end,
+                end
+            )
+
+        else:
+
+            occupied_minutes += (
+                occupied_end - occupied_start
+            )
+
+            occupied_start = start
+            occupied_end = end
+
+
+    if occupied_start is not None:
+
+        occupied_minutes += (
+            occupied_end - occupied_start
+        )
+
+
+    if duration > 0:
+
+        utilization = (
+            occupied_minutes
+            / duration
+        ) * 100
+
+    else:
+
+        utilization = 0
+
+
+    utilization = round(
+        min(utilization, 100),
+        2
+    )
+
+
+    # ======================================
+    # BLOCK ID
+    # ======================================
+
+    block_id = (
+        f"OPT-{block_date}-"
+        f"{block_number:03d}"
+    )
+
+
+    optimized_blocks.append(
+        {
+            "block_id": block_id,
+            "corridor": corridor,
+            "date": block_date,
+            "start": start_time,
+            "end": end_time,
+            "duration": duration,
+            "utilization": utilization,
+            "optimization_score": round(
+                (utilization * 0.5)
+                + ((100 - train_impact_score) * 0.5),
+                2
+            ),
+            "tasks": group["requests"],
+            "train_conflicts": train_conflicts,
+            "reason": (
+                f"Grouped {number_of_tasks} maintenance tasks on "
+                f"corridor {corridor} into a {duration}-minute maintenance block "
+                f"with {utilization}% utilization."
+            ),
+        }
+    )
+
+    block_number += 1
+
+# ==========================================
+# DELETE PREVIOUS OPTIMIZATION
+# ==========================================
+
+cursor.execute(
+    "DELETE FROM block_train_impact"
+)
+
+cursor.execute(
+    "DELETE FROM block_tasks"
+)
+
+cursor.execute(
+    "DELETE FROM optimized_blocks"
+)
+
+# ==========================================
+# INSERT OPTIMIZED BLOCKS
+# ==========================================
+for block in optimized_blocks:
+
+    department_count = 0
+
+    if block["tasks"]:
+
+        task_ids = [
+            request[1]
+            for request in block["tasks"]
+        ]
+
+        cursor.execute(
+            """
+            SELECT COUNT(DISTINCT department)
+            FROM maintenance_tasks
+            WHERE task_id = ANY(%s)
+            """,
+            (task_ids,)
+        )
+
+        department_count = cursor.fetchone()[0]
+        print("DEPARTMENT COUNT:", department_count)
+
+    print(
+        "BEFORE INSERT:",
+        block["block_id"],
+        "CORRIDOR =", block["corridor"],
+        "DATE =", block["date"],
+        "START =", block["start"],
+        "END =", block["end"],
+        "DURATION =", block["duration"],
+        "UTILIZATION =", block["utilization"],
+        "TRAIN IMPACT =", block.get("train_impact", 0),
+        "TASKS =", len(block["tasks"]),
+        "DEPARTMENTS =", department_count
+    )
+
+    cursor.execute(
+        """
+        INSERT INTO optimized_blocks
+        (
+            block_id,
+            corridor_id,
+            block_date,
+            start_time,
+            end_time,
+            duration_min,
+            utilization_percent,
+            train_impact_score,
+            optimization_score,
+            number_of_tasks,
+            number_of_departments
+        )
+        VALUES
+        (
+            %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s, %s
+        )
+        """,
+        (
+            block["block_id"],
+            block["corridor"],
+            block["date"],
+            block["start"],
+            block["end"],
+            block["duration"],
+            block["utilization"],
+            block.get("train_impact", 0),
+            block["optimization_score"],
+            len(block["tasks"]),
+            department_count
+        )
+    )
+
+    print("OPTIMIZED BLOCK INSERTED:", block["block_id"])
+
+
+    # ======================================
+    # BLOCK ↔ TASK
+    # ======================================
+
+    for request in block["tasks"]:
+
+        task_id = request[1]
+
+        cursor.execute(
+            """
+            INSERT INTO block_tasks
+            (
+                block_id,
+                task_id
+            )
+            VALUES (%s, %s)
+            ON CONFLICT DO NOTHING
+            """,
+            (
+                block["block_id"],
+                task_id
+            )
+        )
+    cursor.execute(
+    """
+    UPDATE optimized_blocks ob
+    SET number_of_departments = (
+        SELECT COUNT(DISTINCT mt.department)
+        FROM block_tasks bt
+        JOIN maintenance_tasks mt
+            ON bt.task_id = mt.task_id
+        WHERE bt.block_id = ob.block_id
+    )
+    WHERE ob.block_id = %s
+    """,
+    (block["block_id"],)
+)
+
+
+    # ======================================
+    # BLOCK ↔ TRAIN
+    # ======================================
+
+    for train in block["train_conflicts"]:
+
+        cursor.execute(
+            """
+            INSERT INTO block_train_impact
+            (
+                block_id,
+                train_id,
+                impact_type,
+                estimated_delay_min
+            )
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT DO NOTHING
+            """,
+            (
+                block["block_id"],
+                train["train_id"],
+                "SCHEDULE_CONFLICT",
+                5
+            )
+        )
+
+# ==========================================
+# SAVE
+# ==========================================
+
+# MARK PROCESSED REQUESTS AS OPTIMIZED
+for block in optimized_blocks:
+    for request in block["tasks"]:
+        request_id = request[0]
+
+        cursor.execute(
+            """
+            UPDATE block_requests
+            SET request_status = 'OPTIMIZED'
+            WHERE request_id = %s
+            """,
+            (request_id,)
+        )
+connection.commit()
+
+
+# ==========================================
+# DISPLAY
+# ==========================================
+
+print()
+print("==============================================================")
+print("                 BLOCK OPTIMIZER V2")
+print("==============================================================")
+print()
+
+print(
+    f"Requests processed : {len(requests)}"
+)
+
+print(
+    f"Blocks generated   : {len(optimized_blocks)}"
+)
+
+print()
+
+print(
+    f"{'BLOCK':<25}"
+    f"{'CORRIDOR':<10}"
+    f"{'TIME':<20}"
+    f"{'TASKS':<8}"
+    f"{'UTIL':<8}"
+    f"TRAIN IMPACT"
+)
+
+print("-" * 90)
+
+
+for block in optimized_blocks:
+
+    print(
+        f"{block['block_id']:<25}"
+        f"{block['corridor']:<10}"
+        f"{str(block['start'])[:5]}-"
+        f"{str(block['end'])[:5]:<14}"
+        f"{len(block['tasks']):<8}"
+        f"{block['utilization']:<8}"
+        f"{block.get('train_impact', 0)}"
+    )
+
+
+print()
+print("==============================================================")
+print("              OPTIMIZATION COMPLETE")
+print("==============================================================")
+
+cursor.close()
+connection.close()
