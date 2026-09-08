@@ -91,12 +91,15 @@ function LandingPage() {
             <span className="text-primary">Block Planning System</span>
           </h1>
           <p className="mt-6 max-w-2xl text-lg text-muted-foreground">
-            Maximising asset availability for Indian Railways by intelligently clustering maintenance windows, eliminating redundant shutdowns, and avoiding express path conflicts.
+            Maximising asset availability for Indian Railways by intelligently clustering
+            maintenance windows, eliminating redundant shutdowns, and avoiding express path
+            conflicts.
           </p>
           <div className="mt-10 flex flex-wrap items-center justify-center gap-4">
             <Button asChild size="lg" className="h-12 px-8 text-base">
               <Link to="/dashboard">
-                {signedIn ? "Open Dashboard" : "Access Dashboard"} <ArrowRight className="ml-2 h-4 w-4" />
+                {signedIn ? "Open Dashboard" : "Access Dashboard"}{" "}
+                <ArrowRight className="ml-2 h-4 w-4" />
               </Link>
             </Button>
             <Button asChild size="lg" variant="outline" className="h-12 px-8 text-base">
@@ -122,9 +125,7 @@ function LandingPage() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <CardDescription className="text-sm">
-                  {feat.description}
-                </CardDescription>
+                <CardDescription className="text-sm">{feat.description}</CardDescription>
               </CardContent>
             </Card>
           </Link>

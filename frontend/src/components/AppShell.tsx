@@ -118,9 +118,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 />
                 <Lock className="absolute right-3 top-2.5 size-4 text-muted-foreground" />
               </div>
-              {errorMsg && (
-                <p className="text-xs font-medium text-destructive">{errorMsg}</p>
-              )}
+              {errorMsg && <p className="text-xs font-medium text-destructive">{errorMsg}</p>}
             </div>
 
             <Button type="submit" className="w-full">
@@ -153,9 +151,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             <Link to="/dashboard">Sign In to Dashboard</Link>
           </Button>
         </header>
-        <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-10 sm:px-6">
-          {children}
-        </main>
+        <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-10 sm:px-6">{children}</main>
       </div>
     );
   }

@@ -69,7 +69,9 @@ function ConflictsPage() {
                 <div className="flex items-start justify-between gap-2">
                   <p className="text-sm">{c.message}</p>
                   <Badge
-                    className={c.resolved ? "bg-safe/20 text-safe" : "bg-destructive/20 text-destructive"}
+                    className={
+                      c.resolved ? "bg-safe/20 text-safe" : "bg-destructive/20 text-destructive"
+                    }
                   >
                     {c.resolved ? "Resolved" : "Open"}
                   </Badge>
@@ -135,7 +137,9 @@ function ConflictsPage() {
                     </p>
                     <Badge
                       variant="outline"
-                      className={p.depts.length > 1 ? deptColor["JOINT"] : deptColor[p.depts[0] ?? "TMS"]}
+                      className={
+                        p.depts.length > 1 ? deptColor["JOINT"] : deptColor[p.depts[0] ?? "TMS"]
+                      }
                     >
                       {p.depts.length > 1
                         ? `Joint · ${p.depts.join(" + ")}`

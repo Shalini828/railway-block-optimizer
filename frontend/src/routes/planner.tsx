@@ -3,23 +3,11 @@ import { useState } from "react";
 import { CalendarRange, TriangleAlert } from "lucide-react";
 import { PageHeader } from "@/components/AppShell";
 import { useAbps } from "@/context/AbpsContext";
-import {
-  CORRIDORS,
-  DAYS,
-  DEPT_LABEL,
-  TRAIN_PATHS,
-  fmt,
-  type Requisition,
-} from "@/lib/abps-data";
+import { CORRIDORS, DAYS, DEPT_LABEL, TRAIN_PATHS, fmt, type Requisition } from "@/lib/abps-data";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export const Route = createFileRoute("/planner")({

@@ -49,11 +49,7 @@ export const DEPT_LABEL: Record<Dept, string> = {
 };
 
 export type Status =
-  | "Pending AI Scheduling"
-  | "Clustered / Shadowed"
-  | "Approved"
-  | "Active"
-  | "Completed";
+  "Pending AI Scheduling" | "Clustered / Shadowed" | "Approved" | "Active" | "Completed";
 
 export type Requisition = {
   id: string;
@@ -132,12 +128,66 @@ export type TrainPath = {
 };
 
 export const TRAIN_PATHS: TrainPath[] = [
-  { no: "12951", name: "Mumbai Rajdhani", section: "NDLS-CNB", line: "Down Main", day: 0, start: 17, end: 19, kind: "Premium" },
-  { no: "22435", name: "Vande Bharat NDLS-BSB", section: "CNB-ALD", line: "Up Main", day: 2, start: 11, end: 12.5, kind: "Premium" },
-  { no: "12801", name: "Purushottam Express", section: "ALD-DDU", line: "Down Main", day: 2, start: 14, end: 16, kind: "Express" },
-  { no: "GDS-4412", name: "Coal Rake DDU-NDLS", section: "ALD-DDU", line: "Freight Loop", day: 3, start: 13, end: 17, kind: "Freight" },
-  { no: "12559", name: "Shiv Ganga Express", section: "DDU-BSB", line: "Up Main", day: 3, start: 6, end: 8, kind: "Express" },
-  { no: "GDS-7781", name: "Container Rake CNB", section: "NDLS-CNB", line: "Line 3 Up", day: 4, start: 15, end: 18, kind: "Freight" },
+  {
+    no: "12951",
+    name: "Mumbai Rajdhani",
+    section: "NDLS-CNB",
+    line: "Down Main",
+    day: 0,
+    start: 17,
+    end: 19,
+    kind: "Premium",
+  },
+  {
+    no: "22435",
+    name: "Vande Bharat NDLS-BSB",
+    section: "CNB-ALD",
+    line: "Up Main",
+    day: 2,
+    start: 11,
+    end: 12.5,
+    kind: "Premium",
+  },
+  {
+    no: "12801",
+    name: "Purushottam Express",
+    section: "ALD-DDU",
+    line: "Down Main",
+    day: 2,
+    start: 14,
+    end: 16,
+    kind: "Express",
+  },
+  {
+    no: "GDS-4412",
+    name: "Coal Rake DDU-NDLS",
+    section: "ALD-DDU",
+    line: "Freight Loop",
+    day: 3,
+    start: 13,
+    end: 17,
+    kind: "Freight",
+  },
+  {
+    no: "12559",
+    name: "Shiv Ganga Express",
+    section: "DDU-BSB",
+    line: "Up Main",
+    day: 3,
+    start: 6,
+    end: 8,
+    kind: "Express",
+  },
+  {
+    no: "GDS-7781",
+    name: "Container Rake CNB",
+    section: "NDLS-CNB",
+    line: "Line 3 Up",
+    day: 4,
+    start: 15,
+    end: 18,
+    kind: "Freight",
+  },
 ];
 
 export const REQUISITIONS: Requisition[] = [
@@ -385,11 +435,7 @@ function corridorWindow(section: string): { day: number; start: number } {
 function clashesWithTrain(section: string, line: string, day: number, start: number, end: number) {
   return TRAIN_PATHS.find(
     (t) =>
-      t.section === section &&
-      t.line === line &&
-      t.day === day &&
-      start < t.end &&
-      end > t.start,
+      t.section === section && t.line === line && t.day === day && start < t.end && end > t.start,
   );
 }
 
