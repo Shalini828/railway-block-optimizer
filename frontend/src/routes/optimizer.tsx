@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { BrainCircuit, Layers, Sparkles, TimerReset, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader, deptColor } from "@/components/AppShell";
@@ -37,12 +37,50 @@ export const Route = createFileRoute("/optimizer")({
   component: OptimizerPage,
 });
 
+type AiTask = {
+  task_id: string;
+  asset_id: string;
+  department: string;
+  task_type: string;
+  description: string;
+  due_date: string | null;
+  estimated_duration_min: number;
+  overdue_days: number;
+  safety_risk: number;
+  ai_priority_score: number;
+  priority_category: string;
+  task_status: string;
+};
+
 function OptimizerPage() {
   const { reqs, plan, conflicts, optimize } = useAbps();
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState(0);
   const [stage, setStage] = useState("Idle");
   const [drawer, setDrawer] = useState(false);
+
+  const [aiTasks, setAiTasks] = useState<AiTask[]>([]);
+  const [aiLoading, setAiLoading] = useState(true);
+  const [aiError, setAiError] = useState("");
+
+  useEffect(() => {
+    fetch("http://localhost:8000/api/maintenance-tasks")
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error("Failed to fetch AI maintenance priorities");
+        }
+        return response.json();
+      })
+      .then((data) => {
+        setAiTasks(data);
+        setAiLoading(false);
+      })
+      .catch((error) => {
+        console.error(error);
+        setAiError("Unable to load AI priorities");
+        setAiLoading(false);
+      });
+  }, []);
 
   const pending = reqs.filter((r) => r.status === "Pending AI Scheduling");
 
@@ -147,6 +185,86 @@ function OptimizerPage() {
             <Button variant="outline" className="w-full" onClick={() => setDrawer(true)}>
               Open AI recommendation drawer
             </Button>
+          </CardContent>
+        </Card>
+
+        <Card className="lg:col-span-2">
+          <CardHeader>
+            <CardTitle className="text-base">
+              AI Maintenance Priority
+            </CardTitle>
+          </CardHeader>
+
+          <CardContent>
+            {aiLoading && (
+              <p className="text-sm text-muted-foreground">
+                Loading AI priorities...
+              </p>
+            )}
+
+            {aiError && (
+              <p className="text-sm text-destructive">
+                {aiError}
+              </p>
+            )}
+
+            {!aiLoading && !aiError && aiTasks.length === 0 && (
+              <p className="text-sm text-muted-foreground">
+                No maintenance tasks found.
+              </p>
+            )}
+
+            {!aiLoading && !aiError && aiTasks.length > 0 && (
+              <div className="space-y-3">
+                {aiTasks.slice(0, 8).map((task) => (
+                  <div
+                    key={task.task_id}
+                    className="rounded-lg border border-border p-3"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-medium">
+                          {task.task_id}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {task.asset_id} · {task.department}
+                        </p>
+                      </div>
+
+                      <Badge
+                        variant="outline"
+                        className={
+                          task.priority_category === "CRITICAL"
+                            ? "text-destructive"
+                            : task.priority_category === "HIGH"
+                              ? "text-warn"
+                              : task.priority_category === "MEDIUM"
+                                ? "text-primary"
+                                : ""
+                        }
+                      >
+                        {task.priority_category}
+                      </Badge>
+                    </div>
+
+                    <div className="mt-3 flex items-center gap-3">
+                      <Progress
+                        value={task.ai_priority_score}
+                        className="h-2"
+                      />
+
+                      <span className="w-14 text-right text-xs font-semibold">
+                        {task.ai_priority_score.toFixed(2)}
+                      </span>
+                    </div>
+
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      AI risk-based maintenance priority
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
