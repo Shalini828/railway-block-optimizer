@@ -328,51 +328,92 @@ function DashboardPage() {
             </button>
           </div>
         </div>
-        <div className="flex flex-col items-end gap-3 sm:flex-row sm:items-center">
-          <p className="text-xs font-medium text-muted-foreground">AI-assisted block planning</p>
-          <Button asChild className="bg-purple-600 hover:bg-purple-700 text-white shadow-md">
-            <Link to="/optimizer">
-              Run Optimization Engine
-              <ArrowRight className="ml-2 size-4" />
-            </Link>
-          </Button>
-        </div>
       </div>
 
-      {loading ? (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          {[1, 2, 3, 4].map((i) => (
-            <Skeleton key={i} className="h-32 rounded-xl" />
-          ))}
-        </div>
-      ) : (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          {kpis.map((k) => (
-            <Card
-              key={k.label}
-              className="border-l-4 border-l-transparent transition-all hover:border-l-primary hover:shadow-md"
-            >
-              <CardContent className="p-5">
-                <div className="flex items-start justify-between">
-                  <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
-                    {k.label}
-                  </p>
-                  <k.icon className={`size-5 ${k.tone}`} />
+      <div className="grid gap-6 lg:grid-cols-4 mb-6">
+        <div className="lg:col-span-1">
+          <Card className="h-full shadow-sm border border-purple-500/30 bg-gradient-to-br from-card to-purple-900/10">
+            <CardHeader className="pb-3 border-b border-purple-500/10">
+              <CardTitle className="flex items-center gap-2 text-base font-semibold text-purple-500">
+                <BrainCircuit className="size-5" />
+                AI Planning Intelligence
+              </CardTitle>
+              <CardDescription className="text-purple-300/70">
+                Available for optimization runs
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="pt-4 flex flex-col justify-between h-[calc(100%-80px)]">
+              <div className="space-y-3 text-sm text-foreground">
+                <div className="flex items-center gap-3">
+                  <CheckCircle2 className="size-4 text-purple-500" />
+                  <span>Conflict-aware block planning</span>
                 </div>
-                <p className="mt-2 text-3xl font-bold tracking-tight text-foreground">{k.value}</p>
-                <div className="mt-3 flex flex-col gap-1 text-[11px]">
-                  <p
-                    className={`font-medium ${k.status.includes("●") ? "text-safe" : "text-foreground"}`}
-                  >
-                    {k.status}
-                  </p>
-                  <p className="text-muted-foreground">{k.note}</p>
+                <div className="flex items-center gap-3">
+                  <CheckCircle2 className="size-4 text-purple-500" />
+                  <span>Shadow block identification</span>
                 </div>
-              </CardContent>
-            </Card>
-          ))}
+                <div className="flex items-center gap-3">
+                  <CheckCircle2 className="size-4 text-purple-500" />
+                  <span>Train impact estimation</span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <CheckCircle2 className="size-4 text-purple-500" />
+                  <span>Resource coordination</span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <CheckCircle2 className="size-4 text-purple-500" />
+                  <span>Corridor-aware scheduling</span>
+                </div>
+              </div>
+              <Button
+                asChild
+                className="mt-6 w-full bg-purple-600 hover:bg-purple-700 text-white shadow-sm font-semibold"
+              >
+                <Link to="/optimizer">
+                  Open Optimization Engine <Zap className="ml-2 size-4" />
+                </Link>
+              </Button>
+            </CardContent>
+          </Card>
         </div>
-      )}
+
+        <div className="lg:col-span-3 flex flex-col justify-between">
+          {loading ? (
+            <div className="grid gap-4 sm:grid-cols-2">
+              {[1, 2, 3, 4].map((i) => (
+                <Skeleton key={i} className="h-full min-h-32 rounded-xl" />
+              ))}
+            </div>
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2 h-full">
+              {kpis.map((k) => (
+                <Card
+                  key={k.label}
+                  className="border-l-4 border-l-transparent transition-all hover:border-l-primary hover:shadow-md flex flex-col justify-center"
+                >
+                  <CardContent className="p-5">
+                    <div className="flex items-start justify-between">
+                      <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                        {k.label}
+                      </p>
+                      <k.icon className={`size-5 ${k.tone}`} />
+                    </div>
+                    <p className="mt-2 text-3xl font-bold tracking-tight text-foreground">{k.value}</p>
+                    <div className="mt-3 flex flex-col gap-1 text-[11px]">
+                      <p
+                        className={`font-medium ${k.status.includes("●") ? "text-safe" : "text-foreground"}`}
+                      >
+                        {k.status}
+                      </p>
+                      <p className="text-muted-foreground">{k.note}</p>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
 
       {data && (
         <div className="mt-6 flex flex-wrap items-center gap-6 rounded-lg border border-border bg-card/50 px-5 py-3 text-sm shadow-sm">
@@ -728,52 +769,7 @@ function DashboardPage() {
         </Card>
       </div>
 
-      <div className="mt-6 grid gap-6 lg:grid-cols-2">
-        {/* AI PLANNING INTELLIGENCE */}
-        <Card className="shadow-sm border border-purple-500/30 bg-gradient-to-br from-card to-purple-900/10">
-          <CardHeader className="pb-3 border-b border-purple-500/10">
-            <CardTitle className="flex items-center gap-2 text-base font-semibold text-purple-500">
-              <BrainCircuit className="size-5" />
-              AI Planning Intelligence
-            </CardTitle>
-            <CardDescription className="text-purple-300/70">
-              Available for optimization runs
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="pt-4">
-            <div className="space-y-3 text-sm text-foreground">
-              <div className="flex items-center gap-3">
-                <CheckCircle2 className="size-4 text-purple-500" />
-                <span>Conflict-aware block planning</span>
-              </div>
-              <div className="flex items-center gap-3">
-                <CheckCircle2 className="size-4 text-purple-500" />
-                <span>Shadow block identification</span>
-              </div>
-              <div className="flex items-center gap-3">
-                <CheckCircle2 className="size-4 text-purple-500" />
-                <span>Train impact estimation</span>
-              </div>
-              <div className="flex items-center gap-3">
-                <CheckCircle2 className="size-4 text-purple-500" />
-                <span>Resource coordination</span>
-              </div>
-              <div className="flex items-center gap-3">
-                <CheckCircle2 className="size-4 text-purple-500" />
-                <span>Corridor-aware scheduling</span>
-              </div>
-            </div>
-            <Button
-              asChild
-              className="mt-6 w-full bg-purple-600 hover:bg-purple-700 text-white shadow-sm font-semibold"
-            >
-              <Link to="/optimizer">
-                Open Optimization Engine <Zap className="ml-2 size-4" />
-              </Link>
-            </Button>
-          </CardContent>
-        </Card>
-
+      <div className="mt-6 grid gap-6 lg:grid-cols-1">
         {/* TODAY'S OPERATIONAL PRIORITIES */}
         <Card className="shadow-sm border-t-2 border-t-primary/20">
           <CardHeader className="border-b border-border/50 bg-secondary/10 pb-4">
@@ -854,3 +850,4 @@ function DashboardPage() {
     </>
   );
 }
+
