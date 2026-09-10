@@ -11,6 +11,7 @@ from routes.analytics import router as analytics_router
 from routes.simulation import router as simulation_router
 from routes import recommendation
 from routes.dashboard_api import router as dashboard_api_router
+from routes.emergency import router as emergency_router
 
 app = FastAPI(
     title="Railway Block Optimizer API",
@@ -54,3 +55,4 @@ app.include_router(analytics_router)
 app.include_router(simulation_router)
 app.include_router(recommendation.router)
 app.include_router(dashboard_api_router)
+app.include_router(emergency_router)
