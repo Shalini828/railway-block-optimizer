@@ -1,58 +1,73 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routes.trains import router as trains_router
-from routes.block_requests import router as block_requests_router
-from routes.optimization import router as optimization_router
-from routes.conflict_detection import router as conflict_router
-from routes.optimized_plan import router as optimized_plan_router
-from routes.dashboard import router as dashboard_router
-from routes.maintenance_tasks import router as maintenance_tasks_router
-from routes.analytics import router as analytics_router
-from routes.simulation import router as simulation_router
-from routes import recommendation
-from routes.dashboard_api import router as dashboard_api_router
-from routes.emergency import router as emergency_router
+import psycopg
+import sys
 
-app = FastAPI(
-    title="Railway Block Optimizer API",
-    description="AI-powered maintenance and block planning system for railway operations",
-    version="1.0.0"
-)
+sys.path.append("backend")
 
-# Allow React frontend to communicate with FastAPI
+from db_config import DB_CONFIG
+
+app = FastAPI(title="RailWise AI API")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-    "http://localhost:8080",
-    "http://localhost:5173",
-],
+    allow_origins=["http://localhost:8080"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+
 @app.get("/")
 def root():
     return {
-        "message": "Railway Block Optimizer API is running!"
+        "message": "RailWise AI API is running"
     }
 
-@app.get("/health")
-def health():
-    return {
-        "status": "healthy",
-        "service": "railway-block-optimizer"
-    }
 
-app.include_router(trains_router)
-app.include_router(block_requests_router)
-app.include_router(optimization_router)
-app.include_router(conflict_router)
-app.include_router(optimized_plan_router)
-app.include_router(dashboard_router)
-app.include_router(maintenance_tasks_router)
-app.include_router(analytics_router)
-app.include_router(simulation_router)
-app.include_router(recommendation.router)
-app.include_router(dashboard_api_router)
-app.include_router(emergency_router)
+@app.get("/api/maintenance-tasks")
+def get_maintenance_tasks():
+
+    connection = psycopg.connect(**DB_CONFIG)
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        SELECT
+            task_id,
+            asset_id,
+            department,
+            task_type,
+            description,
+            due_date,
+            estimated_duration_min,
+            overdue_days,
+            safety_risk,
+            priority_score,
+            priority_category,
+            task_status
+        FROM maintenance_tasks
+        ORDER BY priority_score DESC NULLS LAST
+    """)
+
+    rows = cursor.fetchall()
+
+    cursor.close()
+    connection.close()
+
+    return [
+        {
+            "task_id": row[0],
+            "asset_id": row[1],
+            "department": row[2],
+            "task_type": row[3],
+            "description": row[4],
+            "due_date": str(row[5]) if row[5] else None,
+            "estimated_duration_min": row[6],
+            "overdue_days": row[7],
+            "safety_risk": row[8],
+            "ai_priority_score": float(row[9]) if row[9] is not None else 0,
+            "priority_category": row[10],
+            "task_status": row[11]
+        }
+        for row in rows
+    ]
