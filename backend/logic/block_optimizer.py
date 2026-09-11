@@ -506,18 +506,8 @@ for group in groups:
 # DELETE PREVIOUS OPTIMIZATION
 # ==========================================
 
-cursor.execute(
-    "DELETE FROM block_train_impact"
-)
-
-cursor.execute(
-    "DELETE FROM block_tasks"
-)
-
-cursor.execute(
-    "DELETE FROM optimized_blocks"
-)
-
+# Do not wipe the existing optimized plan.
+# New optimized blocks are persisted alongside existing blocks.
 # ==========================================
 # INSERT OPTIMIZED BLOCKS
 # ==========================================
@@ -579,6 +569,17 @@ for block in optimized_blocks:
             %s, %s, %s, %s, %s,
             %s, %s, %s, %s, %s, %s
         )
+        ON CONFLICT (block_id) DO UPDATE SET
+        corridor_id = EXCLUDED.corridor_id,
+        block_date = EXCLUDED.block_date,
+        start_time = EXCLUDED.start_time,
+        end_time = EXCLUDED.end_time,
+        duration_min = EXCLUDED.duration_min,
+        utilization_percent = EXCLUDED.utilization_percent,
+        train_impact_score = EXCLUDED.train_impact_score,
+        optimization_score = EXCLUDED.optimization_score,
+        number_of_tasks = EXCLUDED.number_of_tasks,
+        number_of_departments = EXCLUDED.number_of_departments;
         """,
         (
             block["block_id"],

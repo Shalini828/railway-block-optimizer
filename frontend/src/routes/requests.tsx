@@ -58,6 +58,49 @@ import {
 } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
+const BACKEND_CORRIDORS = [
+  {
+    id: "C02",
+    name: "Delhi – Ghaziabad",
+  },
+  {
+    id: "C03",
+    name: "Ghaziabad – Meerut",
+  },
+  {
+    id: "C04",
+    name: "Delhi – Panipat",
+  },
+  {
+    id: "C05",
+    name: "Panipat – Ambala",
+  },
+  {
+    id: "C06",
+    name: "Mumbai – Thane",
+  },
+  {
+    id: "C07",
+    name: "Thane – Nashik",
+  },
+  {
+    id: "C08",
+    name: "Chennai – Arakkonam",
+  },
+  {
+    id: "C09",
+    name: "Kolkata – Howrah",
+  },
+  {
+    id: "C10",
+    name: "Bhopal – Itarsi",
+  },
+  {
+    id: "C11",
+    name: "Pune – Lonavala",
+  },
+];
+
 export const Route = createFileRoute("/requests")({
   head: () => ({
     meta: [
@@ -93,7 +136,7 @@ function RequestsPage() {
   const [dept, setDept] = useState<Dept>(defaultDept);
   const [assetId, setAssetId] = useState("TRK-ENG-1200");
   const [work, setWork] = useState("");
-  const [section, setSection] = useState(CORRIDORS[0]!.id);
+  const [section, setSection] = useState("C02");
   const [line, setLine] = useState("Down Main");
   const [chainage, setChainage] = useState("KM 412/10 - 414/05");
   const [blockType, setBlockType] = useState<Requisition["blockType"]>("Traffic Block");
@@ -148,7 +191,7 @@ function RequestsPage() {
     };
   }, [reqs]);
 
-  const submit = () => {
+  const submit = async () => {
     if (!work.trim()) {
       toast.error("Enter the nature of work before submitting.");
       return;
@@ -156,32 +199,87 @@ function RequestsPage() {
 
     setIsSubmitting(true);
 
-    // Simulate network delay for realistic interaction
-    setTimeout(() => {
-      addReq({
-        dept,
-        assetId,
-        work,
-        section,
-        line,
-        chainage,
-        blockType,
-        duration: Number(duration) || 1,
-        crew: Number(crew) || 1,
-        criticality,
-        daysOverdue: Number(overdue) || 0,
-        tsrRisk: tsr,
-        requestedBy: role.name,
+    const payload = {
+      dept,
+      assetId,
+      work,
+      section,
+      line,
+      chainage,
+      blockType,
+      duration: Number(duration) || 1,
+      crew: Number(crew) || 1,
+      criticality,
+      daysOverdue: Number(overdue) || 0,
+      tsrRisk: tsr,
+      requestedBy: role.name,
+    };
+
+    try {
+      // 1. Create requisition in PostgreSQL
+      const requestResponse = await fetch("http://127.0.0.1:8000/block-requests/", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
       });
+
+      const requestData = await requestResponse.json();
+
+      if (!requestResponse.ok) {
+        throw new Error(requestData.detail || "Failed to submit requisition");
+      }
+
+      console.log("Requisition created:", requestData);
+
+      // Keep frontend requisition ledger in sync
+      addReq(payload);
+
+      // 2. Immediately run IR-ABPS optimization
+      const optimizationResponse = await fetch("http://127.0.0.1:8000/optimization/", {
+        method: "POST",
+      });
+
+      const optimizationData = await optimizationResponse.json();
+
+      if (!optimizationResponse.ok) {
+        throw new Error(
+          optimizationData.detail || optimizationData.message || "Optimization failed",
+        );
+      }
+
+      console.log("Optimization completed:", optimizationData);
+
+      // 3. Make sure an optimized block was actually generated
+      if (
+        optimizationData.status !== "success" ||
+        !optimizationData.blocks ||
+        optimizationData.blocks.length === 0
+      ) {
+        throw new Error("Requisition was submitted, but no optimized block was generated.");
+      }
+
       setWork("");
-      setIsSubmitting(false);
+
       toast.success(
         <div className="flex items-center gap-2">
           <CircleCheck className="size-4 text-safe" />
-          Requisition submitted successfully
+          <span>Requisition optimized successfully</span>
         </div>,
       );
-    }, 600);
+
+      // 4. Go directly to Gantt Planner
+      setTimeout(() => {
+        window.location.href = "/planner";
+      }, 700);
+    } catch (error) {
+      console.error("Requisition/optimization error:", error);
+
+      toast.error(error instanceof Error ? error.message : "Could not complete requisition.");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const currentScore = criticalityScore({
@@ -372,7 +470,7 @@ function RequestsPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {CORRIDORS.map((c) => (
+                    {BACKEND_CORRIDORS.map((c) => (
                       <SelectItem key={c.id} value={c.id}>
                         {c.name}
                       </SelectItem>

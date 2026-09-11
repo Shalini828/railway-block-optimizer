@@ -82,6 +82,88 @@ interface OptimizationApiResponse {
   }>;
 }
 
+interface SavedPlanBlock {
+  block_id: string;
+  corridor_id: string;
+  block_date: string;
+  start_time: string;
+  end_time: string;
+  duration_min: string | number;
+  utilization_percent: string | number;
+  train_impact_score: string | number;
+  optimization_score: string | number;
+  number_of_tasks?: string | number;
+  number_of_departments?: string | number;
+  block_status?: string;
+  conflicts?: unknown[];
+  tasks?: unknown[];
+  train_conflicts?: number;
+  task_count?: number;
+}
+
+async function fetchSavedOptimization(): Promise<OptimizationApiResponse | null> {
+  const response = await fetch("http://127.0.0.1:8000/optimized-plan/");
+
+  if (!response.ok) {
+    throw new Error("Unable to load saved optimized plan");
+  }
+
+  const payload = await response.json();
+  const savedBlocks = (payload.blocks ?? []) as SavedPlanBlock[];
+
+  if (payload.status !== "success" || savedBlocks.length === 0) {
+    return null;
+  }
+
+  const blocks = savedBlocks.map((block) => ({
+    block_id: block.block_id,
+    corridor: block.corridor_id,
+    date: block.block_date,
+    start: block.start_time,
+    end: block.end_time,
+    duration: Number(block.duration_min) || 0,
+    utilization: Number(block.utilization_percent) || 0,
+    train_impact: Number(block.train_impact_score) || 0,
+    number_of_tasks: Number(
+      block.number_of_tasks ?? block.task_count ?? block.tasks?.length ?? 0,
+    ) || 0,
+    train_conflicts: Number(
+      block.train_conflicts ?? block.conflicts?.length ?? 0,
+    ) || 0,
+  }));
+
+  const totalMinutes = blocks.reduce((sum, block) => sum + block.duration, 0);
+  const averageUtilization =
+    blocks.length > 0
+      ? blocks.reduce((sum, block) => sum + block.utilization, 0) / blocks.length
+      : 0;
+  const averageScore =
+    savedBlocks.length > 0
+      ? savedBlocks.reduce(
+          (sum, block) => sum + (Number(block.optimization_score) || 0),
+          0,
+        ) / savedBlocks.length
+      : 0;
+  const totalTrainImpact = blocks.reduce((sum, block) => sum + block.train_impact, 0);
+  const totalConflicts = blocks.reduce((sum, block) => sum + block.train_conflicts, 0);
+  const requestsProcessed = blocks.reduce((sum, block) => sum + block.number_of_tasks, 0);
+
+  return {
+    status: "success",
+    message: "Loaded saved optimized blocks from PostgreSQL",
+    requests_processed: requestsProcessed,
+    blocks_generated: blocks.length,
+    run_metrics: {
+      total_block_minutes: totalMinutes,
+      average_utilization: Number(averageUtilization.toFixed(2)),
+      average_optimization_score: Number(averageScore.toFixed(2)),
+      total_train_impact: totalTrainImpact,
+      total_train_conflicts: totalConflicts,
+    },
+    blocks,
+  };
+}
+
 function OptimizerPage() {
   const { reqs, plan, conflicts, optimize } = useAbps();
 
@@ -97,7 +179,135 @@ function OptimizerPage() {
 
   const pending = reqs.filter((r) => r.status === "Pending AI Scheduling");
 
+  // Restore the persisted optimization whenever this page is opened/refreshed.
+  useEffect(() => {
+    let cancelled = false;
+
+    const restoreSavedPlan = async () => {
+      try {
+        const saved = await fetchSavedOptimization();
+        if (!cancelled && saved) {
+          setApiData(saved);
+          setProgress(100);
+          setStage("Saved optimization loaded");
+        }
+      } catch (error) {
+        console.error("Saved optimization load error:", error);
+      }
+    };
+
+    void restoreSavedPlan();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const loadSavedPlan = async () => {
+  try {
+    const response = await fetch(
+      "http://127.0.0.1:8000/optimized-plan/"
+    );
+
+    if (!response.ok) {
+      throw new Error("Failed to load saved optimization plan");
+    }
+
+    const saved = await response.json();
+
+    if (
+      saved.status === "success" &&
+      Array.isArray(saved.blocks) &&
+      saved.blocks.length > 0
+    ) {
+      const blocks = saved.blocks.map((block: any) => ({
+        block_id: String(block.block_id ?? ""),
+        corridor: String(block.corridor ?? block.corridor_id ?? ""),
+        date: String(block.date ?? block.block_date ?? ""),
+        start: String(block.start ?? block.start_time ?? ""),
+        end: String(block.end ?? block.end_time ?? ""),
+        duration: Number(
+          block.duration ?? block.duration_min ?? 0
+        ),
+        utilization: Number(
+          block.utilization ?? block.utilization_percent ?? 0
+        ),
+        train_impact: Number(
+          block.train_impact ?? block.train_impact_score ?? 0
+        ),
+        number_of_tasks: Number(
+          block.number_of_tasks ?? 0
+        ),
+        train_conflicts: Number(
+          block.train_conflicts ?? 0
+        ),
+      }));
+
+      setApiData({
+        status: "success",
+        message: "Latest saved optimization plan loaded.",
+        requests_processed: blocks.reduce(
+          (total: number, block: any) =>
+            total + block.number_of_tasks,
+          0
+        ),
+        blocks_generated: blocks.length,
+        run_metrics: {
+          total_block_minutes: blocks.reduce(
+            (total: number, block: any) =>
+              total + block.duration,
+            0
+          ),
+          average_utilization:
+            blocks.reduce(
+              (total: number, block: any) =>
+                total + block.utilization,
+              0
+            ) / blocks.length,
+          average_optimization_score: 0,
+          total_train_impact: blocks.reduce(
+            (total: number, block: any) =>
+              total + block.train_impact,
+            0
+          ),
+          total_train_conflicts: blocks.reduce(
+            (total: number, block: any) =>
+              total + block.train_conflicts,
+            0
+          ),
+        },
+        blocks,
+      });
+
+      setStage("Saved optimization plan loaded");
+      setProgress(100);
+    }
+  } catch (error) {
+    console.error("Failed to load saved optimization plan:", error);
+  }
+};
+
   const run = async () => {
+    // Once requests have already been optimized, don't execute an empty
+    // optimizer run again. Load the persisted blocks instead.
+    if (!running && pending.length === 0) {
+      try {
+        const saved = await fetchSavedOptimization();
+        if (saved) {
+          setApiData(saved);
+          setProgress(100);
+          setStage("Saved optimization loaded");
+          toast.success(`${saved.blocks_generated ?? 0} saved optimized block(s) loaded`);
+        } else {
+          toast.info("No pending requests or saved optimized blocks found.");
+        }
+      } catch (error) {
+        console.error("Saved optimization load error:", error);
+        setApiError(true);
+      }
+      return;
+    }
+
     setRunning(true);
     setProgress(0);
     setApiError(false);
@@ -114,12 +324,28 @@ function OptimizerPage() {
 
     let currentStage = 0;
 
-    // Simulate frontend progress for visual feedback
-    const timer = setInterval(() => {
-      setStage(stages[currentStage] ?? "Finalizing plan...");
-      setProgress(((currentStage + 1) / stages.length) * 100);
-      currentStage += 1;
-    }, 550);
+    // Simulate frontend progress for visual feedback, stopping exactly at 100%.
+   const timer = setInterval(() => {
+  if (currentStage >= stages.length) {
+    clearInterval(timer);
+    return;
+  }
+
+  setStage(stages[currentStage] ?? "Finalizing optimization...");
+
+  setProgress(
+    Math.min(
+      ((currentStage + 1) / stages.length) * 100,
+      100
+    )
+  );
+
+  currentStage += 1;
+
+  if (currentStage >= stages.length) {
+    clearInterval(timer);
+  }
+}, 550);
 
     try {
       // Hit actual API
@@ -131,6 +357,89 @@ function OptimizerPage() {
 
       const data: OptimizationApiResponse = await response.json();
 
+      // Always refresh from the persistent database plan.
+// This protects the UI when the optimization endpoint
+// returns zero because requests were already processed.
+
+let finalData = data;
+
+if (!data.blocks || data.blocks.length === 0) {
+  try {
+    const savedResponse = await fetch(
+      "http://127.0.0.1:8000/optimized-plan/"
+    );
+
+    if (savedResponse.ok) {
+      const saved = await savedResponse.json();
+
+      if (
+        saved.status === "success" &&
+        Array.isArray(saved.blocks) &&
+        saved.blocks.length > 0
+      ) {
+        const blocks = saved.blocks.map((block: any) => ({
+          block_id: String(block.block_id ?? ""),
+          corridor: String(block.corridor ?? block.corridor_id ?? ""),
+          date: String(block.date ?? block.block_date ?? ""),
+          start: String(block.start ?? block.start_time ?? ""),
+          end: String(block.end ?? block.end_time ?? ""),
+          duration: Number(
+            block.duration ?? block.duration_min ?? 0
+          ),
+          utilization: Number(
+            block.utilization ?? block.utilization_percent ?? 0
+          ),
+          train_impact: Number(
+            block.train_impact ?? block.train_impact_score ?? 0
+          ),
+          number_of_tasks: Number(
+            block.number_of_tasks ?? 0
+          ),
+          train_conflicts: Number(
+            block.train_conflicts ?? 0
+          ),
+        }));
+
+        finalData = {
+          ...data,
+          status: "success",
+          message: "Showing latest saved optimization plan.",
+          blocks_generated: blocks.length,
+          blocks,
+          run_metrics: {
+            total_block_minutes: blocks.reduce(
+              (sum: number, b: any) =>
+                sum + b.duration,
+              0
+            ),
+            average_utilization:
+              blocks.reduce(
+                (sum: number, b: any) =>
+                  sum + b.utilization,
+                0
+              ) / blocks.length,
+            average_optimization_score: 0,
+            total_train_impact: blocks.reduce(
+              (sum: number, b: any) =>
+                sum + b.train_impact,
+              0
+            ),
+            total_train_conflicts: blocks.reduce(
+              (sum: number, b: any) =>
+                sum + b.train_conflicts,
+              0
+            ),
+          },
+        };
+      }
+    }
+  } catch (savedError) {
+    console.error(
+      "Failed to load saved plan:",
+      savedError
+    );
+  }
+}
       if (data.status === "error") {
         throw new Error(data.message || "Optimization failed");
       }
@@ -144,8 +453,19 @@ function OptimizerPage() {
         saved: data.run_metrics?.total_block_minutes ?? 0,
       };
 
-      // Set local API data for rendering this page
-      setApiData(data);
+      // Render the fresh result. If the optimizer reports zero blocks,
+      // restore the last persisted plan instead of blanking the UI.
+      let displayData = data;
+      if ((data.blocks_generated ?? 0) === 0) {
+        try {
+          const saved = await fetchSavedOptimization();
+          if (saved) displayData = saved;
+        } catch (restoreError) {
+          console.error("Could not restore saved optimization:", restoreError);
+        }
+      }
+
+      setApiData(displayData);
       setLastExecution(new Date());
       setExecutionDuration((Date.now() - startTime) / 1000);
 
@@ -155,7 +475,7 @@ function OptimizerPage() {
             <Sparkles className="size-4" /> Optimization Successful
           </span>
           <span>
-            {data.blocks_generated} mega blocks formed · {res.saved} min saved
+            {displayData.blocks_generated ?? 0} mega blocks available · {displayData.run_metrics?.total_block_minutes ?? res.saved} min planned
           </span>
         </div>,
       );
@@ -883,131 +1203,312 @@ function OptimizerPage() {
       </div>
 
       <Sheet open={drawer} onOpenChange={setDrawer}>
-        <SheetContent className="w-full overflow-y-auto sm:max-w-xl border-border">
-          <SheetHeader className="border-b border-border/50 pb-4 mb-4">
-            <SheetTitle className="flex items-center gap-2 text-purple-500">
-              <Sparkles className="size-5" /> AI Recommendation Drawer
-            </SheetTitle>
-            <SheetDescription>
-              Generated schedule with explanations and expected train delay impact.
-            </SheetDescription>
-          </SheetHeader>
+  <SheetContent className="w-full overflow-y-auto sm:max-w-xl border-border">
+    <SheetHeader className="border-b border-border/50 pb-4 mb-4">
+      <SheetTitle className="flex items-center gap-2 text-purple-500">
+        <Sparkles className="size-5" /> AI Recommendation Drawer
+      </SheetTitle>
 
-          <div className="space-y-4 pb-8">
-            {plan.length === 0 && (
-              <div className="text-center p-8 bg-secondary/10 rounded-lg border border-border">
-                <p className="text-sm text-muted-foreground">
-                  No plan yet — run the optimization engine to view recommendations.
-                </p>
-              </div>
-            )}
+      <SheetDescription>
+        Generated schedule with optimization reasoning and expected operational impact.
+      </SheetDescription>
+    </SheetHeader>
 
-            {plan.map((p) => (
-              <div
-                key={p.clusterId}
-                className="rounded-xl border border-border bg-card shadow-sm overflow-hidden"
-              >
-                <div className="bg-secondary/30 p-3 border-b border-border flex flex-wrap items-center justify-between gap-2">
-                  <p className="text-sm font-bold text-foreground">{p.clusterId}</p>
-                  <Badge
-                    variant="outline"
-                    className={`text-[10px] uppercase font-bold tracking-wider ${p.depts.length > 1 ? deptColor["JOINT"] : deptColor[p.depts[0] ?? "TMS"]}`}
-                  >
-                    {p.depts.length > 1 ? "Joint Coordinated" : DEPT_LABEL[p.depts[0]!]}
-                  </Badge>
-                </div>
+    <div className="space-y-4 pb-8">
 
-                <div className="p-4 space-y-4">
-                  <div className="grid grid-cols-2 gap-4 text-sm bg-secondary/10 p-3 rounded-lg border border-border/50">
-                    <div>
-                      <p className="text-[10px] uppercase font-semibold text-muted-foreground">
-                        Location
-                      </p>
-                      <p className="font-medium text-foreground mt-0.5">
-                        {p.section} · {p.line}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] uppercase font-semibold text-muted-foreground">
-                        Schedule
-                      </p>
-                      <p className="font-medium text-foreground mt-0.5 flex items-center gap-1.5">
-                        <CalendarCheck className="size-3" />
-                        {DAYS[p.day]} · {fmt(p.start)}–{fmt(p.end)}
-                      </p>
-                    </div>
-                  </div>
+      {/* NO RESULT */}
+      {(!apiData?.blocks || apiData.blocks.length === 0) && (
+        <div className="text-center p-8 bg-secondary/10 rounded-lg border border-border">
+          <BrainCircuit className="size-8 mx-auto mb-3 text-muted-foreground opacity-50" />
 
-                  <div>
-                    <p className="text-xs font-semibold uppercase text-muted-foreground mb-1.5">
-                      Why this block?
-                    </p>
-                    <p className="text-sm text-foreground leading-relaxed">{p.explanation}</p>
-                  </div>
+          <p className="text-sm text-muted-foreground">
+            No optimized plan available yet.
+          </p>
 
-                  <div className="grid grid-cols-2 gap-2 pt-2 border-t border-border/50">
-                    <div className="flex items-center gap-2 p-2 rounded bg-safe/10 border border-safe/20 text-safe">
-                      <TimerReset className="size-4" />
-                      <div className="flex flex-col">
-                        <span className="text-[10px] uppercase font-bold">Saved Time</span>
-                        <span className="text-sm font-bold">{p.savedMinutes} min</span>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2 p-2 rounded bg-warn/10 border border-warn/20 text-warn">
-                      <TrainFront className="size-4" />
-                      <div className="flex flex-col">
-                        <span className="text-[10px] uppercase font-bold">Expected Delay</span>
-                        <span className="text-sm font-bold">{p.expectedDelay} min</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ))}
+          <p className="text-xs mt-1 text-muted-foreground">
+            Run the IR-ABPS optimization engine to generate recommendations.
+          </p>
+        </div>
+      )}
 
-            {conflicts.length > 0 && (
-              <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 mt-6">
-                <p className="flex items-center gap-2 font-bold text-destructive text-sm mb-2">
-                  <TriangleAlert className="size-4" /> {conflicts.length} corridor conflict(s)
-                  detected
-                </p>
-                <p className="text-xs text-destructive/80 mb-3">
-                  Manual resolution is required for safely overriding these constraints.
-                </p>
-                <Button
-                  asChild
-                  size="sm"
-                  variant="destructive"
-                  className="w-full text-xs font-bold"
-                >
-                  <Link to="/conflicts">Resolve in workflow</Link>
-                </Button>
-              </div>
-            )}
+      {/* AI RECOMMENDATION SUMMARY */}
+      {apiData?.blocks && apiData.blocks.length > 0 && (
+        <>
+          <div className="rounded-xl border border-purple-500/30 bg-purple-500/10 p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Sparkles className="size-4 text-purple-500" />
 
-            {plan.length > 0 && (
-              <div className="mt-6 flex flex-col gap-2">
-                <Button
-                  asChild
-                  variant="outline"
-                  className="w-full border-primary/20 text-primary hover:bg-primary/10"
-                >
-                  <Link to="/planner">
-                    Open Gantt Planner <ArrowRight className="ml-2 size-4" />
-                  </Link>
-                </Button>
-                <Button
-                  variant="ghost"
-                  className="w-full text-muted-foreground"
-                  onClick={() => setDrawer(false)}
-                >
-                  Close Drawer
-                </Button>
-              </div>
-            )}
+              <p className="text-sm font-bold text-foreground">
+                AI Optimization Recommendation
+              </p>
+            </div>
+
+            <p className="text-sm text-muted-foreground leading-relaxed">
+              IR-ABPS recommends executing{" "}
+              <span className="font-bold text-foreground">
+                {apiData.blocks.length} optimized maintenance block
+                {apiData.blocks.length > 1 ? "s" : ""}
+              </span>{" "}
+              based on corridor availability, maintenance workload,
+              block duration and train-path conflict validation.
+            </p>
           </div>
-        </SheetContent>
-      </Sheet>
+
+          {/* KEY DECISION METRICS */}
+          <div className="grid grid-cols-2 gap-3">
+
+            <div className="rounded-lg border border-safe/20 bg-safe/10 p-3">
+              <p className="text-[10px] uppercase font-bold tracking-wider text-muted-foreground">
+                Planned Block Time
+              </p>
+
+              <p className="text-xl font-mono font-bold text-safe mt-1">
+                {apiData.run_metrics?.total_block_minutes ?? 0} min
+              </p>
+            </div>
+
+            <div className="rounded-lg border border-primary/20 bg-primary/10 p-3">
+              <p className="text-[10px] uppercase font-bold tracking-wider text-muted-foreground">
+                Avg Utilization
+              </p>
+
+              <p className="text-xl font-mono font-bold text-primary mt-1">
+                {apiData.run_metrics?.average_utilization ?? 0}%
+              </p>
+            </div>
+
+            <div className="rounded-lg border border-blue-500/20 bg-blue-500/10 p-3">
+              <p className="text-[10px] uppercase font-bold tracking-wider text-muted-foreground">
+                Train Conflicts
+              </p>
+
+              <p className="text-xl font-mono font-bold text-blue-400 mt-1">
+                {apiData.run_metrics?.total_train_conflicts ?? 0}
+              </p>
+            </div>
+
+            <div className="rounded-lg border border-purple-500/20 bg-purple-500/10 p-3">
+              <p className="text-[10px] uppercase font-bold tracking-wider text-muted-foreground">
+                Train Impact
+              </p>
+
+              <p className="text-xl font-mono font-bold text-purple-400 mt-1">
+                {apiData.run_metrics?.total_train_impact ?? 0}
+              </p>
+            </div>
+
+          </div>
+
+          {/* RECOMMENDED BLOCKS */}
+          <div className="space-y-3">
+
+            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Recommended Maintenance Windows
+            </p>
+
+            {apiData.blocks.map((block) => {
+
+              const utilization = Number(block.utilization) || 0;
+              const conflicts = Number(block.train_conflicts) || 0;
+              const tasks = Number(block.number_of_tasks) || 0;
+
+              return (
+                <div
+                  key={block.block_id}
+                  className="rounded-xl border border-border bg-card shadow-sm overflow-hidden"
+                >
+
+                  {/* HEADER */}
+                  <div className="bg-secondary/30 p-3 border-b border-border flex items-center justify-between gap-2">
+
+                    <div>
+                      <p className="text-sm font-bold text-foreground">
+                        {block.block_id}
+                      </p>
+
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Corridor {block.corridor}
+                      </p>
+                    </div>
+
+                    <Badge
+                      className="bg-safe/20 text-safe hover:bg-safe/20 text-[10px] uppercase font-bold tracking-wider"
+                    >
+                      Recommended
+                    </Badge>
+
+                  </div>
+
+                  <div className="p-4 space-y-4">
+
+                    {/* SCHEDULE */}
+                    <div className="grid grid-cols-2 gap-3">
+
+                      <div className="rounded-lg bg-secondary/10 border border-border/50 p-3">
+                        <p className="text-[10px] uppercase font-semibold text-muted-foreground">
+                          Date
+                        </p>
+
+                        <p className="text-sm font-mono font-bold text-foreground mt-1">
+                          {block.date}
+                        </p>
+                      </div>
+
+                      <div className="rounded-lg bg-secondary/10 border border-border/50 p-3">
+                        <p className="text-[10px] uppercase font-semibold text-muted-foreground">
+                          Window
+                        </p>
+
+                        <p className="text-sm font-mono font-bold text-foreground mt-1">
+                          {block.start} – {block.end}
+                        </p>
+                      </div>
+
+                    </div>
+
+                    {/* WHY */}
+                    <div className="rounded-lg border border-purple-500/20 bg-purple-500/5 p-3">
+
+                      <p className="text-xs font-semibold uppercase tracking-wider text-purple-400 mb-2">
+                        Why IR-ABPS recommends this
+                      </p>
+
+                      <div className="space-y-2 text-xs text-muted-foreground">
+
+                        <div className="flex items-center gap-2">
+                          <CheckCircle2 className="size-3.5 text-safe shrink-0" />
+                          <span>
+                            Corridor maintenance window successfully matched
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <CheckCircle2 className="size-3.5 text-safe shrink-0" />
+                          <span>
+                            {tasks} maintenance task{tasks !== 1 ? "s" : ""} scheduled
+                            in this block
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <CheckCircle2 className="size-3.5 text-safe shrink-0" />
+                          <span>
+                            {utilization}% maintenance-window utilization
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <CheckCircle2 className="size-3.5 text-safe shrink-0" />
+
+                          <span>
+                            {conflicts === 0
+                              ? "No train-path conflicts detected"
+                              : `${conflicts} train conflict(s) detected`}
+                          </span>
+                        </div>
+
+                      </div>
+
+                    </div>
+
+                    {/* BLOCK METRICS */}
+                    <div className="grid grid-cols-3 gap-2 pt-2 border-t border-border/50">
+
+                      <div className="flex flex-col items-center p-2 rounded bg-safe/10 border border-safe/20">
+                        <TimerReset className="size-4 text-safe mb-1" />
+
+                        <span className="text-[9px] uppercase font-bold text-muted-foreground">
+                          Duration
+                        </span>
+
+                        <span className="text-sm font-bold text-safe">
+                          {block.duration} min
+                        </span>
+                      </div>
+
+                      <div className="flex flex-col items-center p-2 rounded bg-primary/10 border border-primary/20">
+                        <Activity className="size-4 text-primary mb-1" />
+
+                        <span className="text-[9px] uppercase font-bold text-muted-foreground">
+                          Utilization
+                        </span>
+
+                        <span className="text-sm font-bold text-primary">
+                          {utilization}%
+                        </span>
+                      </div>
+
+                      <div className="flex flex-col items-center p-2 rounded bg-blue-500/10 border border-blue-500/20">
+                        <ShieldCheck className="size-4 text-blue-400 mb-1" />
+
+                        <span className="text-[9px] uppercase font-bold text-muted-foreground">
+                          Conflicts
+                        </span>
+
+                        <span className="text-sm font-bold text-blue-400">
+                          {conflicts}
+                        </span>
+                      </div>
+
+                    </div>
+
+                  </div>
+                </div>
+              );
+            })}
+
+          </div>
+
+          {/* OVERALL DECISION */}
+          <div className="rounded-lg border border-safe/30 bg-safe/10 p-4">
+
+            <p className="flex items-center gap-2 text-sm font-bold text-safe mb-2">
+              <ShieldCheck className="size-4" />
+              Optimization Validation
+            </p>
+
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              The generated plan contains{" "}
+              <span className="font-bold text-foreground">
+                {apiData.blocks.length}
+              </span>{" "}
+              optimized block
+              {apiData.blocks.length !== 1 ? "s" : ""} with{" "}
+              <span className="font-bold text-foreground">
+                {apiData.run_metrics?.total_train_conflicts ?? 0}
+              </span>{" "}
+              detected train-path conflicts. The plan is intended for
+              operational review and human approval before execution.
+            </p>
+
+          </div>
+
+          {/* OPEN PLANNER */}
+          <Button
+            asChild
+            variant="outline"
+            className="w-full border-primary/20 text-primary hover:bg-primary/10"
+          >
+            <Link to="/planner">
+              Open Gantt Planner
+              <ArrowRight className="ml-2 size-4" />
+            </Link>
+          </Button>
+
+          <Button
+            variant="ghost"
+            className="w-full text-muted-foreground"
+            onClick={() => setDrawer(false)}
+          >
+            Close Drawer
+          </Button>
+
+        </>
+      )}
+
+    </div>
+  </SheetContent>
+</Sheet>
     </>
   );
 }
