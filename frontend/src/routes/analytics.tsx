@@ -63,6 +63,22 @@ import {
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 export const Route = createFileRoute("/analytics")({
   head: () => ({
@@ -115,21 +131,50 @@ type AnalyticsData = {
 };
 
 // Synthetic Demo Data for AI Dashboard Projections
-const comparisonData = [
-  { metric: "Block Hours", traditional: 26.4, ai: 18.5 },
-  { metric: "Train Delay", traditional: 214, ai: 142 },
-  { metric: "Separate Blocks", traditional: 19, ai: 12 },
-];
+const timeRangeComparisonData = {
+  today: [
+    { metric: "Block Hours", traditional: 6.2, ai: 4.2 },
+    { metric: "Train Delay", traditional: 55, ai: 38 },
+    { metric: "Separate Blocks", traditional: 5, ai: 3 },
+  ],
+  "7d": [
+    { metric: "Block Hours", traditional: 26.4, ai: 18.5 },
+    { metric: "Train Delay", traditional: 214, ai: 142 },
+    { metric: "Separate Blocks", traditional: 19, ai: 12 },
+  ],
+  "30d": [
+    { metric: "Block Hours", traditional: 112.0, ai: 78.4 },
+    { metric: "Train Delay", traditional: 890, ai: 580 },
+    { metric: "Separate Blocks", traditional: 76, ai: 48 },
+  ],
+};
 
-const availabilityTrendData = [
-  { day: "Mon", overall: 89, eng: 87, snt: 91, trd: 88 },
-  { day: "Tue", overall: 89.5, eng: 88, snt: 92, trd: 89 },
-  { day: "Wed", overall: 91, eng: 90, snt: 93, trd: 90 },
-  { day: "Thu", overall: 90.5, eng: 89, snt: 92, trd: 91 },
-  { day: "Fri", overall: 92.5, eng: 91, snt: 95, trd: 92 },
-  { day: "Sat", overall: 94.2, eng: 93, snt: 97, trd: 92 },
-  { day: "Sun", overall: 94.2, eng: 93, snt: 97, trd: 92 },
-];
+const timeRangeAvailabilityTrendData = {
+  today: [
+    { day: "00:00", overall: 93.0, eng: 92, snt: 95, trd: 92 },
+    { day: "04:00", overall: 94.0, eng: 93, snt: 96, trd: 93 },
+    { day: "08:00", overall: 92.5, eng: 90, snt: 95, trd: 92 },
+    { day: "12:00", overall: 95.0, eng: 94, snt: 97, trd: 94 },
+    { day: "16:00", overall: 94.8, eng: 93, snt: 96, trd: 95 },
+    { day: "20:00", overall: 95.5, eng: 95, snt: 97, trd: 94 },
+    { day: "24:00", overall: 95.1, eng: 94, snt: 97, trd: 94 },
+  ],
+  "7d": [
+    { day: "Mon", overall: 89, eng: 87, snt: 91, trd: 88 },
+    { day: "Tue", overall: 89.5, eng: 88, snt: 92, trd: 89 },
+    { day: "Wed", overall: 91, eng: 90, snt: 93, trd: 90 },
+    { day: "Thu", overall: 90.5, eng: 89, snt: 92, trd: 91 },
+    { day: "Fri", overall: 92.5, eng: 91, snt: 95, trd: 92 },
+    { day: "Sat", overall: 94.2, eng: 93, snt: 97, trd: 92 },
+    { day: "Sun", overall: 94.2, eng: 93, snt: 97, trd: 92 },
+  ],
+  "30d": [
+    { day: "Week 1", overall: 91.2, eng: 89, snt: 93, trd: 91 },
+    { day: "Week 2", overall: 92.8, eng: 91, snt: 95, trd: 92 },
+    { day: "Week 3", overall: 93.5, eng: 92, snt: 96, trd: 92 },
+    { day: "Week 4", overall: 94.8, eng: 94, snt: 97, trd: 93 },
+  ],
+};
 
 const corridorSegments = [
   {
@@ -278,13 +323,160 @@ const timelineData = [
   },
 ];
 
+const defaultPostBlockReports = [
+  {
+    block_id: "BLK-042",
+    corridor_name: "NDLS–CNB",
+    source_station: "NDLS",
+    destination_station: "CNB",
+    block_date: "2025-05-10",
+    start_time: "10:30:00",
+    end_time: "13:05:00",
+    duration_min: 155,
+    train_impact_score: 4,
+    optimization_score: 94,
+    block_status: "Completed",
+    departments: "TMS + TDMS",
+  },
+  {
+    block_id: "BLK-043",
+    corridor_name: "CBN–ALD",
+    source_station: "CBN",
+    destination_station: "ALD",
+    block_date: "2025-05-11",
+    start_time: "14:00:00",
+    end_time: "16:15:00",
+    duration_min: 135,
+    train_impact_score: 12,
+    optimization_score: 82,
+    block_status: "Delayed",
+    departments: "S&T + ENG",
+  },
+  {
+    block_id: "BLK-044",
+    corridor_name: "ALD–DDU",
+    source_station: "ALD",
+    destination_station: "DDU",
+    block_date: "2025-05-12",
+    start_time: "22:00:00",
+    end_time: "00:15:00",
+    duration_min: 135,
+    train_impact_score: 0,
+    optimization_score: 96,
+    block_status: "Optimised",
+    departments: "TRD",
+  },
+  {
+    block_id: "BLK-045",
+    corridor_name: "DDU–BSB",
+    source_station: "DDU",
+    destination_station: "BSB",
+    block_date: "2025-05-13",
+    start_time: "01:00:00",
+    end_time: "03:30:00",
+    duration_min: 150,
+    train_impact_score: 2,
+    optimization_score: 91,
+    block_status: "Completed",
+    departments: "ENG",
+  },
+  {
+    block_id: "BLK-046",
+    corridor_name: "NDLS–CNB",
+    source_station: "NDLS",
+    destination_station: "CNB",
+    block_date: "2025-05-14",
+    start_time: "09:00:00",
+    end_time: "12:00:00",
+    duration_min: 180,
+    train_impact_score: 5,
+    optimization_score: 89,
+    block_status: "Optimised",
+    departments: "TRD + S&T",
+  },
+];
+
+const departmentDetails = [
+  {
+    name: "ENGINEERING",
+    avail: 93,
+    tasks: 24,
+    blocks: 8,
+    eff: 89,
+    colorClass: "text-eng",
+    bgClass: "bg-eng",
+  },
+  {
+    name: "S&T",
+    avail: 97,
+    tasks: 21,
+    blocks: 6,
+    eff: 94,
+    colorClass: "text-snt",
+    bgClass: "bg-snt",
+  },
+  {
+    name: "TRD",
+    avail: 92,
+    tasks: 22,
+    blocks: 7,
+    eff: 87,
+    colorClass: "text-trd",
+    bgClass: "bg-trd",
+  },
+];
+
 function AnalyticsPage() {
   const { reqs } = useAbps();
   const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
+  const [timeRange, setTimeRange] = useState<"today" | "7d" | "30d">("7d");
+  const [lastUpdated, setLastUpdated] = useState<string>(() => new Date().toLocaleTimeString());
   const [reportFilter, setReportFilter] = useState("");
+  const [deptDetailsOpen, setDeptDetailsOpen] = useState(false);
+  const [insightDialog, setInsightDialog] = useState<{
+    open: boolean;
+    insight: (typeof aiInsights)[number] | null;
+  }>({ open: false, insight: null });
+  const [highlightedCorridor, setHighlightedCorridor] = useState<string | null>(null);
+  const [actionDialog, setActionDialog] = useState<{
+    open: boolean;
+    action: (typeof actionCards)[number] | null;
+    index: number | null;
+  }>({ open: false, action: null, index: null });
+  const [reviewedActions, setReviewedActions] = useState<Set<number>>(new Set());
+
+  const handleInsightAction = (insight: (typeof aiInsights)[number]) => {
+    if (insight.action === "Filter TRD") {
+      setReportFilter("TRD");
+      toast.info("Filtering post-block report for TRD department.");
+      document.getElementById("post-block-report")?.scrollIntoView({ behavior: "smooth" });
+    } else if (insight.action === "View corridor") {
+      setHighlightedCorridor("NDLS-CBN");
+      toast.info("Highlighting NDLS–CBN corridor segment.");
+      document.getElementById("corridor-heatmap")?.scrollIntoView({ behavior: "smooth" });
+      setTimeout(() => {
+        setHighlightedCorridor(null);
+      }, 4000);
+    } else {
+      setInsightDialog({ open: true, insight });
+    }
+  };
+
+  const handleReviewAction = (action: (typeof actionCards)[number], index: number) => {
+    setActionDialog({ open: true, action, index });
+  };
+
+  const acknowledgeAction = () => {
+    if (actionDialog.index !== null) {
+      setReviewedActions((prev) => new Set(prev).add(actionDialog.index!));
+      toast.success("Action acknowledged and scheduled.");
+      setActionDialog({ open: false, action: null, index: null });
+    }
+  };
 
   const refreshAnalytics = () => {
     toast.info("Refreshing intelligence model...");
+    setLastUpdated(new Date().toLocaleTimeString());
     fetch("http://127.0.0.1:8000/analytics/")
       .then((res) => {
         if (!res.ok) throw new Error("Failed to fetch analytics");
@@ -333,31 +525,69 @@ function AnalyticsPage() {
   const blockMixData = [
     {
       name: "Blocks Executed",
-      Traditional: analytics?.single_department_blocks || 19,
-      Coordinated: analytics?.coordinated_blocks || 12,
+      Traditional:
+        timeRange === "today"
+          ? 5
+          : timeRange === "30d"
+            ? 76
+            : analytics?.single_department_blocks || 19,
+      Coordinated:
+        timeRange === "today" ? 3 : timeRange === "30d" ? 48 : analytics?.coordinated_blocks || 12,
     },
   ];
 
   const safeAnalytics = {
-    availability: analytics?.asset_availability_percent || 94.2,
-    blockHours: analytics?.total_block_hours || 18.5,
-    delayAvoided: analytics?.train_delay_impact_minutes || 142,
-    coordinated: analytics?.coordinated_blocks || 12,
-    optimised: analytics?.total_maintenance_tasks || 67,
-    efficiency: analytics?.average_optimization_score || 91,
-  };
+    today: {
+      availability: 95.1,
+      blockHours: 4.2,
+      delayAvoided: 38,
+      coordinated: 3,
+      optimised: 14,
+      efficiency: 94,
+    },
+    "7d": {
+      availability: analytics?.asset_availability_percent || 94.2,
+      blockHours: analytics?.total_block_hours || 18.5,
+      delayAvoided: analytics?.train_delay_impact_minutes || 142,
+      coordinated: analytics?.coordinated_blocks || 12,
+      optimised: analytics?.total_maintenance_tasks || 67,
+      efficiency: analytics?.average_optimization_score || 91,
+    },
+    "30d": {
+      availability: 93.8,
+      blockHours: 78.4,
+      delayAvoided: 580,
+      coordinated: 48,
+      optimised: 260,
+      efficiency: 92,
+    },
+  }[timeRange];
+
+  const comparisonData = timeRangeComparisonData[timeRange];
+  const availabilityTrendData = timeRangeAvailabilityTrendData[timeRange];
 
   const pieData = [
-    { name: "Score", value: 87, color: "var(--joint)" },
-    { name: "Remaining", value: 13, color: "var(--border)" },
+    { name: "Score", value: safeAnalytics.efficiency || 87, color: "var(--joint)" },
+    { name: "Remaining", value: 100 - (safeAnalytics.efficiency || 87), color: "var(--border)" },
   ];
 
-  const reports = analytics?.post_block_report || [];
-  const filteredReports = reports.filter(
-    (r) =>
-      r.block_id.toLowerCase().includes(reportFilter.toLowerCase()) ||
-      r.departments.toLowerCase().includes(reportFilter.toLowerCase()),
-  );
+  const reports =
+    analytics?.post_block_report && analytics.post_block_report.length > 0
+      ? analytics.post_block_report
+      : defaultPostBlockReports;
+
+  const filteredReports = reports.filter((r) => {
+    const query = reportFilter.trim().toLowerCase();
+    if (!query) return true;
+    return (
+      r.block_id.toLowerCase().includes(query) ||
+      r.departments.toLowerCase().includes(query) ||
+      r.source_station.toLowerCase().includes(query) ||
+      r.destination_station.toLowerCase().includes(query) ||
+      r.corridor_name.toLowerCase().includes(query) ||
+      r.block_status.toLowerCase().includes(query)
+    );
+  });
 
   return (
     <div className="space-y-6 pb-12">
@@ -384,17 +614,42 @@ function AnalyticsPage() {
           </p>
         </div>
         <div className="flex flex-col items-end gap-3">
-          <div className="text-xs text-muted-foreground">
-            Last updated: {new Date().toLocaleTimeString()}
-          </div>
-          <div className="flex items-center gap-2 bg-background p-1 rounded-lg border">
-            <Button variant="ghost" size="sm" className="h-7 text-xs">
+          <div className="text-xs text-muted-foreground">Last updated: {lastUpdated}</div>
+          <div className="flex items-center gap-1 bg-background p-1 rounded-lg border">
+            <Button
+              variant={timeRange === "today" ? "secondary" : "ghost"}
+              size="sm"
+              className="h-7 text-xs cursor-pointer"
+              onClick={() => {
+                setTimeRange("today");
+                setLastUpdated(new Date().toLocaleTimeString());
+                toast.info("Viewing today's operational analytics");
+              }}
+            >
               Today
             </Button>
-            <Button variant="secondary" size="sm" className="h-7 text-xs">
+            <Button
+              variant={timeRange === "7d" ? "secondary" : "ghost"}
+              size="sm"
+              className="h-7 text-xs cursor-pointer"
+              onClick={() => {
+                setTimeRange("7d");
+                setLastUpdated(new Date().toLocaleTimeString());
+                toast.info("Viewing 7-day operational analytics");
+              }}
+            >
               7 Days
             </Button>
-            <Button variant="ghost" size="sm" className="h-7 text-xs">
+            <Button
+              variant={timeRange === "30d" ? "secondary" : "ghost"}
+              size="sm"
+              className="h-7 text-xs cursor-pointer"
+              onClick={() => {
+                setTimeRange("30d");
+                setLastUpdated(new Date().toLocaleTimeString());
+                toast.info("Viewing 30-day operational analytics");
+              }}
+            >
               30 Days
             </Button>
           </div>
@@ -616,7 +871,13 @@ function AnalyticsPage() {
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <div>
               <CardTitle className="text-lg">Asset Availability Trend</CardTitle>
-              <CardDescription>7-day network-wide availability by department</CardDescription>
+              <CardDescription>
+                {timeRange === "today"
+                  ? "Today's 24-hour network-wide availability by department"
+                  : timeRange === "30d"
+                    ? "30-day network-wide availability by department"
+                    : "7-day network-wide availability by department"}
+              </CardDescription>
             </div>
             <Badge variant="outline" className="bg-background">
               Target: 95%
@@ -704,34 +965,14 @@ function AnalyticsPage() {
             <CardDescription>Availability and execution metrics</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <DeptCard
-              name="ENGINEERING"
-              avail={93}
-              tasks={24}
-              blocks={8}
-              eff={89}
-              colorClass="text-eng"
-              bgClass="bg-eng"
-            />
-            <DeptCard
-              name="S&T"
-              avail={97}
-              tasks={21}
-              blocks={6}
-              eff={94}
-              colorClass="text-snt"
-              bgClass="bg-snt"
-            />
-            <DeptCard
-              name="TRD"
-              avail={92}
-              tasks={22}
-              blocks={7}
-              eff={87}
-              colorClass="text-trd"
-              bgClass="bg-trd"
-            />
-            <Button variant="link" className="w-full text-sm text-primary mt-2">
+            {departmentDetails.map((dept) => (
+              <DeptCard key={dept.name} {...dept} />
+            ))}
+            <Button
+              variant="link"
+              className="w-full text-sm text-primary mt-2"
+              onClick={() => setDeptDetailsOpen(true)}
+            >
               View department details →
             </Button>
           </CardContent>
@@ -798,7 +1039,7 @@ function AnalyticsPage() {
         </Card>
 
         {/* 8. CORRIDOR IMPACT MAP */}
-        <Card className="lg:col-span-8">
+        <Card id="corridor-heatmap" className="lg:col-span-8">
           <CardHeader>
             <CardTitle className="text-lg">Corridor Operational Heatmap</CardTitle>
             <CardDescription>New Delhi → Prayagraj → Varanasi</CardDescription>
@@ -808,20 +1049,24 @@ function AnalyticsPage() {
               {/* Corridor Visualization */}
               <div className="relative flex items-center justify-between px-6">
                 <div className="absolute left-10 right-10 h-1 bg-border top-1/2 -translate-y-1/2 z-0"></div>
-                {corridorSegments.map((seg, idx) => (
-                  <div
-                    key={idx}
-                    className="relative z-10 flex flex-col items-center gap-2 group cursor-pointer"
-                  >
-                    <div className="text-xs font-bold text-muted-foreground group-hover:text-foreground transition-colors">
-                      {seg.from}
-                    </div>
+                {corridorSegments.map((seg, idx) => {
+                  const isHighlighted = highlightedCorridor === `${seg.from}-${seg.to}`;
+                  return (
                     <div
-                      className={`w-6 h-6 rounded-full border-4 border-background shadow-md flex items-center justify-center
-                      ${seg.status === "healthy" ? "bg-safe" : seg.status === "attention" ? "bg-warn" : "bg-destructive"}`}
-                    ></div>
-                  </div>
-                ))}
+                      key={idx}
+                      className="relative z-10 flex flex-col items-center gap-2 group cursor-pointer"
+                    >
+                      <div className="text-xs font-bold text-muted-foreground group-hover:text-foreground transition-colors">
+                        {seg.from}
+                      </div>
+                      <div
+                        className={`w-6 h-6 rounded-full border-4 border-background shadow-md flex items-center justify-center transition-all
+                        ${seg.status === "healthy" ? "bg-safe" : seg.status === "attention" ? "bg-warn" : "bg-destructive"}
+                        ${isHighlighted ? "ring-4 ring-joint scale-110" : ""}`}
+                      ></div>
+                    </div>
+                  );
+                })}
                 {/* Last station */}
                 <div className="relative z-10 flex flex-col items-center gap-2 group cursor-pointer">
                   <div className="text-xs font-bold text-muted-foreground group-hover:text-foreground transition-colors">
@@ -833,31 +1078,35 @@ function AnalyticsPage() {
 
               {/* Segment Details */}
               <div className="grid grid-cols-4 gap-2">
-                {corridorSegments.map((seg, idx) => (
-                  <div
-                    key={idx}
-                    className={`p-3 rounded-lg border bg-background/50 hover:bg-muted/50 transition-colors border-l-4 
-                    ${seg.status === "healthy" ? "border-l-safe" : seg.status === "attention" ? "border-l-warn" : "border-l-destructive"}`}
-                  >
-                    <div className="text-xs font-semibold mb-2">
-                      {seg.from}–{seg.to}
+                {corridorSegments.map((seg, idx) => {
+                  const isHighlighted = highlightedCorridor === `${seg.from}-${seg.to}`;
+                  return (
+                    <div
+                      key={idx}
+                      className={`p-3 rounded-lg border bg-background/50 hover:bg-muted/50 transition-all border-l-4 
+                      ${seg.status === "healthy" ? "border-l-safe" : seg.status === "attention" ? "border-l-warn" : "border-l-destructive"}
+                      ${isHighlighted ? "ring-2 ring-joint bg-joint/10" : ""}`}
+                    >
+                      <div className="text-xs font-semibold mb-2">
+                        {seg.from}–{seg.to}
+                      </div>
+                      <div className="space-y-1">
+                        <div className="flex justify-between text-[10px]">
+                          <span className="text-muted-foreground">Blocks:</span>{" "}
+                          <span>{seg.blocks}</span>
+                        </div>
+                        <div className="flex justify-between text-[10px]">
+                          <span className="text-muted-foreground">Avail:</span>{" "}
+                          <span>{seg.availability}%</span>
+                        </div>
+                        <div className="flex justify-between text-[10px]">
+                          <span className="text-muted-foreground">Delay Risk:</span>{" "}
+                          <span className={seg.delay !== "0m" ? "text-warn" : ""}>{seg.delay}</span>
+                        </div>
+                      </div>
                     </div>
-                    <div className="space-y-1">
-                      <div className="flex justify-between text-[10px]">
-                        <span className="text-muted-foreground">Blocks:</span>{" "}
-                        <span>{seg.blocks}</span>
-                      </div>
-                      <div className="flex justify-between text-[10px]">
-                        <span className="text-muted-foreground">Avail:</span>{" "}
-                        <span>{seg.availability}%</span>
-                      </div>
-                      <div className="flex justify-between text-[10px]">
-                        <span className="text-muted-foreground">Delay Risk:</span>{" "}
-                        <span className={seg.delay !== "0m" ? "text-warn" : ""}>{seg.delay}</span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           </CardContent>
@@ -957,7 +1206,10 @@ function AnalyticsPage() {
                 </div>
                 <div className="space-y-1.5 flex-1">
                   <p className="text-sm leading-tight">{insight.text}</p>
-                  <button className="text-xs text-joint font-medium hover:underline flex items-center gap-1">
+                  <button
+                    onClick={() => handleInsightAction(insight)}
+                    className="text-xs text-joint font-medium hover:underline flex items-center gap-1"
+                  >
                     {insight.action} <ArrowRight className="size-3" />
                   </button>
                 </div>
@@ -968,7 +1220,7 @@ function AnalyticsPage() {
       </div>
 
       {/* 11 & 12. POST-BLOCK REPORT AND TIMELINE */}
-      <Card>
+      <Card id="post-block-report">
         <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 gap-4">
           <div>
             <CardTitle className="text-lg">Executed Block Performance & Report</CardTitle>
@@ -981,14 +1233,110 @@ function AnalyticsPage() {
               <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
               <Input
                 placeholder="Search blocks..."
-                className="pl-8 h-9 w-64 text-sm"
+                className="pl-8 pr-7 h-9 w-64 text-sm"
                 value={reportFilter}
                 onChange={(e) => setReportFilter(e.target.value)}
               />
+              {reportFilter && (
+                <button
+                  type="button"
+                  onClick={() => setReportFilter("")}
+                  className="absolute right-2.5 top-2.5 text-xs text-muted-foreground hover:text-foreground cursor-pointer"
+                  title="Clear filter"
+                >
+                  ✕
+                </button>
+              )}
             </div>
-            <Button variant="outline" size="sm" className="h-9">
-              <Filter className="size-4 mr-2" /> Filter
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant={reportFilter ? "secondary" : "outline"}
+                  size="sm"
+                  className="h-9 cursor-pointer"
+                >
+                  <Filter className="size-4 mr-2" />
+                  {reportFilter ? `Filter: ${reportFilter}` : "Filter"}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56 bg-card border-border shadow-md">
+                <DropdownMenuLabel className="text-xs text-muted-foreground uppercase tracking-wider">
+                  Filter by Department
+                </DropdownMenuLabel>
+                <DropdownMenuItem
+                  className="cursor-pointer"
+                  onClick={() => {
+                    setReportFilter("ENG");
+                    toast.info("Filtering by Engineering (ENG)");
+                  }}
+                >
+                  Engineering (ENG)
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className="cursor-pointer"
+                  onClick={() => {
+                    setReportFilter("S&T");
+                    toast.info("Filtering by Signalling & Telecom (S&T)");
+                  }}
+                >
+                  Signalling &amp; Telecom (S&amp;T)
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className="cursor-pointer"
+                  onClick={() => {
+                    setReportFilter("TRD");
+                    toast.info("Filtering by Traction Distribution (TRD)");
+                  }}
+                >
+                  Traction Distribution (TRD)
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel className="text-xs text-muted-foreground uppercase tracking-wider">
+                  Filter by Status
+                </DropdownMenuLabel>
+                <DropdownMenuItem
+                  className="cursor-pointer"
+                  onClick={() => {
+                    setReportFilter("Completed");
+                    toast.info("Filtering by Completed status");
+                  }}
+                >
+                  Completed
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className="cursor-pointer"
+                  onClick={() => {
+                    setReportFilter("Optimised");
+                    toast.info("Filtering by Optimised status");
+                  }}
+                >
+                  Optimised
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className="cursor-pointer"
+                  onClick={() => {
+                    setReportFilter("Delayed");
+                    toast.info("Filtering by Delayed status");
+                  }}
+                >
+                  Delayed
+                </DropdownMenuItem>
+                {reportFilter && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      className="text-destructive font-medium cursor-pointer"
+                      onClick={() => {
+                        setReportFilter("");
+                        toast.info("Cleared filters");
+                      }}
+                    >
+                      Clear Active Filter
+                    </DropdownMenuItem>
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </CardHeader>
 
@@ -1061,9 +1409,7 @@ function AnalyticsPage() {
               ) : (
                 <TableRow>
                   <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
-                    {reports.length === 0
-                      ? "Loading post-block report data..."
-                      : "No blocks found matching filter."}
+                    No blocks found matching "{reportFilter}".
                   </TableCell>
                 </TableRow>
               )}
@@ -1100,8 +1446,14 @@ function AnalyticsPage() {
                 </CardHeader>
                 <CardContent className="p-4 pt-0">
                   <p className="text-xs text-muted-foreground mb-3">{action.benefit}</p>
-                  <Button size="sm" variant="outline" className="w-full text-xs h-8">
-                    Review Action
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="w-full text-xs h-8"
+                    disabled={reviewedActions.has(idx)}
+                    onClick={() => handleReviewAction(action, idx)}
+                  >
+                    {reviewedActions.has(idx) ? "Reviewed ✓" : "Review Action"}
                   </Button>
                 </CardContent>
               </Card>
@@ -1148,6 +1500,145 @@ function AnalyticsPage() {
           </Card>
         </div>
       </div>
+
+      {/* 1. Department Details Dialog */}
+      <Dialog open={deptDetailsOpen} onOpenChange={setDeptDetailsOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Departmental Operational Performance</DialogTitle>
+            <DialogDescription>
+              Detailed breakdown of asset availability, scheduled maintenance tasks, and execution
+              efficiency by department.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4 sm:grid-cols-3">
+            {departmentDetails.map((dept) => (
+              <div key={dept.name} className="p-4 rounded-lg border bg-card/50 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className={`text-sm font-bold ${dept.colorClass}`}>{dept.name}</span>
+                  <Badge variant="outline" className="text-xs">
+                    {dept.avail}% Avail
+                  </Badge>
+                </div>
+                <div className="space-y-2 text-xs">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Active Tasks:</span>
+                    <span className="font-semibold">{dept.tasks}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Executed Blocks:</span>
+                    <span className="font-semibold">{dept.blocks}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Efficiency Rating:</span>
+                    <span className="font-semibold">{dept.eff}%</span>
+                  </div>
+                </div>
+                <Progress value={dept.eff} indicatorClassName={dept.bgClass} className="h-1.5" />
+              </div>
+            ))}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeptDetailsOpen(false)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 2. AI Insight Dialog */}
+      <Dialog
+        open={insightDialog.open}
+        onOpenChange={(open) => setInsightDialog((prev) => ({ ...prev, open }))}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <BrainCircuit className="size-5 text-joint" />
+              AI Operational Insight
+            </DialogTitle>
+            <DialogDescription>
+              Intelligent recommendation generated by IR-ABPS reasoning engine.
+            </DialogDescription>
+          </DialogHeader>
+          {insightDialog.insight && (
+            <div className="space-y-4 py-2">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">Severity Level:</span>
+                <Badge
+                  variant="outline"
+                  className={
+                    insightDialog.insight.severity === "high"
+                      ? "bg-destructive/10 text-destructive border-destructive/20 uppercase text-[10px]"
+                      : insightDialog.insight.severity === "medium"
+                        ? "bg-warn/10 text-warn border-warn/20 uppercase text-[10px]"
+                        : "bg-primary/10 text-primary border-primary/20 uppercase text-[10px]"
+                  }
+                >
+                  {insightDialog.insight.severity} priority
+                </Badge>
+              </div>
+              <div className="bg-muted/50 p-4 rounded-lg border text-sm leading-relaxed">
+                {insightDialog.insight.text}
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setInsightDialog({ open: false, insight: null })}
+            >
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 3. Action Review Dialog */}
+      <Dialog
+        open={actionDialog.open}
+        onOpenChange={(open) => setActionDialog((prev) => ({ ...prev, open }))}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Review Recommended Action</DialogTitle>
+            <DialogDescription>
+              Evaluate and confirm proposed maintenance coordination action.
+            </DialogDescription>
+          </DialogHeader>
+          {actionDialog.action && (
+            <div className="space-y-4 py-2">
+              <div>
+                <span
+                  className={`text-[10px] font-bold tracking-wider uppercase ${
+                    actionDialog.index === 0
+                      ? "text-destructive"
+                      : actionDialog.index === 1
+                        ? "text-warn"
+                        : "text-primary"
+                  }`}
+                >
+                  {actionDialog.action.priority}
+                </span>
+                <h4 className="text-base font-semibold mt-1">{actionDialog.action.title}</h4>
+              </div>
+              <div className="bg-muted/50 p-3 rounded-lg border text-xs text-muted-foreground">
+                <strong className="text-foreground">Expected Benefit: </strong>
+                {actionDialog.action.benefit}
+              </div>
+            </div>
+          )}
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="outline"
+              onClick={() => setActionDialog({ open: false, action: null, index: null })}
+            >
+              Dismiss
+            </Button>
+            <Button onClick={acknowledgeAction}>Acknowledge & Schedule</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
