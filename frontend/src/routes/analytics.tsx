@@ -41,7 +41,7 @@ import {
   Pie,
   Cell,
 } from "recharts";
-import { useAbps } from "@/context/AbpsContext";
+import { useAbps } from "../context/AbpsContext";
 import { DAYS, fmt } from "@/lib/abps-data";
 import { Button } from "@/components/ui/button";
 import {
@@ -114,12 +114,6 @@ type AnalyticsData = {
   }[];
 };
 
-// Synthetic Demo Data for AI Dashboard Projections
-const comparisonData = [
-  { metric: "Block Hours", traditional: 26.4, ai: 18.5 },
-  { metric: "Train Delay", traditional: 214, ai: 142 },
-  { metric: "Separate Blocks", traditional: 19, ai: 12 },
-];
 
 const availabilityTrendData = [
   { day: "Mon", overall: 89, eng: 87, snt: 91, trd: 88 },
@@ -283,8 +277,11 @@ function AnalyticsPage() {
   const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
   const [reportFilter, setReportFilter] = useState("");
 
+  const [showDepartmentDetails, setShowDepartmentDetails] = useState(false);
+
   const refreshAnalytics = () => {
     toast.info("Refreshing intelligence model...");
+
     fetch("http://127.0.0.1:8000/analytics/")
       .then((res) => {
         if (!res.ok) throw new Error("Failed to fetch analytics");
@@ -339,13 +336,31 @@ function AnalyticsPage() {
   ];
 
   const safeAnalytics = {
-    availability: analytics?.asset_availability_percent || 94.2,
-    blockHours: analytics?.total_block_hours || 18.5,
-    delayAvoided: analytics?.train_delay_impact_minutes || 142,
-    coordinated: analytics?.coordinated_blocks || 12,
-    optimised: analytics?.total_maintenance_tasks || 67,
-    efficiency: analytics?.average_optimization_score || 91,
+    availability: analytics?.asset_availability_percent ?? 0,
+    blockHours: analytics?.total_block_hours ?? 0,
+    delayAvoided: analytics?.train_delay_impact_minutes ?? 0,
+    coordinated: analytics?.coordinated_blocks ?? 0,
+    optimised: analytics?.total_maintenance_tasks ?? 0,
+    efficiency: analytics?.average_optimization_score ?? 0,
   };
+
+  const comparisonData = [
+  {
+    metric: "Block Hours",
+    traditional: 0,
+    ai: safeAnalytics.blockHours,
+  },
+  {
+    metric: "Train Delay",
+    traditional: 0,
+    ai: safeAnalytics.delayAvoided,
+  },
+  {
+    metric: "Separate Blocks",
+    traditional: safeAnalytics.coordinated,
+    ai: safeAnalytics.coordinated,
+  },
+];
 
   const pieData = [
     { name: "Score", value: 87, color: "var(--joint)" },
@@ -703,6 +718,7 @@ function AnalyticsPage() {
             <CardTitle className="text-lg">Departmental Operational Performance</CardTitle>
             <CardDescription>Availability and execution metrics</CardDescription>
           </CardHeader>
+
           <CardContent className="space-y-4">
             <DeptCard
               name="ENGINEERING"
@@ -713,6 +729,7 @@ function AnalyticsPage() {
               colorClass="text-eng"
               bgClass="bg-eng"
             />
+
             <DeptCard
               name="S&T"
               avail={97}
@@ -722,6 +739,7 @@ function AnalyticsPage() {
               colorClass="text-snt"
               bgClass="bg-snt"
             />
+
             <DeptCard
               name="TRD"
               avail={92}
@@ -731,12 +749,114 @@ function AnalyticsPage() {
               colorClass="text-trd"
               bgClass="bg-trd"
             />
-            <Button variant="link" className="w-full text-sm text-primary mt-2">
+
+            <Button
+              variant="link"
+              className="w-full text-sm text-primary mt-2"
+              onClick={() => {
+                window.location.href = "/analytics?view=departments";
+              }}
+            >
               View department details →
             </Button>
           </CardContent>
         </Card>
       </div>
+
+      {showDepartmentDetails && (
+  <Card className="mt-6 border-primary/30 bg-card">
+    <CardHeader>
+      <CardTitle className="flex items-center justify-between">
+        <span>Department Operational Details</span>
+
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            window.history.pushState({}, "", "/analytics");
+            setShowDepartmentDetails(false);
+          }}
+        >
+          Close
+        </Button>
+      </CardTitle>
+
+      <CardDescription>
+        Detailed maintenance and optimization performance by department.
+      </CardDescription>
+    </CardHeader>
+
+    <CardContent>
+      <div className="grid gap-4 md:grid-cols-3">
+        {[
+          {
+            name: "ENGINEERING",
+            availability: 95,
+            tasks: 24,
+            blocks: 8,
+            efficiency: 89,
+          },
+          {
+            name: "S&T",
+            availability: 97,
+            tasks: 21,
+            blocks: 6,
+            efficiency: 94,
+          },
+          {
+            name: "TRD",
+            availability: 92,
+            tasks: 22,
+            blocks: 7,
+            efficiency: 87,
+          },
+        ].map((department) => (
+          <Card key={department.name} className="bg-background/50">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">
+                {department.name}
+              </CardTitle>
+            </CardHeader>
+
+            <CardContent className="space-y-4">
+              <div className="flex justify-between">
+                <span className="text-sm text-muted-foreground">
+                  Asset Availability
+                </span>
+                <span className="font-semibold text-emerald-400">
+                  {department.availability}%
+                </span>
+              </div>
+
+              <div className="flex justify-between">
+                <span className="text-sm text-muted-foreground">
+                  Maintenance Tasks
+                </span>
+                <span>{department.tasks}</span>
+              </div>
+
+              <div className="flex justify-between">
+                <span className="text-sm text-muted-foreground">
+                  Optimized Blocks
+                </span>
+                <span>{department.blocks}</span>
+              </div>
+
+              <div className="flex justify-between">
+                <span className="text-sm text-muted-foreground">
+                  Coordination Efficiency
+                </span>
+                <span className="font-semibold text-emerald-400">
+                  {department.efficiency}%
+                </span>
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    </CardContent>
+  </Card>
+)}
 
       <div className="grid gap-6 lg:grid-cols-12">
         {/* 7. COORDINATION ANALYTICS */}
