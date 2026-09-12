@@ -27,6 +27,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { ThemeToggle } from "./ThemeToggle";
 
 const NAV = [
   { to: "/dashboard", label: "Control Dashboard", icon: LayoutDashboard },
@@ -64,7 +65,10 @@ export function AppShell({ children }: { children: ReactNode }) {
   // 1. NOT SIGNED IN & NOT ON HOME PAGE -> SHOW LOGIN SCREEN
   if (!signedIn && !isHomePage) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background px-4 py-10">
+      <div className="relative flex min-h-screen items-center justify-center bg-background px-4 py-10">
+        <div className="absolute right-6 top-6">
+          <ThemeToggle variant="outline" size="sm" />
+        </div>
         <div className="w-full max-w-md rounded-xl border border-border bg-card p-8 shadow-[var(--shadow-panel)]">
           <div className="flex items-center gap-3">
             <div className="rounded-lg p-2" style={{ background: "var(--gradient-brain)" }}>
@@ -147,9 +151,12 @@ export function AppShell({ children }: { children: ReactNode }) {
             </div>
             <span className="font-semibold tracking-tight">IR-ABPS</span>
           </Link>
-          <Button asChild size="sm">
-            <Link to="/dashboard">Sign In to Dashboard</Link>
-          </Button>
+          <div className="flex items-center gap-3">
+            <ThemeToggle variant="ghost" size="sm" />
+            <Button asChild size="sm">
+              <Link to="/dashboard">Sign In to Dashboard</Link>
+            </Button>
+          </div>
         </header>
         <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-10 sm:px-6">{children}</main>
       </div>
@@ -207,13 +214,14 @@ export function AppShell({ children }: { children: ReactNode }) {
                 {role.name} · Access: {role.system}
               </p>
             </div>
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3 sm:gap-4">
               <div className="hidden items-center gap-1.5 rounded-full border border-border bg-secondary/50 px-3 py-1 text-xs font-medium text-safe sm:flex">
                 <span className="relative flex size-2">
                   <span className="relative inline-flex size-2 rounded-full bg-safe"></span>
                 </span>
                 SYSTEM OPERATIONAL
               </div>
+              <ThemeToggle variant="outline" size="sm" />
               <Button size="sm" variant="ghost" onClick={signOut}>
                 <LogOut className="size-4" /> Sign Out
               </Button>
