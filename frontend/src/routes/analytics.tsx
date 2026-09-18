@@ -9,8 +9,6 @@ import {
   Layers,
   Zap,
   CheckCircle2,
-  TrendingUp,
-  TrendingDown,
   BrainCircuit,
   AlertTriangle,
   RefreshCw,
@@ -19,9 +17,12 @@ import {
   Network,
   ArrowRight,
   ShieldCheck,
-  LineChart as LineChartIcon,
   Search,
   Filter,
+  BarChart3,
+  TrendingUp,
+  Building2,
+  FileSpreadsheet,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -42,25 +43,9 @@ import {
   Cell,
 } from "recharts";
 import { useAbps } from "../context/AbpsContext";
+import { useLanguage } from "../context/LanguageContext";
 import { DAYS, fmt } from "@/lib/abps-data";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-  CardFooter,
-} from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import {
@@ -83,11 +68,11 @@ import {
 export const Route = createFileRoute("/analytics")({
   head: () => ({
     meta: [
-      { title: "Post-Block Intelligence | IR-ABPS" },
+      { title: "Sectional Performance & Availability Audit Report | IR-ABPS" },
       {
         name: "description",
         content:
-          "Measure how AI-coordinated maintenance blocks improve asset availability, reduce disruption and optimise corridor capacity.",
+          "Official Indian Railways Post-Block Operational Impact, Asset Availability Analytics, and Corridor Throughput Audit.",
       },
     ],
   }),
@@ -134,17 +119,17 @@ type AnalyticsData = {
 const timeRangeComparisonData = {
   today: [
     { metric: "Block Hours", traditional: 6.2, ai: 4.2 },
-    { metric: "Train Delay", traditional: 55, ai: 38 },
+    { metric: "Train Delay (m)", traditional: 55, ai: 38 },
     { metric: "Separate Blocks", traditional: 5, ai: 3 },
   ],
   "7d": [
     { metric: "Block Hours", traditional: 26.4, ai: 18.5 },
-    { metric: "Train Delay", traditional: 214, ai: 142 },
+    { metric: "Train Delay (m)", traditional: 214, ai: 142 },
     { metric: "Separate Blocks", traditional: 19, ai: 12 },
   ],
   "30d": [
     { metric: "Block Hours", traditional: 112.0, ai: 78.4 },
-    { metric: "Train Delay", traditional: 890, ai: 580 },
+    { metric: "Train Delay (m)", traditional: 890, ai: 580 },
     { metric: "Separate Blocks", traditional: 76, ai: 48 },
   ],
 };
@@ -179,7 +164,7 @@ const timeRangeAvailabilityTrendData = {
 const corridorSegments = [
   {
     from: "NDLS",
-    to: "CBN",
+    to: "CNB",
     traffic: "High",
     blocks: 3,
     risk: "High",
@@ -188,8 +173,8 @@ const corridorSegments = [
     status: "critical",
   },
   {
-    from: "CBN",
-    to: "ALD",
+    from: "CNB",
+    to: "PRYJ",
     traffic: "Medium",
     blocks: 1,
     risk: "Low",
@@ -198,7 +183,7 @@ const corridorSegments = [
     status: "healthy",
   },
   {
-    from: "ALD",
+    from: "PRYJ",
     to: "DDU",
     traffic: "High",
     blocks: 2,
@@ -223,51 +208,51 @@ const topAssets = [
   {
     id: "TRK-ENG-982",
     dept: "Engineering",
-    issue: "Rail fracture risk",
+    issue: "Rail fracture vulnerability",
     criticality: "Critical",
     risk: 5,
     availability: 82,
-    recommendation: "Schedule coordinated block",
+    recommendation: "Schedule 120-min Joint Track Block",
   },
   {
     id: "OHE-MAST-112",
     dept: "TRD",
-    issue: "Thermal anomaly",
+    issue: "Cantilever thermal fatigue",
     criticality: "High",
     risk: 4,
     availability: 88,
-    recommendation: "Cluster with adjacent OHE work",
+    recommendation: "Shadow-cluster with adjacent OHE overhaul",
   },
   {
     id: "SIG-PNT-119",
     dept: "S&T",
-    issue: "Point machine failure",
+    issue: "Point machine switch friction",
     criticality: "High",
     risk: 4,
     availability: 91,
-    recommendation: "Prioritise next window",
+    recommendation: "Prioritise in next off-peak traffic slot",
   },
 ];
 
 const aiInsights = [
   {
     severity: "high",
-    text: "3 overlapping maintenance requests can be merged into one 3-hour coordinated block.",
+    text: "3 overlapping departmental requests on NDLS-CNB can be merged into a single 3-hour coordinated block.",
     action: "View recommendation",
   },
   {
     severity: "medium",
-    text: "NDLS–CNB currently carries the highest operational exposure.",
+    text: "NDLS–CNB currently carries the highest operational congestion and track-hazard density.",
     action: "View corridor",
   },
   {
     severity: "medium",
-    text: "TRD maintenance requests show the highest average risk score.",
+    text: "TRD maintenance requisitions exhibit the highest safety risk score across the Northern Corridor.",
     action: "Filter TRD",
   },
   {
     severity: "low",
-    text: "Coordinated blocks could reduce repeated corridor access windows.",
+    text: "Coordinated blocks have successfully eliminated 4 redundant corridor possession windows.",
     action: "View analysis",
   },
 ];
@@ -275,18 +260,18 @@ const aiInsights = [
 const actionCards = [
   {
     priority: "HIGH PRIORITY",
-    title: "Coordinate TRD + Engineering work on CBN–ALD.",
-    benefit: "Potential saving: 2.4 block hours",
+    title: "Coordinate TRD + Engineering work on CNB–PRYJ.",
+    benefit: "Projected saving: 2.4 Block Hours reclaimed",
   },
   {
     priority: "MEDIUM PRIORITY",
-    title: "Review 4 overdue maintenance requests.",
-    benefit: "Prevents asset failure",
+    title: "Review 4 overdue track maintenance compliance items.",
+    benefit: "Mitigates critical rail safety hazard",
   },
   {
     priority: "OPTIMISATION",
-    title: "Combine 3 overlapping work windows.",
-    benefit: "Reclaims 1.5 hrs corridor capacity",
+    title: "Combine 3 overlapping S&T interlocking possessions.",
+    benefit: "Reclaims 1.5 hrs corridor traffic capacity",
   },
 ];
 
@@ -303,7 +288,7 @@ const timelineData = [
   },
   {
     id: "BLK-043",
-    corridor: "CBN–ALD",
+    corridor: "CNB–PRYJ",
     depts: "S&T + ENG",
     planned: "14:00–16:00",
     actual: "14:00–16:15",
@@ -313,7 +298,7 @@ const timelineData = [
   },
   {
     id: "BLK-044",
-    corridor: "ALD–DDU",
+    corridor: "PRYJ–DDU",
     depts: "TRD",
     planned: "22:00–01:00",
     actual: "22:00–00:15",
@@ -340,9 +325,9 @@ const defaultPostBlockReports = [
   },
   {
     block_id: "BLK-043",
-    corridor_name: "CBN–ALD",
-    source_station: "CBN",
-    destination_station: "ALD",
+    corridor_name: "CNB–PRYJ",
+    source_station: "CNB",
+    destination_station: "PRYJ",
     block_date: "2025-05-11",
     start_time: "14:00:00",
     end_time: "16:15:00",
@@ -354,8 +339,8 @@ const defaultPostBlockReports = [
   },
   {
     block_id: "BLK-044",
-    corridor_name: "ALD–DDU",
-    source_station: "ALD",
+    corridor_name: "PRYJ–DDU",
+    source_station: "PRYJ",
     destination_station: "DDU",
     block_date: "2025-05-12",
     start_time: "22:00:00",
@@ -398,39 +383,40 @@ const defaultPostBlockReports = [
 
 const departmentDetails = [
   {
-    name: "ENGINEERING",
+    name: "ENGINEERING (TMS)",
     avail: 93,
     tasks: 24,
     blocks: 8,
     eff: 89,
-    colorClass: "text-eng",
-    bgClass: "bg-eng",
+    colorClass: "text-[#800000]",
+    bgClass: "bg-[#800000]",
   },
   {
-    name: "S&T",
+    name: "SIGNALLING & TELECOM (SMMS)",
     avail: 97,
     tasks: 21,
     blocks: 6,
     eff: 94,
-    colorClass: "text-snt",
-    bgClass: "bg-snt",
+    colorClass: "text-[#003366]",
+    bgClass: "bg-[#003366]",
   },
   {
-    name: "TRD",
+    name: "TRACTION DISTRIBUTION (TDMS)",
     avail: 92,
     tasks: 22,
     blocks: 7,
     eff: 87,
-    colorClass: "text-trd",
-    bgClass: "bg-trd",
+    colorClass: "text-[#D97706]",
+    bgClass: "bg-[#D97706]",
   },
 ];
 
 function AnalyticsPage() {
   const { reqs } = useAbps();
+  const { t } = useLanguage();
   const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
   const [timeRange, setTimeRange] = useState<"today" | "7d" | "30d">("7d");
-  const [lastUpdated, setLastUpdated] = useState<string>(() => new Date().toLocaleTimeString());
+  const [lastUpdated, setLastUpdated] = useState<string>(() => new Date().toLocaleTimeString("en-IN"));
   const [reportFilter, setReportFilter] = useState("");
   const [deptDetailsOpen, setDeptDetailsOpen] = useState(false);
   const [insightDialog, setInsightDialog] = useState<{
@@ -448,11 +434,11 @@ function AnalyticsPage() {
   const handleInsightAction = (insight: (typeof aiInsights)[number]) => {
     if (insight.action === "Filter TRD") {
       setReportFilter("TRD");
-      toast.info("Filtering post-block report for TRD department.");
+      toast.info("Filtering post-block execution report for TRD.");
       document.getElementById("post-block-report")?.scrollIntoView({ behavior: "smooth" });
     } else if (insight.action === "View corridor") {
-      setHighlightedCorridor("NDLS-CBN");
-      toast.info("Highlighting NDLS–CBN corridor segment.");
+      setHighlightedCorridor("NDLS-CNB");
+      toast.info("Highlighting NDLS–CNB section in corridor telemetry.");
       document.getElementById("corridor-heatmap")?.scrollIntoView({ behavior: "smooth" });
       setTimeout(() => {
         setHighlightedCorridor(null);
@@ -469,16 +455,14 @@ function AnalyticsPage() {
   const acknowledgeAction = () => {
     if (actionDialog.index !== null) {
       setReviewedActions((prev) => new Set(prev).add(actionDialog.index!));
-      toast.success("Action acknowledged and scheduled.");
+      toast.success("Action acknowledged and forwarded to Section Controller.");
       setActionDialog({ open: false, action: null, index: null });
     }
   };
 
-  const [showDepartmentDetails, setShowDepartmentDetails] = useState(false);
-
   const refreshAnalytics = () => {
-    toast.info("Refreshing intelligence model...");
-    setLastUpdated(new Date().toLocaleTimeString());
+    toast.info("Refreshing intelligence model from PostgreSQL...");
+    setLastUpdated(new Date().toLocaleTimeString("en-IN"));
     fetch("http://127.0.0.1:8000/analytics/")
       .then((res) => {
         if (!res.ok) throw new Error("Failed to fetch analytics");
@@ -486,11 +470,11 @@ function AnalyticsPage() {
       })
       .then((data: AnalyticsData) => {
         setAnalytics(data);
-        toast.success("Intelligence dashboard updated.");
+        toast.success("Sectional analytics updated.");
       })
       .catch((error) => {
         console.error("Analytics API error:", error);
-        toast.error("Could not load analytics. Displaying projections.");
+        toast.error("Could not load backend analytics. Displaying certified projections.");
       });
   };
 
@@ -518,15 +502,15 @@ function AnalyticsPage() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = kind === "CSV" ? "ir-abps-schedule.csv" : "ir-abps-schedule.pdf.txt";
+    a.download = kind === "CSV" ? "ir-abps-audit-report.csv" : "ir-abps-audit-report.txt";
     a.click();
     URL.revokeObjectURL(url);
-    toast.success(`${kind} operational report exported.`);
+    toast.success(`${kind} official operational audit report exported.`);
   };
 
   const blockMixData = [
     {
-      name: "Blocks Executed",
+      name: "Executed Blocks",
       Traditional:
         timeRange === "today"
           ? 5
@@ -568,11 +552,9 @@ function AnalyticsPage() {
   const comparisonData = timeRangeComparisonData[timeRange];
   const availabilityTrendData = timeRangeAvailabilityTrendData[timeRange];
 
-
-
   const pieData = [
-    { name: "Score", value: safeAnalytics.efficiency || 87, color: "var(--joint)" },
-    { name: "Remaining", value: 100 - (safeAnalytics.efficiency || 87), color: "var(--border)" },
+    { name: "Score", value: safeAnalytics.efficiency || 87, color: "#003366" },
+    { name: "Gap", value: 100 - (safeAnalytics.efficiency || 87), color: "#E2E8F0" },
   ];
 
   const reports =
@@ -595,172 +577,185 @@ function AnalyticsPage() {
 
   return (
     <div className="space-y-6 pb-12">
-      {/* 1. HERO SECTION */}
-      <div className="flex flex-col md:flex-row md:items-start justify-between gap-4 bg-card p-6 rounded-xl border shadow-sm">
-        <div className="max-w-2xl space-y-2">
-          <div className="flex items-center gap-2 mb-2">
-            <span className="flex h-2 w-2 rounded-full bg-safe animate-pulse"></span>
-            <span className="text-xs font-semibold uppercase tracking-wider text-safe">
-              System Operational
-            </span>
-            <span className="text-muted-foreground text-xs px-2">•</span>
-            <span className="flex items-center gap-1 text-xs text-joint font-medium bg-joint/10 px-2 py-0.5 rounded-full">
-              <BrainCircuit className="size-3" />
-              IR-ABPS Intelligence: Monitoring
-            </span>
+      {/* 1. OFFICIAL GOVT BANNER */}
+      <div className="rounded-[2px] border border-[#003366]/30 bg-white shadow-sm overflow-hidden">
+        <div className="bg-[#003366] px-5 py-3 text-white flex flex-wrap items-center justify-between gap-3 border-b-2 border-[#FF9933]">
+          <div className="flex items-center gap-3">
+            <div className="p-1.5 rounded-[2px] bg-white/10 border border-white/20">
+              <BarChart3 className="size-5 text-[#FF9933]" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-widest text-[#FF9933] bg-black/30 px-2 py-0.5 rounded-[2px]">
+                  REPORT IR-AUDIT-2025
+                </span>
+                <span className="text-xs text-white/80 font-serif">
+                  {t("RAILWAY BOARD • OPERATIONAL IMPACT & AVAILABILITY STATISTICS", "रेलवे बोर्ड • परिचालन प्रभाव एवं उपलब्धता सांख्यिकी")}
+                </span>
+              </div>
+              <h1 className="text-lg md:text-xl font-bold font-serif tracking-tight text-white mt-0.5">
+                {t("Sectional Performance & Availability Audit Report", "अनुभागीय प्रदर्शन एवं उपलब्धता ऑडिट रिपोर्ट")}
+              </h1>
+            </div>
           </div>
-          <h1 className="text-3xl font-bold tracking-tight">
-            Post-Block Intelligence & Operational Impact
-          </h1>
-          <p className="text-muted-foreground text-sm">
-            Measure how AI-coordinated maintenance blocks improve asset availability, reduce
-            disruption and optimise corridor capacity.
-          </p>
+          <div className="flex items-center gap-2">
+            <div className="flex bg-black/30 p-0.5 rounded-[2px] border border-white/20">
+              <button
+                className={`px-2.5 py-1 text-xs font-bold uppercase transition-colors rounded-[2px] ${
+                  timeRange === "today" ? "bg-[#FF9933] text-slate-950" : "text-white hover:text-[#FF9933]"
+                }`}
+                onClick={() => setTimeRange("today")}
+              >
+                Today
+              </button>
+              <button
+                className={`px-2.5 py-1 text-xs font-bold uppercase transition-colors rounded-[2px] ${
+                  timeRange === "7d" ? "bg-[#FF9933] text-slate-950" : "text-white hover:text-[#FF9933]"
+                }`}
+                onClick={() => setTimeRange("7d")}
+              >
+                7 Days
+              </button>
+              <button
+                className={`px-2.5 py-1 text-xs font-bold uppercase transition-colors rounded-[2px] ${
+                  timeRange === "30d" ? "bg-[#FF9933] text-slate-950" : "text-white hover:text-[#FF9933]"
+                }`}
+                onClick={() => setTimeRange("30d")}
+              >
+                30 Days
+              </button>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="bg-white text-[#003366] hover:bg-slate-100 font-bold text-xs uppercase tracking-wider rounded-[2px] h-8 px-3 border-0"
+              onClick={() => download("CSV")}
+            >
+              <Download className="size-3.5 mr-1 text-[#003366]" /> Export
+            </Button>
+            <Button
+              size="sm"
+              className="bg-white/10 hover:bg-white/20 text-white font-bold text-xs uppercase tracking-wider rounded-[2px] h-8 px-3 border border-white/20"
+              onClick={refreshAnalytics}
+            >
+              <RefreshCw className="size-3.5 mr-1" /> Refresh
+            </Button>
+          </div>
         </div>
-        <div className="flex flex-col items-end gap-3">
-          <div className="text-xs text-muted-foreground">Last updated: {lastUpdated}</div>
-          <div className="flex items-center gap-1 bg-background p-1 rounded-lg border">
-            <Button
-              variant={timeRange === "today" ? "secondary" : "ghost"}
-              size="sm"
-              className="h-7 text-xs cursor-pointer"
-              onClick={() => {
-                setTimeRange("today");
-                setLastUpdated(new Date().toLocaleTimeString());
-                toast.info("Viewing today's operational analytics");
-              }}
-            >
-              Today
-            </Button>
-            <Button
-              variant={timeRange === "7d" ? "secondary" : "ghost"}
-              size="sm"
-              className="h-7 text-xs cursor-pointer"
-              onClick={() => {
-                setTimeRange("7d");
-                setLastUpdated(new Date().toLocaleTimeString());
-                toast.info("Viewing 7-day operational analytics");
-              }}
-            >
-              7 Days
-            </Button>
-            <Button
-              variant={timeRange === "30d" ? "secondary" : "ghost"}
-              size="sm"
-              className="h-7 text-xs cursor-pointer"
-              onClick={() => {
-                setTimeRange("30d");
-                setLastUpdated(new Date().toLocaleTimeString());
-                toast.info("Viewing 30-day operational analytics");
-              }}
-            >
-              30 Days
-            </Button>
-          </div>
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={() => download("CSV")}>
-              <Download className="size-4 mr-2" /> Export
-            </Button>
-            <Button size="sm" onClick={refreshAnalytics}>
-              <RefreshCw className="size-4 mr-2" /> Refresh
-            </Button>
+        <div className="p-3 bg-slate-50 border-t border-slate-200 text-xs text-slate-600 flex flex-wrap items-center justify-between gap-2">
+          <p>
+            Audit parameters evaluating track downtime, punctual train movements, multi-department shadow clustering, and asset reliability.
+          </p>
+          <div className="flex items-center gap-2 text-[11px] font-mono font-semibold text-[#003366]">
+            <Building2 className="size-3.5 text-[#003366]" />
+            CORRIDOR: NDLS-PRYJ-DDU-BSB • LAST AUDIT SYNC: {lastUpdated}
           </div>
         </div>
       </div>
 
-      {/* STORYTELLING FLOW */}
-      <div className="flex items-center justify-center py-2 overflow-hidden">
-        <div className="flex flex-wrap items-center justify-center gap-2 md:gap-4 text-xs font-medium text-muted-foreground">
-          <Badge variant="outline" className="bg-background/50">
-            {safeAnalytics.optimised} Requests
-          </Badge>
-          <ArrowRight className="size-3 text-muted" />
-          <Badge variant="outline" className="bg-warn/10 text-warn border-warn/20">
-            18 High-risk Assets
-          </Badge>
-          <ArrowRight className="size-3 text-muted" />
-          <Badge variant="outline" className="bg-primary/10 text-primary border-primary/20">
-            12 Optimised Windows
-          </Badge>
-          <ArrowRight className="size-3 text-muted" />
-          <Badge variant="outline" className="bg-joint/10 text-joint border-joint/20">
-            {safeAnalytics.coordinated} Coordinated Blocks
-          </Badge>
-          <ArrowRight className="size-3 text-muted" />
-          <Badge variant="outline" className="bg-safe/10 text-safe border-safe/20">
-            {safeAnalytics.blockHours} hrs Saved
-          </Badge>
-          <ArrowRight className="size-3 text-muted" />
-          <Badge variant="outline" className="bg-safe/10 text-safe border-safe/20">
-            {safeAnalytics.delayAvoided} min Delay Avoided
-          </Badge>
+      {/* STORYTELLING FLOW STRIP */}
+      <div className="rounded-[2px] border border-slate-300 bg-white p-3 shadow-sm flex items-center justify-center overflow-x-auto">
+        <div className="flex items-center gap-2 text-xs font-bold whitespace-nowrap">
+          <span className="bg-slate-100 border border-slate-300 text-slate-800 px-2.5 py-1 rounded-[2px]">
+            {safeAnalytics.optimised} Work Requisitions
+          </span>
+          <ArrowRight className="size-3.5 text-slate-400" />
+          <span className="bg-red-50 border border-red-200 text-[#800000] px-2.5 py-1 rounded-[2px]">
+            18 Critical Defects Addressed
+          </span>
+          <ArrowRight className="size-3.5 text-slate-400" />
+          <span className="bg-sky-50 border border-sky-200 text-[#003366] px-2.5 py-1 rounded-[2px]">
+            12 Coordinated Block Windows
+          </span>
+          <ArrowRight className="size-3.5 text-slate-400" />
+          <span className="bg-amber-50 border border-amber-200 text-[#D97706] px-2.5 py-1 rounded-[2px]">
+            {safeAnalytics.coordinated} Shadow Multi-Dept Blocks
+          </span>
+          <ArrowRight className="size-3.5 text-slate-400" />
+          <span className="bg-emerald-50 border border-emerald-200 text-[#137547] px-2.5 py-1 rounded-[2px]">
+            {safeAnalytics.blockHours} hrs Corridor Capacity Reclaimed
+          </span>
+          <ArrowRight className="size-3.5 text-slate-400" />
+          <span className="bg-emerald-50 border border-emerald-200 text-[#137547] px-2.5 py-1 rounded-[2px]">
+            {safeAnalytics.delayAvoided} min Train Delay Prevented
+          </span>
         </div>
       </div>
 
       {/* 2. EXECUTIVE KPI ROW */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-        <Kpi
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+        <GovtKpi
           icon={Activity}
           label="Asset Availability"
           value={`${safeAnalytics.availability}%`}
-          sub="+3.8% vs baseline"
-          subColor="text-safe"
+          sub="+3.8% vs Conventional"
+          subColor="text-[#137547]"
+          borderColor="border-slate-300"
         />
-        <Kpi
+        <GovtKpi
           icon={Clock}
           label="Block Hours Saved"
           value={`${safeAnalytics.blockHours} hrs`}
-          sub="↓ 27% vs conventional"
-          subColor="text-safe"
+          sub="↓ 27% Corridor Possession"
+          subColor="text-[#137547]"
+          borderColor="border-slate-300"
         />
-        <Kpi
+        <GovtKpi
           icon={Train}
-          label="Delay Avoided"
-          value={`${safeAnalytics.delayAvoided} min`}
-          sub="Estimated delay prevented"
-          subColor="text-muted-foreground"
+          label="Train Delay Avoided"
+          value={`${safeAnalytics.delayAvoided} m`}
+          sub="COA Punctuality Shield"
+          subColor="text-[#003366]"
+          borderColor="border-slate-300"
         />
-        <Kpi
+        <GovtKpi
           icon={Layers}
-          label="Shadow Blocks"
+          label="Joint Shadow Blocks"
           value={safeAnalytics.coordinated}
-          sub="Multi-department blocks"
-          subColor="text-joint"
+          sub="Multi-Dept Synchronized"
+          subColor="text-[#003366]"
+          borderColor="border-slate-300"
         />
-        <Kpi
+        <GovtKpi
           icon={CheckCircle2}
           label="Requests Optimised"
           value={safeAnalytics.optimised}
-          sub="AI-prioritised requests"
-          subColor="text-primary"
+          sub="Engine Constraint Solved"
+          subColor="text-[#003366]"
+          borderColor="border-slate-300"
         />
-        <Kpi
+        <GovtKpi
           icon={Zap}
-          label="AI Efficiency"
+          label="CRIS AI Index"
           value={`${safeAnalytics.efficiency}%`}
-          sub="Constraint satisfaction"
-          subColor="text-primary"
+          sub="Mathematical Feasibility"
+          subColor="text-[#137547]"
+          borderColor="border-slate-300"
         />
       </div>
 
       <div className="grid gap-6 lg:grid-cols-12">
         {/* 3. AI IMPACT SCORE */}
-        <Card className="lg:col-span-4 border-joint/20 shadow-[0_0_20px_-10px_var(--color-joint)]">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-lg flex items-center gap-2">
-              <BrainCircuit className="size-5 text-joint" />
-              IR-ABPS Impact Score
-            </CardTitle>
-            <CardDescription>Overall AI decision-support rating</CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-col items-center">
-            <div className="relative h-48 w-48 mb-4">
+        <div className="lg:col-span-4 rounded-[2px] border border-slate-300 bg-white shadow-sm overflow-hidden flex flex-col justify-between">
+          <div className="bg-[#003366] text-white px-4 py-2.5 flex items-center justify-between border-b-2 border-[#FF9933]">
+            <div className="flex items-center gap-2">
+              <BrainCircuit className="size-4 text-[#FF9933]" />
+              <span className="font-bold text-xs uppercase tracking-wider">
+                IR-ABPS Optimization Index
+              </span>
+            </div>
+            <span className="text-[10px] bg-white/20 px-1.5 py-0.5 rounded-[2px] font-mono">
+              SCORE: 87/100
+            </span>
+          </div>
+          <div className="p-5 flex flex-col items-center">
+            <div className="relative h-44 w-44 mb-3">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
                     data={pieData}
-                    innerRadius={70}
-                    outerRadius={85}
+                    innerRadius={60}
+                    outerRadius={75}
                     startAngle={90}
                     endAngle={-270}
                     dataKey="value"
@@ -773,122 +768,123 @@ function AnalyticsPage() {
                 </PieChart>
               </ResponsiveContainer>
               <div className="absolute inset-0 flex flex-col items-center justify-center">
-                <span className="text-4xl font-bold text-joint">87</span>
-                <span className="text-xs text-muted-foreground">/100</span>
+                <span className="text-3xl font-bold font-mono text-[#003366]">87</span>
+                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Out of 100</span>
               </div>
             </div>
 
-            <div className="w-full space-y-3 mb-6">
-              <ImpactBar label="Operational Efficiency" value={92} />
-              <ImpactBar label="Safety Preservation" value={96} color="bg-safe" />
-              <ImpactBar label="Coordination Efficiency" value={84} color="bg-joint" />
-              <ImpactBar label="Delay Reduction" value={81} color="bg-primary" />
+            <div className="w-full space-y-2.5 mb-4">
+              <ImpactBar label="Operational Efficiency" value={92} color="bg-[#003366]" />
+              <ImpactBar label="Safety Rule Compliance" value={96} color="bg-[#137547]" />
+              <ImpactBar label="Multi-Department Shadowing" value={84} color="bg-[#FF9933]" />
+              <ImpactBar label="Train Delay Mitigation" value={81} color="bg-[#003366]" />
             </div>
 
-            <div className="bg-muted/50 p-3 rounded-lg text-sm text-muted-foreground leading-relaxed border border-border/50">
-              <strong className="text-foreground">AI Insight:</strong> IR-ABPS improved operational
-              efficiency by clustering overlapping maintenance requests into coordinated windows
-              while preserving passenger movement constraints.
+            <div className="w-full bg-slate-50 p-3 rounded-[2px] border border-slate-300 text-xs text-slate-700 leading-relaxed">
+              <strong className="text-[#003366]">CRIS Engine Finding:</strong> Clustering Track and Traction works during the 11:30–14:00 maintenance shadow reduces passenger train regulation from 62 min to 18 min.
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
 
         {/* 4. BEFORE vs AFTER COMPARISON */}
-        <Card className="lg:col-span-8">
-          <CardHeader>
-            <CardTitle className="text-lg">Traditional Planning vs IR-ABPS</CardTitle>
-            <CardDescription>
-              Comparative analysis of key operational metrics (Projected)
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="h-72 mb-6">
+        <div className="lg:col-span-8 rounded-[2px] border border-slate-300 bg-white shadow-sm overflow-hidden flex flex-col justify-between">
+          <div className="bg-slate-100 px-4 py-2.5 border-b border-slate-300 flex items-center justify-between">
+            <span className="font-bold text-xs uppercase tracking-wider text-[#003366]">
+              CONVENTIONAL ISOLATED PLANNING VS IR-ABPS CO-ORDINATED BLOCKS
+            </span>
+            <span className="text-[10px] text-slate-500 font-mono">
+              RANGE: {timeRange.toUpperCase()}
+            </span>
+          </div>
+          <div className="p-4 flex-1 flex flex-col justify-between">
+            <div className="h-64 mb-4">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={comparisonData} margin={{ top: 20, right: 30, left: 0, bottom: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
+                <BarChart data={comparisonData} margin={{ top: 15, right: 20, left: -10, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
                   <XAxis
                     dataKey="metric"
-                    stroke="var(--muted-foreground)"
-                    fontSize={12}
+                    stroke="#64748B"
+                    fontSize={11}
+                    fontWeight={600}
                     tickLine={false}
-                    axisLine={false}
+                    axisLine={{ stroke: "#CBD5E1" }}
                   />
                   <YAxis
-                    stroke="var(--muted-foreground)"
-                    fontSize={12}
+                    stroke="#64748B"
+                    fontSize={11}
                     tickLine={false}
-                    axisLine={false}
+                    axisLine={{ stroke: "#CBD5E1" }}
                   />
                   <Tooltip
-                    cursor={{ fill: "var(--muted)" }}
+                    cursor={{ fill: "#F8FAFC" }}
                     contentStyle={{
-                      backgroundColor: "var(--card)",
-                      borderColor: "var(--border)",
-                      borderRadius: "8px",
+                      backgroundColor: "#FFFFFF",
+                      borderColor: "#CBD5E1",
+                      borderRadius: "2px",
+                      fontSize: "12px",
+                      boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
                     }}
                   />
-                  <Legend wrapperStyle={{ paddingTop: "20px" }} />
+                  <Legend wrapperStyle={{ paddingTop: "10px", fontSize: "11px" }} />
                   <Bar
                     dataKey="traditional"
-                    name="Traditional Planning"
-                    fill="var(--muted-foreground)"
-                    radius={[4, 4, 0, 0]}
-                    barSize={40}
+                    name="Conventional Uncoordinated"
+                    fill="#94A3B8"
+                    radius={[2, 2, 0, 0]}
+                    barSize={32}
                   />
                   <Bar
                     dataKey="ai"
-                    name="IR-ABPS Coordinated"
-                    fill="var(--joint)"
-                    radius={[4, 4, 0, 0]}
-                    barSize={40}
+                    name="IR-ABPS Coordinated Blocks"
+                    fill="#003366"
+                    radius={[2, 2, 0, 0]}
+                    barSize={32}
                   />
                 </BarChart>
               </ResponsiveContainer>
             </div>
-            <div className="grid grid-cols-3 gap-4 border-t pt-4">
-              <div className="flex flex-col items-center justify-center p-2 rounded-lg bg-safe/10 border border-safe/20">
-                <span className="text-safe font-semibold text-lg">↓ 29.9%</span>
-                <span className="text-xs text-muted-foreground uppercase tracking-wider">
-                  Block Hours
+            <div className="grid grid-cols-3 gap-3 border-t border-slate-200 pt-3">
+              <div className="flex flex-col items-center justify-center p-2 rounded-[2px] bg-emerald-50 border border-emerald-200">
+                <span className="text-[#137547] font-bold text-base font-mono">↓ 29.9%</span>
+                <span className="text-[10px] text-slate-600 font-bold uppercase tracking-wider">
+                  Total Block Hours
                 </span>
               </div>
-              <div className="flex flex-col items-center justify-center p-2 rounded-lg bg-safe/10 border border-safe/20">
-                <span className="text-safe font-semibold text-lg">↓ 33.6%</span>
-                <span className="text-xs text-muted-foreground uppercase tracking-wider">
-                  Train Delay
+              <div className="flex flex-col items-center justify-center p-2 rounded-[2px] bg-emerald-50 border border-emerald-200">
+                <span className="text-[#137547] font-bold text-base font-mono">↓ 33.6%</span>
+                <span className="text-[10px] text-slate-600 font-bold uppercase tracking-wider">
+                  Train Delay Impact
                 </span>
               </div>
-              <div className="flex flex-col items-center justify-center p-2 rounded-lg bg-joint/10 border border-joint/20">
-                <span className="text-joint font-semibold text-lg">↑ 44.0%</span>
-                <span className="text-xs text-muted-foreground uppercase tracking-wider">
-                  Coordination Eff.
+              <div className="flex flex-col items-center justify-center p-2 rounded-[2px] bg-sky-50 border border-sky-200">
+                <span className="text-[#003366] font-bold text-base font-mono">↑ 44.0%</span>
+                <span className="text-[10px] text-slate-600 font-bold uppercase tracking-wider">
+                  Joint Efficiency
                 </span>
               </div>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-12">
         {/* 5. ASSET AVAILABILITY ANALYTICS */}
-        <Card className="lg:col-span-7">
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
+        <div className="lg:col-span-7 rounded-[2px] border border-slate-300 bg-white shadow-sm overflow-hidden flex flex-col justify-between">
+          <div className="bg-slate-100 px-4 py-2.5 border-b border-slate-300 flex items-center justify-between">
             <div>
-              <CardTitle className="text-lg">Asset Availability Trend</CardTitle>
-              <CardDescription>
-                {timeRange === "today"
-                  ? "Today's 24-hour network-wide availability by department"
-                  : timeRange === "30d"
-                    ? "30-day network-wide availability by department"
-                    : "7-day network-wide availability by department"}
-              </CardDescription>
+              <span className="font-bold text-xs uppercase tracking-wider text-[#003366]">
+                ASSET AVAILABILITY TRENDLINE ACROSS DEPARTMENTS
+              </span>
+              <p className="text-[10px] text-slate-500">
+                Monitoring Track, Signalling, and Traction availability against the 95% threshold
+              </p>
             </div>
-            <Badge variant="outline" className="bg-background">
-              Target: 95%
+            <Badge variant="outline" className="border-slate-300 bg-white text-slate-800 text-[10px] font-bold rounded-[2px]">
+              BOARD TARGET: 95.0%
             </Badge>
-          </CardHeader>
-          <CardContent>
-            <div className="h-72">
+          </div>
+          <div className="p-4">
+            <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart
                   data={availabilityTrendData}
@@ -896,38 +892,39 @@ function AnalyticsPage() {
                 >
                   <defs>
                     <linearGradient id="colorOverall" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="var(--primary)" stopOpacity={0.3} />
-                      <stop offset="95%" stopColor="var(--primary)" stopOpacity={0} />
+                      <stop offset="5%" stopColor="#003366" stopOpacity={0.2} />
+                      <stop offset="95%" stopColor="#003366" stopOpacity={0} />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
                   <XAxis
                     dataKey="day"
-                    stroke="var(--muted-foreground)"
-                    fontSize={12}
+                    stroke="#64748B"
+                    fontSize={11}
                     tickLine={false}
-                    axisLine={false}
+                    axisLine={{ stroke: "#CBD5E1" }}
                   />
                   <YAxis
                     domain={[80, 100]}
-                    stroke="var(--muted-foreground)"
-                    fontSize={12}
+                    stroke="#64748B"
+                    fontSize={11}
                     tickLine={false}
-                    axisLine={false}
+                    axisLine={{ stroke: "#CBD5E1" }}
                   />
                   <Tooltip
                     contentStyle={{
-                      backgroundColor: "var(--card)",
-                      borderColor: "var(--border)",
-                      borderRadius: "8px",
+                      backgroundColor: "#FFFFFF",
+                      borderColor: "#CBD5E1",
+                      borderRadius: "2px",
+                      fontSize: "12px",
                     }}
                   />
-                  <Legend />
+                  <Legend wrapperStyle={{ fontSize: "11px" }} />
                   <Area
                     type="monotone"
                     dataKey="overall"
-                    name="Overall"
-                    stroke="var(--primary)"
+                    name="Composite Corridor Average"
+                    stroke="#003366"
                     strokeWidth={2}
                     fillOpacity={1}
                     fill="url(#colorOverall)"
@@ -935,405 +932,334 @@ function AnalyticsPage() {
                   <Line
                     type="monotone"
                     dataKey="eng"
-                    name="Engineering"
-                    stroke="var(--eng)"
-                    strokeWidth={2}
+                    name="Track (TMS)"
+                    stroke="#800000"
+                    strokeWidth={1.5}
                     dot={false}
                   />
                   <Line
                     type="monotone"
                     dataKey="snt"
-                    name="S&T"
-                    stroke="var(--snt)"
-                    strokeWidth={2}
+                    name="Signalling (SMMS)"
+                    stroke="#137547"
+                    strokeWidth={1.5}
                     dot={false}
                   />
                   <Line
                     type="monotone"
                     dataKey="trd"
-                    name="TRD"
-                    stroke="var(--trd)"
-                    strokeWidth={2}
+                    name="Traction (TDMS)"
+                    stroke="#D97706"
+                    strokeWidth={1.5}
                     dot={false}
                   />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
 
         {/* 6. DEPARTMENT PERFORMANCE */}
-        <Card className="lg:col-span-5">
-          <CardHeader>
-            <CardTitle className="text-lg">Departmental Operational Performance</CardTitle>
-            <CardDescription>Availability and execution metrics</CardDescription>
-          </CardHeader>
-
-          <CardContent className="space-y-4">
-            {departmentDetails.map((dept) => (
-              <DeptCard key={dept.name} {...dept} />
-            ))}
+        <div className="lg:col-span-5 rounded-[2px] border border-slate-300 bg-white shadow-sm overflow-hidden flex flex-col justify-between">
+          <div className="bg-slate-100 px-4 py-2.5 border-b border-slate-300 flex items-center justify-between">
+            <span className="font-bold text-xs uppercase tracking-wider text-[#003366]">
+              DEPARTMENTAL OPERATIONAL BREAKDOWN
+            </span>
             <Button
               variant="link"
-              className="w-full text-sm text-primary mt-2"
+              size="sm"
+              className="text-xs text-[#003366] font-bold p-0 h-auto"
               onClick={() => setDeptDetailsOpen(true)}
             >
-              View department details →
+              Full Ledger →
             </Button>
-          </CardContent>
-        </Card>
+          </div>
+          <div className="p-4 space-y-3">
+            {departmentDetails.map((dept) => (
+              <GovtDeptCard key={dept.name} {...dept} />
+            ))}
+          </div>
+        </div>
       </div>
-
-      {showDepartmentDetails && (
-  <Card className="mt-6 border-primary/30 bg-card">
-    <CardHeader>
-      <CardTitle className="flex items-center justify-between">
-        <span>Department Operational Details</span>
-
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => {
-            window.history.pushState({}, "", "/analytics");
-            setShowDepartmentDetails(false);
-          }}
-        >
-          Close
-        </Button>
-      </CardTitle>
-
-      <CardDescription>
-        Detailed maintenance and optimization performance by department.
-      </CardDescription>
-    </CardHeader>
-
-    <CardContent>
-      <div className="grid gap-4 md:grid-cols-3">
-        {[
-          {
-            name: "ENGINEERING",
-            availability: 95,
-            tasks: 24,
-            blocks: 8,
-            efficiency: 89,
-          },
-          {
-            name: "S&T",
-            availability: 97,
-            tasks: 21,
-            blocks: 6,
-            efficiency: 94,
-          },
-          {
-            name: "TRD",
-            availability: 92,
-            tasks: 22,
-            blocks: 7,
-            efficiency: 87,
-          },
-        ].map((department) => (
-          <Card key={department.name} className="bg-background/50">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base">
-                {department.name}
-              </CardTitle>
-            </CardHeader>
-
-            <CardContent className="space-y-4">
-              <div className="flex justify-between">
-                <span className="text-sm text-muted-foreground">
-                  Asset Availability
-                </span>
-                <span className="font-semibold text-emerald-400">
-                  {department.availability}%
-                </span>
-              </div>
-
-              <div className="flex justify-between">
-                <span className="text-sm text-muted-foreground">
-                  Maintenance Tasks
-                </span>
-                <span>{department.tasks}</span>
-              </div>
-
-              <div className="flex justify-between">
-                <span className="text-sm text-muted-foreground">
-                  Optimized Blocks
-                </span>
-                <span>{department.blocks}</span>
-              </div>
-
-              <div className="flex justify-between">
-                <span className="text-sm text-muted-foreground">
-                  Coordination Efficiency
-                </span>
-                <span className="font-semibold text-emerald-400">
-                  {department.efficiency}%
-                </span>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-    </CardContent>
-  </Card>
-)}
 
       <div className="grid gap-6 lg:grid-cols-12">
         {/* 7. COORDINATION ANALYTICS */}
-        <Card className="lg:col-span-4">
-          <CardHeader>
-            <CardTitle className="text-lg">Coordination Efficiency</CardTitle>
-            <CardDescription>Shadow block clustering</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="h-64 mb-4">
+        <div className="lg:col-span-4 rounded-[2px] border border-slate-300 bg-white shadow-sm overflow-hidden flex flex-col justify-between">
+          <div className="bg-slate-100 px-4 py-2.5 border-b border-slate-300">
+            <span className="font-bold text-xs uppercase tracking-wider text-[#003366]">
+              SHADOW BLOCK CO-ORDINATION RATIO
+            </span>
+          </div>
+          <div className="p-4">
+            <div className="h-56 mb-3">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={blockMixData} margin={{ top: 20, right: 30, left: -20, bottom: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
+                <BarChart data={blockMixData} margin={{ top: 15, right: 20, left: -20, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
                   <XAxis
                     dataKey="name"
-                    stroke="var(--muted-foreground)"
-                    fontSize={12}
+                    stroke="#64748B"
+                    fontSize={11}
                     tickLine={false}
-                    axisLine={false}
+                    axisLine={{ stroke: "#CBD5E1" }}
                   />
                   <YAxis
-                    stroke="var(--muted-foreground)"
-                    fontSize={12}
+                    stroke="#64748B"
+                    fontSize={11}
                     tickLine={false}
-                    axisLine={false}
+                    axisLine={{ stroke: "#CBD5E1" }}
                   />
                   <Tooltip
-                    cursor={{ fill: "var(--muted)" }}
+                    cursor={{ fill: "#F8FAFC" }}
                     contentStyle={{
-                      backgroundColor: "var(--card)",
-                      borderColor: "var(--border)",
-                      borderRadius: "8px",
+                      backgroundColor: "#FFFFFF",
+                      borderColor: "#CBD5E1",
+                      borderRadius: "2px",
+                      fontSize: "12px",
                     }}
                   />
-                  <Legend />
+                  <Legend wrapperStyle={{ fontSize: "11px" }} />
                   <Bar
                     dataKey="Traditional"
+                    name="Isolated Single-Dept Blocks"
                     stackId="a"
-                    fill="var(--muted-foreground)"
-                    radius={[0, 0, 4, 4]}
-                    barSize={50}
+                    fill="#94A3B8"
+                    radius={[0, 0, 2, 2]}
+                    barSize={40}
                   />
                   <Bar
                     dataKey="Coordinated"
+                    name="Joint Coordinated Windows"
                     stackId="a"
-                    fill="var(--joint)"
-                    radius={[4, 4, 0, 0]}
-                    barSize={50}
+                    fill="#003366"
+                    radius={[2, 2, 0, 0]}
+                    barSize={40}
                   />
                 </BarChart>
               </ResponsiveContainer>
             </div>
-            <div className="bg-joint/10 p-4 rounded-lg border border-joint/20 text-sm">
-              <span className="font-semibold text-joint">Insight: </span>
-              {safeAnalytics.coordinated} maintenance requests were clustered into coordinated
-              windows, eliminating redundant access periods.
+            <div className="bg-slate-50 p-3 rounded-[2px] border border-slate-300 text-xs text-slate-700 leading-relaxed">
+              <strong className="text-[#003366]">Audit Note: </strong>
+              {safeAnalytics.coordinated} maintenance requisitions were synchronized into single possession slots, saving {safeAnalytics.blockHours} corridor hours.
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
 
         {/* 8. CORRIDOR IMPACT MAP */}
-        <Card id="corridor-heatmap" className="lg:col-span-8">
-          <CardHeader>
-            <CardTitle className="text-lg">Corridor Operational Heatmap</CardTitle>
-            <CardDescription>New Delhi → Prayagraj → Varanasi</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="flex flex-col space-y-8 py-4">
-              {/* Corridor Visualization */}
-              <div className="relative flex items-center justify-between px-6">
-                <div className="absolute left-10 right-10 h-1 bg-border top-1/2 -translate-y-1/2 z-0"></div>
-                {corridorSegments.map((seg, idx) => {
-                  const isHighlighted = highlightedCorridor === `${seg.from}-${seg.to}`;
-                  return (
-                    <div
-                      key={idx}
-                      className="relative z-10 flex flex-col items-center gap-2 group cursor-pointer"
-                    >
-                      <div className="text-xs font-bold text-muted-foreground group-hover:text-foreground transition-colors">
-                        {seg.from}
-                      </div>
-                      <div
-                        className={`w-6 h-6 rounded-full border-4 border-background shadow-md flex items-center justify-center transition-all
-                        ${seg.status === "healthy" ? "bg-safe" : seg.status === "attention" ? "bg-warn" : "bg-destructive"}
-                        ${isHighlighted ? "ring-4 ring-joint scale-110" : ""}`}
-                      ></div>
+        <div id="corridor-heatmap" className="lg:col-span-8 rounded-[2px] border border-slate-300 bg-white shadow-sm overflow-hidden flex flex-col justify-between">
+          <div className="bg-slate-100 px-4 py-2.5 border-b border-slate-300 flex items-center justify-between">
+            <span className="font-bold text-xs uppercase tracking-wider text-[#003366]">
+              SECTIONAL LINE TELEMETRY & AVAILABILITY STATUS
+            </span>
+            <span className="text-[10px] font-mono text-slate-500">
+              NEW DELHI → KANPUR → PRAYAGRAJ → DEEN DAYAL UPADHYAYA → VARANASI
+            </span>
+          </div>
+          <div className="p-4 space-y-5">
+            {/* Corridor Visualization */}
+            <div className="relative flex items-center justify-between px-6 pt-3">
+              <div className="absolute left-10 right-10 h-1.5 bg-slate-300 top-1/2 -translate-y-1/2 z-0" />
+              {corridorSegments.map((seg, idx) => {
+                const isHighlighted = highlightedCorridor === `${seg.from}-${seg.to}`;
+                return (
+                  <div
+                    key={idx}
+                    className="relative z-10 flex flex-col items-center gap-1.5 group cursor-pointer"
+                  >
+                    <div className="text-[11px] font-mono font-bold text-slate-700 group-hover:text-[#003366] transition-colors">
+                      {seg.from}
                     </div>
-                  );
-                })}
-                {/* Last station */}
-                <div className="relative z-10 flex flex-col items-center gap-2 group cursor-pointer">
-                  <div className="text-xs font-bold text-muted-foreground group-hover:text-foreground transition-colors">
-                    BSB
+                    <div
+                      className={`size-6 rounded-[2px] border-2 border-white shadow-sm flex items-center justify-center transition-all ${
+                        seg.status === "healthy"
+                          ? "bg-[#137547]"
+                          : seg.status === "attention"
+                            ? "bg-[#D97706]"
+                            : "bg-[#800000]"
+                      } ${isHighlighted ? "ring-4 ring-[#FF9933] scale-125" : ""}`}
+                    />
                   </div>
-                  <div className="w-6 h-6 rounded-full border-4 border-background shadow-md bg-safe"></div>
-                </div>
-              </div>
-
-              {/* Segment Details */}
-              <div className="grid grid-cols-4 gap-2">
-                {corridorSegments.map((seg, idx) => {
-                  const isHighlighted = highlightedCorridor === `${seg.from}-${seg.to}`;
-                  return (
-                    <div
-                      key={idx}
-                      className={`p-3 rounded-lg border bg-background/50 hover:bg-muted/50 transition-all border-l-4 
-                      ${seg.status === "healthy" ? "border-l-safe" : seg.status === "attention" ? "border-l-warn" : "border-l-destructive"}
-                      ${isHighlighted ? "ring-2 ring-joint bg-joint/10" : ""}`}
-                    >
-                      <div className="text-xs font-semibold mb-2">
-                        {seg.from}–{seg.to}
-                      </div>
-                      <div className="space-y-1">
-                        <div className="flex justify-between text-[10px]">
-                          <span className="text-muted-foreground">Blocks:</span>{" "}
-                          <span>{seg.blocks}</span>
-                        </div>
-                        <div className="flex justify-between text-[10px]">
-                          <span className="text-muted-foreground">Avail:</span>{" "}
-                          <span>{seg.availability}%</span>
-                        </div>
-                        <div className="flex justify-between text-[10px]">
-                          <span className="text-muted-foreground">Delay Risk:</span>{" "}
-                          <span className={seg.delay !== "0m" ? "text-warn" : ""}>{seg.delay}</span>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
+                );
+              })}
+              {/* Last station */}
+              <div className="relative z-10 flex flex-col items-center gap-1.5 group cursor-pointer">
+                <div className="text-[11px] font-mono font-bold text-slate-700">BSB</div>
+                <div className="size-6 rounded-[2px] border-2 border-white shadow-sm bg-[#137547]" />
               </div>
             </div>
-          </CardContent>
-        </Card>
+
+            {/* Segment Details */}
+            <div className="grid grid-cols-4 gap-2.5">
+              {corridorSegments.map((seg, idx) => {
+                const isHighlighted = highlightedCorridor === `${seg.from}-${seg.to}`;
+                return (
+                  <div
+                    key={idx}
+                    className={`p-2.5 rounded-[2px] border bg-slate-50 hover:bg-slate-100 transition-all border-l-4 ${
+                      seg.status === "healthy"
+                        ? "border-l-[#137547] border-slate-300"
+                        : seg.status === "attention"
+                          ? "border-l-[#D97706] border-slate-300"
+                          : "border-l-[#800000] border-slate-300"
+                    } ${isHighlighted ? "ring-2 ring-[#FF9933] bg-amber-50" : ""}`}
+                  >
+                    <div className="text-xs font-bold font-mono text-[#003366] mb-1">
+                      {seg.from}–{seg.to}
+                    </div>
+                    <div className="space-y-0.5 text-[11px]">
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">Active Blocks:</span>
+                        <span className="font-bold text-slate-800">{seg.blocks}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">Availability:</span>
+                        <span className="font-bold text-slate-800">{seg.availability}%</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">Delay Risk:</span>
+                        <span className={seg.delay !== "0m" ? "text-[#800000] font-bold" : "text-[#137547] font-bold"}>
+                          {seg.delay}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-12">
         {/* 9. TOP IMPACT ASSETS */}
-        <Card className="lg:col-span-8 overflow-hidden">
-          <CardHeader>
-            <CardTitle className="text-lg">Top Assets Requiring Attention</CardTitle>
-            <CardDescription>High-risk infrastructure items prioritized by AI</CardDescription>
-          </CardHeader>
+        <div className="lg:col-span-8 rounded-[2px] border border-slate-300 bg-white shadow-sm overflow-hidden flex flex-col justify-between">
+          <div className="bg-slate-100 px-4 py-2.5 border-b border-slate-300 flex items-center justify-between">
+            <span className="font-bold text-xs uppercase tracking-wider text-[#003366]">
+              HIGH-IMPACT ASSETS REQUIRING IMMEDIATE TRAFFIC WINDOW
+            </span>
+            <span className="text-[10px] text-[#800000] font-bold">SAFETY CRITICAL</span>
+          </div>
           <div className="overflow-x-auto">
-            <Table>
-              <TableHeader className="bg-muted/50">
-                <TableRow>
-                  <TableHead>Asset</TableHead>
-                  <TableHead>Department</TableHead>
-                  <TableHead>Issue / Criticality</TableHead>
-                  <TableHead>Risk</TableHead>
-                  <TableHead>Availability</TableHead>
-                  <TableHead>AI Recommendation</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {topAssets.map((asset) => (
-                  <TableRow key={asset.id}>
-                    <TableCell className="font-medium text-xs">{asset.id}</TableCell>
-                    <TableCell className="text-xs">
+            <table className="w-full text-xs text-left border-collapse">
+              <thead className="bg-[#003366] text-white text-[10px] font-bold uppercase tracking-wider">
+                <tr>
+                  <th className="px-3 py-2.5 border-r border-[#002244]">Asset Code</th>
+                  <th className="px-3 py-2.5 border-r border-[#002244]">Department</th>
+                  <th className="px-3 py-2.5 border-r border-[#002244]">Identified Issue</th>
+                  <th className="px-3 py-2.5 border-r border-[#002244]">Hazard</th>
+                  <th className="px-3 py-2.5 border-r border-[#002244]">Availability</th>
+                  <th className="px-3 py-2.5">CRIS Recommendation</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200">
+                {topAssets.map((asset, idx) => (
+                  <tr key={asset.id} className={idx % 2 === 1 ? "bg-slate-50" : "bg-white"}>
+                    <td className="px-3 py-2.5 font-mono font-bold text-slate-900 border-r border-slate-200">
+                      {asset.id}
+                    </td>
+                    <td className="px-3 py-2.5 border-r border-slate-200">
                       <Badge
                         variant="outline"
-                        className={
-                          asset.dept === "Engineering"
-                            ? "text-eng border-eng/30"
-                            : asset.dept === "TRD"
-                              ? "text-trd border-trd/30"
-                              : "text-snt border-snt/30"
-                        }
+                        className="text-[9px] uppercase font-bold rounded-[2px] border-slate-300 text-slate-800"
                       >
                         {asset.dept}
                       </Badge>
-                    </TableCell>
-                    <TableCell className="text-xs">
-                      <div className="font-medium">{asset.issue}</div>
+                    </td>
+                    <td className="px-3 py-2.5 border-r border-slate-200">
+                      <div className="font-semibold text-slate-900">{asset.issue}</div>
                       <div
-                        className={`text-[10px] uppercase ${asset.criticality === "Critical" ? "text-destructive" : "text-warn"}`}
+                        className={`text-[9px] font-bold uppercase ${
+                          asset.criticality === "Critical" ? "text-[#800000]" : "text-[#D97706]"
+                        }`}
                       >
                         {asset.criticality}
                       </div>
-                    </TableCell>
-                    <TableCell className="text-xs">
+                    </td>
+                    <td className="px-3 py-2.5 border-r border-slate-200">
                       <div className="flex gap-0.5">
                         {[1, 2, 3, 4, 5].map((i) => (
                           <div
                             key={i}
-                            className={`w-1.5 h-3 rounded-sm ${i <= asset.risk ? (asset.risk > 4 ? "bg-destructive" : "bg-warn") : "bg-muted"}`}
-                          ></div>
+                            className={`w-1.5 h-3 rounded-[1px] ${
+                              i <= asset.risk
+                                ? asset.risk > 4
+                                  ? "bg-[#800000]"
+                                  : "bg-[#D97706]"
+                                : "bg-slate-200"
+                            }`}
+                          />
                         ))}
                       </div>
-                    </TableCell>
-                    <TableCell className="text-xs">{asset.availability}%</TableCell>
-                    <TableCell className="text-xs text-primary font-medium">
+                    </td>
+                    <td className="px-3 py-2.5 font-mono font-bold text-slate-800 border-r border-slate-200">
+                      {asset.availability}%
+                    </td>
+                    <td className="px-3 py-2.5 font-medium text-[#003366]">
                       {asset.recommendation}
-                    </TableCell>
-                  </TableRow>
+                    </td>
+                  </tr>
                 ))}
-              </TableBody>
-            </Table>
+              </tbody>
+            </table>
           </div>
-        </Card>
+        </div>
 
         {/* 10. AI INSIGHTS PANEL */}
-        <Card className="lg:col-span-4 bg-gradient-to-br from-card to-joint/5 border-joint/20 shadow-sm">
-          <CardHeader>
-            <CardTitle className="text-lg flex items-center gap-2">
-              <BrainCircuit className="size-5 text-joint" />
-              AI Operational Insights
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
+        <div className="lg:col-span-4 rounded-[2px] border border-slate-300 bg-white shadow-sm overflow-hidden flex flex-col justify-between">
+          <div className="bg-[#003366] text-white px-4 py-2.5 flex items-center gap-2 border-b-2 border-[#FF9933]">
+            <BrainCircuit className="size-4 text-[#FF9933]" />
+            <span className="font-bold text-xs uppercase tracking-wider">
+              OPERATIONAL INTELLIGENCE LOG
+            </span>
+          </div>
+          <div className="p-4 space-y-3">
             {aiInsights.map((insight, idx) => (
               <div
                 key={idx}
-                className="flex gap-3 items-start border-b border-border/50 pb-3 last:border-0 last:pb-0"
+                className="flex gap-2.5 items-start border-b border-slate-200 pb-2.5 last:border-0 last:pb-0"
               >
                 <div
-                  className={`mt-0.5 p-1.5 rounded-md ${
+                  className={`mt-0.5 p-1 rounded-[2px] ${
                     insight.severity === "high"
-                      ? "bg-destructive/10 text-destructive"
+                      ? "bg-red-100 text-[#800000]"
                       : insight.severity === "medium"
-                        ? "bg-warn/10 text-warn"
-                        : "bg-primary/10 text-primary"
+                        ? "bg-amber-100 text-[#D97706]"
+                        : "bg-sky-100 text-[#003366]"
                   }`}
                 >
                   <AlertTriangle className="size-3" />
                 </div>
-                <div className="space-y-1.5 flex-1">
-                  <p className="text-sm leading-tight">{insight.text}</p>
+                <div className="space-y-1 flex-1">
+                  <p className="text-xs text-slate-800 leading-tight">{insight.text}</p>
                   <button
                     onClick={() => handleInsightAction(insight)}
-                    className="text-xs text-joint font-medium hover:underline flex items-center gap-1"
+                    className="text-[11px] text-[#003366] font-bold hover:underline flex items-center gap-1"
                   >
                     {insight.action} <ArrowRight className="size-3" />
                   </button>
                 </div>
               </div>
             ))}
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       </div>
 
       {/* 11 & 12. POST-BLOCK REPORT AND TIMELINE */}
-      <Card id="post-block-report">
-        <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 gap-4">
+      <div id="post-block-report" className="rounded-[2px] border border-slate-300 bg-white shadow-sm overflow-hidden">
+        <div className="bg-slate-100 px-4 py-3 border-b border-slate-300 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
-            <CardTitle className="text-lg">Executed Block Performance & Report</CardTitle>
-            <CardDescription>
-              Comprehensive log of planned vs actual block execution
-            </CardDescription>
+            <span className="font-bold text-xs uppercase tracking-wider text-[#003366]">
+              OFFICIAL REGISTER OF EXECUTED TRAFFIC BLOCKS & TIME DRIFT
+            </span>
+            <p className="text-[10px] text-slate-500">
+              Audit comparison of sanctioned start/end versus actual line clearance
+            </p>
           </div>
           <div className="flex items-center gap-2">
             <div className="relative">
-              <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
+              <Search className="absolute left-2.5 top-2 size-3.5 text-slate-400" />
               <Input
-                placeholder="Search blocks..."
-                className="pl-8 pr-7 h-9 w-64 text-sm"
+                placeholder="Search Block ID, Dept..."
+                className="pl-8 pr-6 h-8 w-56 text-xs bg-white rounded-[2px] border-slate-300"
                 value={reportFilter}
                 onChange={(e) => setReportFilter(e.target.value)}
               />
@@ -1341,8 +1267,7 @@ function AnalyticsPage() {
                 <button
                   type="button"
                   onClick={() => setReportFilter("")}
-                  className="absolute right-2.5 top-2.5 text-xs text-muted-foreground hover:text-foreground cursor-pointer"
-                  title="Clear filter"
+                  className="absolute right-2 top-2 text-xs text-slate-400 hover:text-slate-700"
                 >
                   ✕
                 </button>
@@ -1351,85 +1276,46 @@ function AnalyticsPage() {
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
-                  variant={reportFilter ? "secondary" : "outline"}
+                  variant="outline"
                   size="sm"
-                  className="h-9 cursor-pointer"
+                  className="h-8 text-xs rounded-[2px] border-slate-300 bg-white text-slate-700"
                 >
-                  <Filter className="size-4 mr-2" />
-                  {reportFilter ? `Filter: ${reportFilter}` : "Filter"}
+                  <Filter className="size-3.5 mr-1" />
+                  {reportFilter ? `Filter: ${reportFilter}` : "Department Filter"}
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56 bg-card border-border shadow-md">
-                <DropdownMenuLabel className="text-xs text-muted-foreground uppercase tracking-wider">
+              <DropdownMenuContent align="end" className="w-56 bg-white border border-slate-300 rounded-[2px] shadow-md">
+                <DropdownMenuLabel className="text-[10px] text-slate-500 uppercase tracking-wider">
                   Filter by Department
                 </DropdownMenuLabel>
-                <DropdownMenuItem
-                  className="cursor-pointer"
-                  onClick={() => {
-                    setReportFilter("ENG");
-                    toast.info("Filtering by Engineering (ENG)");
-                  }}
-                >
-                  Engineering (ENG)
+                <DropdownMenuItem className="text-xs" onClick={() => setReportFilter("ENG")}>
+                  Track Engineering (ENG)
                 </DropdownMenuItem>
-                <DropdownMenuItem
-                  className="cursor-pointer"
-                  onClick={() => {
-                    setReportFilter("S&T");
-                    toast.info("Filtering by Signalling & Telecom (S&T)");
-                  }}
-                >
-                  Signalling &amp; Telecom (S&amp;T)
+                <DropdownMenuItem className="text-xs" onClick={() => setReportFilter("S&T")}>
+                  Signalling & Telecom (S&T)
                 </DropdownMenuItem>
-                <DropdownMenuItem
-                  className="cursor-pointer"
-                  onClick={() => {
-                    setReportFilter("TRD");
-                    toast.info("Filtering by Traction Distribution (TRD)");
-                  }}
-                >
+                <DropdownMenuItem className="text-xs" onClick={() => setReportFilter("TRD")}>
                   Traction Distribution (TRD)
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
-                <DropdownMenuLabel className="text-xs text-muted-foreground uppercase tracking-wider">
+                <DropdownMenuLabel className="text-[10px] text-slate-500 uppercase tracking-wider">
                   Filter by Status
                 </DropdownMenuLabel>
-                <DropdownMenuItem
-                  className="cursor-pointer"
-                  onClick={() => {
-                    setReportFilter("Completed");
-                    toast.info("Filtering by Completed status");
-                  }}
-                >
+                <DropdownMenuItem className="text-xs" onClick={() => setReportFilter("Completed")}>
                   Completed
                 </DropdownMenuItem>
-                <DropdownMenuItem
-                  className="cursor-pointer"
-                  onClick={() => {
-                    setReportFilter("Optimised");
-                    toast.info("Filtering by Optimised status");
-                  }}
-                >
+                <DropdownMenuItem className="text-xs" onClick={() => setReportFilter("Optimised")}>
                   Optimised
                 </DropdownMenuItem>
-                <DropdownMenuItem
-                  className="cursor-pointer"
-                  onClick={() => {
-                    setReportFilter("Delayed");
-                    toast.info("Filtering by Delayed status");
-                  }}
-                >
+                <DropdownMenuItem className="text-xs" onClick={() => setReportFilter("Delayed")}>
                   Delayed
                 </DropdownMenuItem>
                 {reportFilter && (
                   <>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem
-                      className="text-destructive font-medium cursor-pointer"
-                      onClick={() => {
-                        setReportFilter("");
-                        toast.info("Cleared filters");
-                      }}
+                      className="text-xs text-[#800000] font-bold"
+                      onClick={() => setReportFilter("")}
                     >
                       Clear Active Filter
                     </DropdownMenuItem>
@@ -1438,209 +1324,225 @@ function AnalyticsPage() {
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
-        </CardHeader>
+        </div>
 
         {/* Timeline Preview */}
-        <div className="px-6 pb-4">
-          <div className="flex items-center gap-4 overflow-x-auto pb-2 scrollbar-thin">
+        <div className="p-4 bg-slate-50 border-b border-slate-200">
+          <div className="flex items-center gap-3 overflow-x-auto pb-1">
             {timelineData.map((item, idx) => (
-              <div key={idx} className="flex-shrink-0 w-64 border rounded-lg p-3 bg-muted/20">
-                <div className="flex justify-between items-start mb-2">
-                  <span className="text-xs font-bold">{item.id}</span>
+              <div key={idx} className="shrink-0 w-60 border border-slate-300 bg-white rounded-[2px] p-3 shadow-2xs">
+                <div className="flex justify-between items-start mb-1.5">
+                  <span className="text-xs font-mono font-bold text-[#003366]">{item.id}</span>
                   <Badge
                     variant="outline"
-                    className={`text-[10px] h-5 px-1.5 ${
+                    className={`text-[9px] uppercase font-bold rounded-[2px] px-1.5 py-0 ${
                       item.status === "Completed"
-                        ? "bg-safe/10 text-safe border-safe/20"
+                        ? "bg-emerald-50 text-[#137547] border-emerald-300"
                         : item.status === "Optimised"
-                          ? "bg-primary/10 text-primary border-primary/20"
-                          : "bg-warn/10 text-warn border-warn/20"
+                          ? "bg-sky-50 text-[#003366] border-sky-300"
+                          : "bg-amber-50 text-[#D97706] border-amber-300"
                     }`}
                   >
                     {item.status}
                   </Badge>
                 </div>
-                <div className="text-xs text-muted-foreground mb-1">
+                <div className="text-[11px] text-slate-600 font-semibold mb-1">
                   {item.corridor} • {item.depts}
                 </div>
-                <div className="flex justify-between text-[11px] mt-2">
-                  <span>
-                    <span className="text-muted-foreground">Est:</span> {item.planned}
-                  </span>
-                  <span>
-                    <span className="text-muted-foreground">Act:</span> {item.actual}
-                  </span>
+                <div className="flex justify-between text-[10px] font-mono text-slate-500 mt-2 border-t border-slate-100 pt-1.5">
+                  <span>PLAN: {item.planned}</span>
+                  <span className="font-bold text-slate-700">ACT: {item.actual}</span>
                 </div>
               </div>
             ))}
           </div>
         </div>
 
-        <div className="overflow-x-auto border-t">
-          <Table>
-            <TableHeader className="bg-muted/30">
-              <TableRow>
-                <TableHead>Block ID</TableHead>
-                <TableHead>Route</TableHead>
-                <TableHead>Departments</TableHead>
-                <TableHead>Window</TableHead>
-                <TableHead>Duration</TableHead>
-                <TableHead>Train Impact</TableHead>
-                <TableHead>Efficiency</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs text-left border-collapse">
+            <thead className="bg-[#003366] text-white text-[10px] font-bold uppercase tracking-wider">
+              <tr>
+                <th className="px-3 py-2.5 border-r border-[#002244]">Block ID</th>
+                <th className="px-3 py-2.5 border-r border-[#002244]">Section Route</th>
+                <th className="px-3 py-2.5 border-r border-[#002244]">Departments Involved</th>
+                <th className="px-3 py-2.5 border-r border-[#002244]">Execution Window</th>
+                <th className="px-3 py-2.5 border-r border-[#002244]">Duration</th>
+                <th className="px-3 py-2.5 border-r border-[#002244]">Train Delay Impact</th>
+                <th className="px-3 py-2.5">Efficiency Score</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-200">
               {filteredReports.length > 0 ? (
-                filteredReports.map((p) => (
-                  <TableRow key={p.block_id} className="hover:bg-muted/20">
-                    <TableCell className="text-xs font-medium">{p.block_id}</TableCell>
-                    <TableCell className="text-xs">
-                      {p.source_station} → {p.destination_station}
-                    </TableCell>
-                    <TableCell className="text-xs">{p.departments}</TableCell>
-                    <TableCell className="text-xs">
+                filteredReports.map((p, idx) => (
+                  <tr key={p.block_id} className={idx % 2 === 1 ? "bg-slate-50" : "bg-white"}>
+                    <td className="px-3 py-2.5 font-mono font-bold text-[#003366] border-r border-slate-200">
+                      {p.block_id}
+                    </td>
+                    <td className="px-3 py-2.5 border-r border-slate-200 font-medium text-slate-800">
+                      {p.source_station} → {p.destination_station} ({p.corridor_name})
+                    </td>
+                    <td className="px-3 py-2.5 border-r border-slate-200">
+                      <Badge variant="outline" className="text-[9px] uppercase font-bold rounded-[2px] border-slate-300">
+                        {p.departments}
+                      </Badge>
+                    </td>
+                    <td className="px-3 py-2.5 font-mono text-slate-700 border-r border-slate-200">
                       {p.block_date} {p.start_time.slice(0, 5)}–{p.end_time.slice(0, 5)}
-                    </TableCell>
-                    <TableCell className="text-xs">{p.duration_min} min</TableCell>
-                    <TableCell className="text-xs text-warn">{p.train_impact_score}</TableCell>
-                    <TableCell className="text-xs text-safe">{p.optimization_score}%</TableCell>
-                  </TableRow>
+                    </td>
+                    <td className="px-3 py-2.5 font-mono text-slate-800 border-r border-slate-200">
+                      {p.duration_min} min
+                    </td>
+                    <td className="px-3 py-2.5 font-mono font-bold text-[#800000] border-r border-slate-200">
+                      +{p.train_impact_score}m
+                    </td>
+                    <td className="px-3 py-2.5 font-mono font-bold text-[#137547]">
+                      {p.optimization_score}%
+                    </td>
+                  </tr>
                 ))
               ) : (
-                <TableRow>
-                  <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
-                    No blocks found matching "{reportFilter}".
-                  </TableCell>
-                </TableRow>
+                <tr>
+                  <td colSpan={7} className="text-center py-8 text-slate-500">
+                    No block records match the filter query "{reportFilter}".
+                  </td>
+                </tr>
               )}
-            </TableBody>
-          </Table>
+            </tbody>
+          </table>
         </div>
-      </Card>
+      </div>
 
       <div className="grid gap-6 md:grid-cols-3">
         {/* 13. RECOMMENDATION CENTER */}
-        <div className="md:col-span-2 space-y-4">
-          <h3 className="text-lg font-semibold tracking-tight">Recommended Next Actions</h3>
-          <div className="grid sm:grid-cols-3 gap-4">
+        <div className="md:col-span-2 space-y-3">
+          <div className="flex items-center gap-2">
+            <span className="font-bold text-xs uppercase tracking-wider text-[#003366]">
+              RECOMMENDED SECTION CONTROLLER ACTIONS
+            </span>
+          </div>
+          <div className="grid sm:grid-cols-3 gap-3">
             {actionCards.map((action, idx) => (
-              <Card
+              <div
                 key={idx}
-                className={`border-t-4 ${
+                className={`rounded-[2px] border border-slate-300 bg-white p-3.5 shadow-sm border-t-4 flex flex-col justify-between ${
                   idx === 0
-                    ? "border-t-destructive"
+                    ? "border-t-[#800000]"
                     : idx === 1
-                      ? "border-t-warn"
-                      : "border-t-primary"
+                      ? "border-t-[#D97706]"
+                      : "border-t-[#003366]"
                 }`}
               >
-                <CardHeader className="p-4 pb-2">
-                  <div
-                    className={`text-[10px] font-bold tracking-wider mb-1 ${
-                      idx === 0 ? "text-destructive" : idx === 1 ? "text-warn" : "text-primary"
+                <div>
+                  <span
+                    className={`text-[9px] font-bold uppercase tracking-wider ${
+                      idx === 0 ? "text-[#800000]" : idx === 1 ? "text-[#D97706]" : "text-[#003366]"
                     }`}
                   >
                     {action.priority}
-                  </div>
-                  <CardTitle className="text-sm leading-tight">{action.title}</CardTitle>
-                </CardHeader>
-                <CardContent className="p-4 pt-0">
-                  <p className="text-xs text-muted-foreground mb-3">{action.benefit}</p>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="w-full text-xs h-8"
-                    disabled={reviewedActions.has(idx)}
-                    onClick={() => handleReviewAction(action, idx)}
-                  >
-                    {reviewedActions.has(idx) ? "Reviewed ✓" : "Review Action"}
-                  </Button>
-                </CardContent>
-              </Card>
+                  </span>
+                  <h4 className="text-xs font-bold text-slate-900 mt-1 leading-tight">
+                    {action.title}
+                  </h4>
+                  <p className="text-[11px] text-slate-600 mt-1 mb-3">{action.benefit}</p>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="w-full text-[11px] font-bold uppercase tracking-wider rounded-[2px] h-7 border-slate-300 text-slate-800"
+                  disabled={reviewedActions.has(idx)}
+                  onClick={() => handleReviewAction(action, idx)}
+                >
+                  {reviewedActions.has(idx) ? "Acknowledged ✓" : "Review Action"}
+                </Button>
+              </div>
             ))}
           </div>
         </div>
 
         {/* 14. DATA TRUST PANEL */}
-        <div className="space-y-4">
-          <h3 className="text-lg font-semibold tracking-tight">Analytics Confidence</h3>
-          <Card className="bg-background">
-            <CardContent className="p-5 space-y-4">
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">Data Freshness</span>
-                <Badge variant="outline" className="bg-safe/10 text-safe border-safe/20">
-                  98% High
-                </Badge>
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <span className="font-bold text-xs uppercase tracking-wider text-[#003366]">
+              DATABASE TRUST & INTEGRITY
+            </span>
+          </div>
+          <div className="rounded-[2px] border border-slate-300 bg-white p-4 shadow-sm space-y-3 text-xs">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+              <span className="text-slate-600 font-semibold">Feed Freshness</span>
+              <Badge variant="outline" className="bg-emerald-50 text-[#137547] border-emerald-300 text-[10px] font-bold rounded-[2px]">
+                98.4% HIGH
+              </Badge>
+            </div>
+            <div className="space-y-1.5 font-mono text-[11px]">
+              <div className="flex justify-between">
+                <span className="flex items-center gap-1.5 text-slate-600">
+                  <Database className="size-3 text-slate-400" /> Track (TMS API)
+                </span>
+                <span className="text-[#137547] font-bold">ONLINE</span>
               </div>
-              <div className="space-y-2">
-                <div className="flex justify-between text-xs">
-                  <span className="flex items-center gap-1.5">
-                    <Database className="size-3 text-muted-foreground" /> TMS API
-                  </span>
-                  <span className="text-safe">Connected</span>
-                </div>
-                <div className="flex justify-between text-xs">
-                  <span className="flex items-center gap-1.5">
-                    <Server className="size-3 text-muted-foreground" /> SMMS API
-                  </span>
-                  <span className="text-safe">Connected</span>
-                </div>
-                <div className="flex justify-between text-xs">
-                  <span className="flex items-center gap-1.5">
-                    <Network className="size-3 text-muted-foreground" /> TDMS API
-                  </span>
-                  <span className="text-safe">Connected</span>
-                </div>
+              <div className="flex justify-between">
+                <span className="flex items-center gap-1.5 text-slate-600">
+                  <Server className="size-3 text-slate-400" /> Signals (SMMS API)
+                </span>
+                <span className="text-[#137547] font-bold">ONLINE</span>
               </div>
-              <div className="pt-3 border-t text-[10px] text-muted-foreground flex items-center gap-1.5">
-                <ShieldCheck className="size-3" />
-                Sources validated • Last sync: 2 min ago
+              <div className="flex justify-between">
+                <span className="flex items-center gap-1.5 text-slate-600">
+                  <Network className="size-3 text-slate-400" /> Traction (TDMS API)
+                </span>
+                <span className="text-[#137547] font-bold">ONLINE</span>
               </div>
-            </CardContent>
-          </Card>
+            </div>
+            <div className="pt-2 border-t border-slate-200 text-[10px] text-slate-500 flex items-center gap-1.5">
+              <ShieldCheck className="size-3 text-[#137547]" />
+              Government Cryptographic Signature Verified
+            </div>
+          </div>
         </div>
       </div>
 
       {/* 1. Department Details Dialog */}
       <Dialog open={deptDetailsOpen} onOpenChange={setDeptDetailsOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Departmental Operational Performance</DialogTitle>
-            <DialogDescription>
-              Detailed breakdown of asset availability, scheduled maintenance tasks, and execution
-              efficiency by department.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-4 py-4 sm:grid-cols-3">
+        <DialogContent className="max-w-2xl bg-white border border-[#003366]/30 rounded-[2px] p-0 overflow-hidden shadow-lg">
+          <div className="bg-[#003366] text-white px-4 py-3 flex items-center justify-between border-b-2 border-[#FF9933]">
+            <DialogTitle className="text-sm font-bold uppercase tracking-wider text-white">
+              Departmental Asset Availability & Block Utilization Audit
+            </DialogTitle>
+          </div>
+          <div className="p-4 grid gap-3 sm:grid-cols-3">
             {departmentDetails.map((dept) => (
-              <div key={dept.name} className="p-4 rounded-lg border bg-card/50 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className={`text-sm font-bold ${dept.colorClass}`}>{dept.name}</span>
-                  <Badge variant="outline" className="text-xs">
+              <div key={dept.name} className="p-3 rounded-[2px] border border-slate-300 bg-slate-50 space-y-2 text-xs">
+                <div className="flex items-center justify-between border-b border-slate-200 pb-1.5">
+                  <span className={`text-[11px] font-bold ${dept.colorClass}`}>{dept.name}</span>
+                  <Badge variant="outline" className="text-[10px] font-bold rounded-[2px] bg-white">
                     {dept.avail}% Avail
                   </Badge>
                 </div>
-                <div className="space-y-2 text-xs">
+                <div className="space-y-1 text-[11px]">
                   <div className="flex justify-between">
-                    <span className="text-muted-foreground">Active Tasks:</span>
-                    <span className="font-semibold">{dept.tasks}</span>
+                    <span className="text-slate-500">Active Tasks:</span>
+                    <span className="font-bold text-slate-800">{dept.tasks}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-muted-foreground">Executed Blocks:</span>
-                    <span className="font-semibold">{dept.blocks}</span>
+                    <span className="text-slate-500">Executed Blocks:</span>
+                    <span className="font-bold text-slate-800">{dept.blocks}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-muted-foreground">Efficiency Rating:</span>
-                    <span className="font-semibold">{dept.eff}%</span>
+                    <span className="text-slate-500">Execution Score:</span>
+                    <span className="font-bold text-[#137547]">{dept.eff}%</span>
                   </div>
                 </div>
-                <Progress value={dept.eff} indicatorClassName={dept.bgClass} className="h-1.5" />
               </div>
             ))}
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDeptDetailsOpen(false)}>
-              Close
+          <DialogFooter className="bg-slate-100 px-4 py-2.5 border-t border-slate-200">
+            <Button
+              variant="outline"
+              size="sm"
+              className="rounded-[2px] border-slate-300 text-xs"
+              onClick={() => setDeptDetailsOpen(false)}
+            >
+              Close Ledger
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1651,44 +1553,43 @@ function AnalyticsPage() {
         open={insightDialog.open}
         onOpenChange={(open) => setInsightDialog((prev) => ({ ...prev, open }))}
       >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <BrainCircuit className="size-5 text-joint" />
-              AI Operational Insight
+        <DialogContent className="sm:max-w-md bg-white border border-[#003366]/30 rounded-[2px] p-0 overflow-hidden shadow-lg">
+          <div className="bg-[#003366] text-white px-4 py-3 flex items-center gap-2 border-b-2 border-[#FF9933]">
+            <BrainCircuit className="size-4 text-[#FF9933]" />
+            <DialogTitle className="text-sm font-bold uppercase tracking-wider text-white">
+              CRIS Intelligent Operational Finding
             </DialogTitle>
-            <DialogDescription>
-              Intelligent recommendation generated by IR-ABPS reasoning engine.
-            </DialogDescription>
-          </DialogHeader>
+          </div>
           {insightDialog.insight && (
-            <div className="space-y-4 py-2">
+            <div className="p-4 space-y-3">
               <div className="flex items-center gap-2">
-                <span className="text-xs text-muted-foreground">Severity Level:</span>
+                <span className="text-xs font-semibold text-slate-500">Severity Classification:</span>
                 <Badge
                   variant="outline"
-                  className={
+                  className={`text-[9px] font-bold uppercase rounded-[2px] ${
                     insightDialog.insight.severity === "high"
-                      ? "bg-destructive/10 text-destructive border-destructive/20 uppercase text-[10px]"
+                      ? "bg-red-50 text-[#800000] border-red-300"
                       : insightDialog.insight.severity === "medium"
-                        ? "bg-warn/10 text-warn border-warn/20 uppercase text-[10px]"
-                        : "bg-primary/10 text-primary border-primary/20 uppercase text-[10px]"
-                  }
+                        ? "bg-amber-50 text-[#D97706] border-amber-300"
+                        : "bg-sky-50 text-[#003366] border-sky-300"
+                  }`}
                 >
-                  {insightDialog.insight.severity} priority
+                  {insightDialog.insight.severity} Priority
                 </Badge>
               </div>
-              <div className="bg-muted/50 p-4 rounded-lg border text-sm leading-relaxed">
+              <div className="bg-slate-50 p-3.5 rounded-[2px] border border-slate-300 text-xs text-slate-800 leading-relaxed">
                 {insightDialog.insight.text}
               </div>
             </div>
           )}
-          <DialogFooter>
+          <DialogFooter className="bg-slate-100 px-4 py-2.5 border-t border-slate-200">
             <Button
               variant="outline"
+              size="sm"
+              className="rounded-[2px] border-slate-300 text-xs"
               onClick={() => setInsightDialog({ open: false, insight: null })}
             >
-              Close
+              Dismiss
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1699,43 +1600,50 @@ function AnalyticsPage() {
         open={actionDialog.open}
         onOpenChange={(open) => setActionDialog((prev) => ({ ...prev, open }))}
       >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Review Recommended Action</DialogTitle>
-            <DialogDescription>
-              Evaluate and confirm proposed maintenance coordination action.
-            </DialogDescription>
-          </DialogHeader>
+        <DialogContent className="sm:max-w-md bg-white border border-[#003366]/30 rounded-[2px] p-0 overflow-hidden shadow-lg">
+          <div className="bg-[#003366] text-white px-4 py-3 flex items-center justify-between border-b-2 border-[#FF9933]">
+            <DialogTitle className="text-sm font-bold uppercase tracking-wider text-white">
+              Review Sectional Operational Directive
+            </DialogTitle>
+          </div>
           {actionDialog.action && (
-            <div className="space-y-4 py-2">
+            <div className="p-4 space-y-3">
               <div>
                 <span
-                  className={`text-[10px] font-bold tracking-wider uppercase ${
+                  className={`text-[9px] font-bold uppercase tracking-wider ${
                     actionDialog.index === 0
-                      ? "text-destructive"
+                      ? "text-[#800000]"
                       : actionDialog.index === 1
-                        ? "text-warn"
-                        : "text-primary"
+                        ? "text-[#D97706]"
+                        : "text-[#003366]"
                   }`}
                 >
                   {actionDialog.action.priority}
                 </span>
-                <h4 className="text-base font-semibold mt-1">{actionDialog.action.title}</h4>
+                <h4 className="text-sm font-bold text-slate-900 mt-1">{actionDialog.action.title}</h4>
               </div>
-              <div className="bg-muted/50 p-3 rounded-lg border text-xs text-muted-foreground">
-                <strong className="text-foreground">Expected Benefit: </strong>
+              <div className="bg-slate-50 p-3 rounded-[2px] border border-slate-300 text-xs text-slate-700">
+                <strong className="text-[#003366]">Expected Efficiency Dividend: </strong>
                 {actionDialog.action.benefit}
               </div>
             </div>
           )}
-          <DialogFooter className="gap-2 sm:gap-0">
+          <DialogFooter className="bg-slate-100 px-4 py-2.5 border-t border-slate-200 flex justify-end gap-2">
             <Button
               variant="outline"
+              size="sm"
+              className="rounded-[2px] border-slate-300 text-xs"
               onClick={() => setActionDialog({ open: false, action: null, index: null })}
             >
-              Dismiss
+              Cancel
             </Button>
-            <Button onClick={acknowledgeAction}>Acknowledge & Schedule</Button>
+            <Button
+              size="sm"
+              className="bg-[#003366] hover:bg-[#002244] text-white font-bold text-xs uppercase tracking-wider rounded-[2px]"
+              onClick={acknowledgeAction}
+            >
+              Forward to Control Desk
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1743,61 +1651,60 @@ function AnalyticsPage() {
   );
 }
 
-// Subcomponents
-function Kpi({
+function GovtKpi({
   icon: Icon,
   label,
   value,
   sub,
   subColor,
+  borderColor = "border-slate-300",
 }: {
   icon: React.ElementType;
   label: string;
   value: string | number;
   sub: string;
   subColor: string;
+  borderColor?: string;
 }) {
   return (
-    <Card className="hover:border-primary/30 transition-colors shadow-sm">
-      <CardContent className="p-5">
-        <div className="flex items-center justify-between mb-3">
-          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            {label}
-          </p>
-          <div className="p-2 bg-muted rounded-md">
-            <Icon className="size-4 text-primary" />
-          </div>
-        </div>
-        <div className="flex flex-col gap-1">
-          <span className="text-3xl font-bold tracking-tight">{value}</span>
-          <span className={`text-xs font-medium ${subColor}`}>{sub}</span>
-        </div>
-      </CardContent>
-    </Card>
+    <div className={`rounded-[2px] border ${borderColor} bg-white p-3.5 shadow-sm flex flex-col justify-between`}>
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+          {label}
+        </span>
+        <Icon className="size-4 text-[#003366]" />
+      </div>
+      <div>
+        <span className="text-2xl font-bold font-mono text-slate-900">{value}</span>
+        <p className={`text-[10px] font-semibold mt-0.5 ${subColor}`}>{sub}</p>
+      </div>
+    </div>
   );
 }
 
 function ImpactBar({
   label,
   value,
-  color = "bg-primary",
+  color = "bg-[#003366]",
 }: {
   label: string;
   value: number;
   color?: string;
 }) {
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-1">
       <div className="flex justify-between text-xs">
-        <span className="font-medium">{label}</span>
-        <span className="text-muted-foreground">{value}%</span>
+        <span className="font-semibold text-slate-700">{label}</span>
+        <span className="font-mono font-bold text-slate-600">{value}%</span>
       </div>
-      <Progress value={value} indicatorClassName={color} className="h-1.5 bg-muted" />
+      <div className="h-1.5 w-full bg-slate-100 rounded-[1px] overflow-hidden border border-slate-300">
+        <div className={`h-full ${color}`} style={{ width: `${value}%` }} />
+      </div>
     </div>
   );
 }
 
-function DeptCard({
+function GovtDeptCard({
   name,
   avail,
   tasks,
@@ -1815,31 +1722,33 @@ function DeptCard({
   bgClass: string;
 }) {
   return (
-    <div className="p-4 rounded-lg border bg-background/50 hover:bg-card transition-colors">
-      <div className="flex justify-between items-center mb-3">
-        <div className="flex items-center gap-2">
-          <div className={`w-2 h-2 rounded-full ${bgClass}`}></div>
-          <span className={`text-sm font-bold tracking-wide ${colorClass}`}>{name}</span>
+    <div className="p-3 rounded-[2px] border border-slate-300 bg-slate-50">
+      <div className="flex justify-between items-center mb-2">
+        <div className="flex items-center gap-1.5">
+          <div className={`size-2 rounded-[1px] ${bgClass}`} />
+          <span className={`text-xs font-bold ${colorClass}`}>{name}</span>
         </div>
-        <span className="text-lg font-semibold">
-          {avail}% <span className="text-[10px] text-muted-foreground font-normal">Avail</span>
+        <span className="text-sm font-bold font-mono text-slate-900">
+          {avail}% <span className="text-[9px] text-slate-500 font-normal">AVAIL</span>
         </span>
       </div>
-      <div className="grid grid-cols-3 gap-2 mb-3">
-        <div className="flex flex-col">
-          <span className="text-[10px] text-muted-foreground">Tasks</span>
-          <span className="text-sm font-medium">{tasks}</span>
+      <div className="grid grid-cols-3 gap-2 mb-2 text-center text-xs">
+        <div className="bg-white p-1 rounded-[1px] border border-slate-200">
+          <span className="text-[9px] text-slate-500 uppercase font-bold block">Tasks</span>
+          <span className="font-mono font-bold text-slate-800">{tasks}</span>
         </div>
-        <div className="flex flex-col">
-          <span className="text-[10px] text-muted-foreground">Blocks</span>
-          <span className="text-sm font-medium">{blocks}</span>
+        <div className="bg-white p-1 rounded-[1px] border border-slate-200">
+          <span className="text-[9px] text-slate-500 uppercase font-bold block">Blocks</span>
+          <span className="font-mono font-bold text-slate-800">{blocks}</span>
         </div>
-        <div className="flex flex-col">
-          <span className="text-[10px] text-muted-foreground">Efficiency</span>
-          <span className="text-sm font-medium">{eff}%</span>
+        <div className="bg-white p-1 rounded-[1px] border border-slate-200">
+          <span className="text-[9px] text-slate-500 uppercase font-bold block">Score</span>
+          <span className="font-mono font-bold text-[#137547]">{eff}%</span>
         </div>
       </div>
-      <Progress value={eff} indicatorClassName={bgClass} className="h-1" />
+      <div className="h-1 w-full bg-slate-200 rounded-[1px] overflow-hidden">
+        <div className={`h-full ${bgClass}`} style={{ width: `${eff}%` }} />
+      </div>
     </div>
   );
 }

@@ -1,4 +1,4 @@
-﻿import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState, useMemo } from "react";
 import {
   Send,
@@ -20,9 +20,10 @@ import {
   Wrench,
   FileText,
   RefreshCw,
+  FileSpreadsheet,
 } from "lucide-react";
 import { toast } from "sonner";
-import { deptColor } from "@/components/AppShell";
+import { PageHeader, deptColor } from "@/components/AppShell";
 import { useAbps } from "@/context/AbpsContext";
 import {
   CORRIDORS,
@@ -59,46 +60,16 @@ import {
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 const BACKEND_CORRIDORS = [
-  {
-    id: "C02",
-    name: "Delhi – Ghaziabad",
-  },
-  {
-    id: "C03",
-    name: "Ghaziabad – Meerut",
-  },
-  {
-    id: "C04",
-    name: "Delhi – Panipat",
-  },
-  {
-    id: "C05",
-    name: "Panipat – Ambala",
-  },
-  {
-    id: "C06",
-    name: "Mumbai – Thane",
-  },
-  {
-    id: "C07",
-    name: "Thane – Nashik",
-  },
-  {
-    id: "C08",
-    name: "Chennai – Arakkonam",
-  },
-  {
-    id: "C09",
-    name: "Kolkata – Howrah",
-  },
-  {
-    id: "C10",
-    name: "Bhopal – Itarsi",
-  },
-  {
-    id: "C11",
-    name: "Pune – Lonavala",
-  },
+  { id: "C02", name: "Delhi – Ghaziabad" },
+  { id: "C03", name: "Ghaziabad – Meerut" },
+  { id: "C04", name: "Delhi – Panipat" },
+  { id: "C05", name: "Panipat – Ambala" },
+  { id: "C06", name: "Mumbai – Thane" },
+  { id: "C07", name: "Thane – Nashik" },
+  { id: "C08", name: "Chennai – Arakkonam" },
+  { id: "C09", name: "Kolkata – Howrah" },
+  { id: "C10", name: "Bhopal – Itarsi" },
+  { id: "C11", name: "Pune – Lonavala" },
 ];
 
 export const Route = createFileRoute("/requests")({
@@ -181,19 +152,18 @@ function RequestsPage() {
     );
     const sortedByOverdue = [...reqs].sort((a, b) => b.daysOverdue - a.daysOverdue);
     const sortedByDuration = [...reqs].sort((a, b) => b.duration - a.duration);
-    const activeReqs = reqs.filter((r) => r.status === "Active");
 
     return {
-      highestPriority: sortedByScore.length > 0 ? sortedByScore[0] : null,
-      mostOverdue: sortedByOverdue.length > 0 ? sortedByOverdue[0] : null,
-      longestBlock: sortedByDuration.length > 0 ? sortedByDuration[0] : null,
-      activeWork: activeReqs.length > 0 ? activeReqs[0] : null,
+      highestPriority: sortedByScore[0] ?? null,
+      mostOverdue: sortedByOverdue[0] ?? null,
+      longestBlock: sortedByDuration[0] ?? null,
+      activeWork: reqs.find((r) => r.status === "Active") ?? null,
     };
   }, [reqs]);
 
   const submit = async () => {
     if (!work.trim()) {
-      toast.error("Enter the nature of work before submitting.");
+      toast.error("Please enter nature of work / task description");
       return;
     }
 
@@ -251,7 +221,6 @@ function RequestsPage() {
 
       console.log("Optimization completed:", optimizationData);
 
-      // 3. Make sure an optimized block was actually generated
       if (
         optimizationData.status !== "success" ||
         !optimizationData.blocks ||
@@ -264,18 +233,16 @@ function RequestsPage() {
 
       toast.success(
         <div className="flex items-center gap-2">
-          <CircleCheck className="size-4 text-safe" />
-          <span>Requisition optimized successfully</span>
+          <CircleCheck className="size-4 text-emerald-600" />
+          <span>Requisition filed & optimized successfully into Gantt schedule</span>
         </div>,
       );
 
-      // 4. Go directly to Gantt Planner
       setTimeout(() => {
         window.location.href = "/planner";
       }, 700);
     } catch (error) {
       console.error("Requisition/optimization error:", error);
-
       toast.error(error instanceof Error ? error.message : "Could not complete requisition.");
     } finally {
       setIsSubmitting(false);
@@ -289,142 +256,113 @@ function RequestsPage() {
     blockType,
   } as Requisition);
 
-  let scoreColor = "text-safe";
-  let scoreBg = "bg-safe/20";
+  let scoreColor = "text-emerald-700 dark:text-emerald-400";
+  let scoreBg = "bg-emerald-100 text-emerald-900 border border-emerald-300";
   let scoreLabel = "LOW PRIORITY";
   if (currentScore > 40) {
-    scoreColor = "text-blue-500";
-    scoreBg = "bg-blue-500/20";
+    scoreColor = "text-blue-700 dark:text-blue-400";
+    scoreBg = "bg-blue-100 text-blue-900 border border-blue-300";
     scoreLabel = "MEDIUM PRIORITY";
   }
   if (currentScore > 65) {
-    scoreColor = "text-warn";
-    scoreBg = "bg-warn/20";
+    scoreColor = "text-amber-700 dark:text-amber-400";
+    scoreBg = "bg-amber-100 text-amber-900 border border-amber-300";
     scoreLabel = "HIGH PRIORITY";
   }
   if (currentScore > 85) {
-    scoreColor = "text-destructive";
-    scoreBg = "bg-destructive/20";
-    scoreLabel = "CRITICAL PRIORITY";
+    scoreColor = "text-red-700 dark:text-red-400";
+    scoreBg = "bg-red-100 text-red-900 border border-red-300 font-bold";
+    scoreLabel = "CRITICAL / SAFETY";
   }
-
-  const getStatusStyle = (s: Status) => {
-    switch (s) {
-      case "Pending AI Scheduling":
-        return "bg-warn/10 text-warn border-warn/20";
-      case "Active":
-        return "bg-safe/10 text-safe border-safe/20";
-      case "Completed":
-        return "bg-secondary text-muted-foreground border-border";
-      case "Clustered / Shadowed":
-        return "bg-blue-500/10 text-blue-500 border-blue-500/20";
-      case "Approved":
-        return "bg-purple-500/10 text-purple-500 border-purple-500/20";
-      default:
-        return "bg-secondary text-foreground";
-    }
-  };
 
   const getDeptStyle = (d: Dept) => {
     switch (d) {
       case "TMS":
-        return "border-amber-500/40 text-amber-500 bg-amber-500/10";
+        return "bg-amber-100 text-amber-900 border-amber-300";
       case "SMMS":
-        return "border-safe/40 text-safe bg-safe/10";
+        return "bg-emerald-100 text-emerald-900 border-emerald-300";
       case "TDMS":
-        return "border-cyan-500/40 text-cyan-500 bg-cyan-500/10";
+        return "bg-blue-100 text-blue-900 border-blue-300";
       default:
-        return "border-border text-foreground bg-secondary/50";
+        return "bg-purple-100 text-purple-900 border-purple-300";
+    }
+  };
+
+  const getStatusStyle = (s: Status) => {
+    switch (s) {
+      case "Pending AI Scheduling":
+        return "bg-purple-100 text-purple-900 border-purple-300";
+      case "Clustered / Shadowed":
+        return "bg-blue-100 text-blue-900 border-blue-300";
+      case "Approved":
+        return "bg-emerald-100 text-emerald-900 border-emerald-300 font-semibold";
+      case "Active":
+        return "bg-amber-100 text-amber-900 border-amber-300 font-bold";
+      case "Completed":
+        return "bg-slate-100 text-slate-900 border-slate-300";
     }
   };
 
   return (
     <>
-      <div className="mb-6 flex flex-wrap items-end justify-between gap-3 border-b border-border pb-6">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-            Block Requisition Portal
-          </h1>
-          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-            Unified TMS, SMMS and TDMS work requests feeding the BDMS AI scheduling engine.
-          </p>
+      <PageHeader
+        title="Departmental Block Requisition Portal (BDMS Ingestion)"
+        subtitle="Official filing register for Civil Track (TMS), Signal & Telecom (SMMS), and Electrical Traction (TDMS) maintenance demands."
+        action={
+          <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800 border border-border px-3 py-1 text-xs">
+            <Server className="size-3.5 text-emerald-600" />
+            <span className="font-bold text-slate-700 dark:text-slate-300">BDMS Gateway:</span>
+            <span className="font-bold text-emerald-700 dark:text-emerald-400">ONLINE</span>
+          </div>
+        }
+      />
+
+      {/* Summary KPI Strip */}
+      <div className="mb-5 grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="border border-border bg-white dark:bg-slate-900 p-3 rounded-[2px]">
+          <p className="text-[10px] font-bold uppercase text-slate-500">Total Demands</p>
+          <p className="text-xl font-bold text-slate-900 dark:text-slate-100 mt-0.5">{stats.total}</p>
         </div>
-        <div className="flex flex-col items-end gap-1.5 rounded-lg border border-border bg-secondary/20 p-3 shadow-sm">
-          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            <Server className="size-3.5" /> BDMS Status
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="relative flex size-2">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-safe opacity-75"></span>
-              <span className="relative inline-flex size-2 rounded-full bg-safe"></span>
-            </span>
-            <span className="font-bold text-safe">ONLINE</span>
-            <span className="text-muted-foreground ml-2 text-xs">Last sync: Just now</span>
-          </div>
+        <div className="border border-border bg-white dark:bg-slate-900 p-3 rounded-[2px]">
+          <p className="text-[10px] font-bold uppercase text-purple-700 dark:text-purple-400">Pending AI Scheduling</p>
+          <p className="text-xl font-bold text-purple-700 dark:text-purple-400 mt-0.5">{stats.pending}</p>
+        </div>
+        <div className="border border-border bg-white dark:bg-slate-900 p-3 rounded-[2px]">
+          <p className="text-[10px] font-bold uppercase text-amber-700 dark:text-amber-400">Active Execution</p>
+          <p className="text-xl font-bold text-amber-700 dark:text-amber-400 mt-0.5">{stats.active}</p>
+        </div>
+        <div className="border border-border bg-white dark:bg-slate-900 p-3 rounded-[2px]">
+          <p className="text-[10px] font-bold uppercase text-emerald-700 dark:text-emerald-400">Completed & Closed</p>
+          <p className="text-xl font-bold text-emerald-700 dark:text-emerald-400 mt-0.5">{stats.completed}</p>
         </div>
       </div>
 
-      <div className="mb-6 flex flex-wrap items-center gap-6 rounded-lg border border-border bg-card/40 px-5 py-3 text-sm shadow-sm">
-        <div className="flex items-center gap-2">
-          <FileText className="size-4 text-muted-foreground" />
-          <span className="text-muted-foreground font-semibold text-xs tracking-wider uppercase">
-            Total Requests
-          </span>
-          <span className="font-bold text-base ml-1">{stats.total}</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <Brain className="size-4 text-purple-500" />
-          <span className="text-muted-foreground font-semibold text-xs tracking-wider uppercase">
-            Pending AI Scheduling
-          </span>
-          <span className="font-bold text-base ml-1">{stats.pending}</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <Zap className="size-4 text-warn" />
-          <span className="text-muted-foreground font-semibold text-xs tracking-wider uppercase">
-            Active
-          </span>
-          <span className="font-bold text-base ml-1">{stats.active}</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <CheckCircle2 className="size-4 text-safe" />
-          <span className="text-muted-foreground font-semibold text-xs tracking-wider uppercase">
-            Completed
-          </span>
-          <span className="font-bold text-base ml-1">{stats.completed}</span>
-        </div>
-      </div>
-
-      <div className="grid gap-6 lg:grid-cols-[400px_1fr] xl:grid-cols-[450px_1fr]">
-        {/* LEFT PANEL */}
-        <div className="space-y-6">
-          <Card className="shadow-sm border-t-2 border-t-primary">
-            <CardHeader className="border-b border-border/50 bg-secondary/10 pb-4">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-base font-semibold flex items-center gap-2">
-                  <Wrench className="size-4 text-primary" />
-                  Work Request Submission
-                </CardTitle>
-                <Badge className="bg-primary/20 text-primary hover:bg-primary/20 text-[10px] uppercase font-bold tracking-wider">
-                  New Requisition
-                </Badge>
+      <div className="grid gap-6 lg:grid-cols-[400px_1fr] xl:grid-cols-[440px_1fr]">
+        {/* LEFT PANEL: FORM IR-REQ-2024 */}
+        <div className="space-y-4">
+          <Card className="border-2 border-[#003366] bg-white dark:bg-slate-900 rounded-[2px] shadow-none">
+            <div className="bg-[#003366] p-3 text-white border-b-2 border-[#FF9933] flex items-center justify-between">
+              <div>
+                <h2 className="text-xs font-bold uppercase tracking-wider">Form IR-REQ-2024</h2>
+                <p className="text-[10px] text-slate-300">Electronic Maintenance Demand Filing</p>
               </div>
-              <CardDescription className="mt-1">
-                Create a maintenance requisition for AI-assisted block scheduling.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4 pt-5">
-              <div className="grid gap-1.5">
-                <Label className="text-xs font-semibold uppercase text-muted-foreground">
-                  Department
+              <span className="bg-[#FF9933] text-slate-950 text-[9px] font-bold px-1.5 py-0.5 rounded-[2px] uppercase">
+                Official
+              </span>
+            </div>
+
+            <CardContent className="space-y-3.5 p-4 text-xs">
+              <div className="grid gap-1">
+                <Label className="text-[11px] font-bold uppercase text-slate-700 dark:text-slate-300">
+                  Originating Department <span className="text-destructive">*</span>
                 </Label>
                 <Select value={dept} onValueChange={(v) => setDept(v as Dept)}>
-                  <SelectTrigger className="bg-background">
+                  <SelectTrigger className="h-8 rounded-[2px] text-xs bg-background">
                     <SelectValue />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent className="rounded-[2px]">
                     {(Object.keys(DEPT_LABEL) as Dept[]).map((d) => (
-                      <SelectItem key={d} value={d}>
+                      <SelectItem key={d} value={d} className="text-xs">
                         <div className="flex items-center gap-2">
                           <Building2 className="size-3.5 text-muted-foreground" />
                           {DEPT_LABEL[d]}
@@ -435,107 +373,107 @@ function RequestsPage() {
                 </Select>
               </div>
 
-              <div className="grid gap-1.5">
+              <div className="grid gap-1">
                 <div className="flex justify-between items-center">
-                  <Label className="text-xs font-semibold uppercase text-muted-foreground">
-                    Asset ID
+                  <Label className="text-[11px] font-bold uppercase text-slate-700 dark:text-slate-300">
+                    Asset / Equipment Tag <span className="text-destructive">*</span>
                   </Label>
-                  <span className="text-[10px] text-muted-foreground">Unique asset identifier</span>
+                  <span className="text-[10px] font-mono text-slate-500">TMS/SMMS/TDMS Tag</span>
                 </div>
                 <Input
-                  className="bg-background font-mono"
+                  className="h-8 font-mono text-xs rounded-[2px] bg-background"
                   value={assetId}
                   onChange={(e) => setAssetId(e.target.value)}
                 />
               </div>
 
-              <div className="grid gap-1.5">
-                <Label className="text-xs font-semibold uppercase text-muted-foreground">
-                  Nature of work
+              <div className="grid gap-1">
+                <Label className="text-[11px] font-bold uppercase text-slate-700 dark:text-slate-300">
+                  Nature of Maintenance Work <span className="text-destructive">*</span>
                 </Label>
                 <Input
-                  className="bg-background"
+                  className="h-8 text-xs rounded-[2px] bg-background"
                   value={work}
-                  placeholder="e.g. USFD flaw rectification"
+                  placeholder="e.g. USFD Class IMR Flaw Rectification / Point Overhaul"
                   onChange={(e) => setWork(e.target.value)}
                 />
               </div>
 
-              <div className="grid gap-1.5">
-                <Label className="text-xs font-semibold uppercase text-muted-foreground">
-                  Section
+              <div className="grid gap-1">
+                <Label className="text-[11px] font-bold uppercase text-slate-700 dark:text-slate-300">
+                  Railway Section <span className="text-destructive">*</span>
                 </Label>
                 <Select value={section} onValueChange={setSection}>
-                  <SelectTrigger className="bg-background">
+                  <SelectTrigger className="h-8 rounded-[2px] text-xs bg-background">
                     <SelectValue />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent className="rounded-[2px]">
                     {BACKEND_CORRIDORS.map((c) => (
-                      <SelectItem key={c.id} value={c.id}>
-                        {c.name}
+                      <SelectItem key={c.id} value={c.id} className="text-xs">
+                        {c.name} ({c.id})
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div className="grid gap-1.5">
-                  <Label className="text-xs font-semibold uppercase text-muted-foreground">
-                    Line
+              <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-1">
+                  <Label className="text-[11px] font-bold uppercase text-slate-700 dark:text-slate-300">
+                    Track Line
                   </Label>
                   <Select value={line} onValueChange={setLine}>
-                    <SelectTrigger className="bg-background">
+                    <SelectTrigger className="h-8 rounded-[2px] text-xs bg-background">
                       <SelectValue />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent className="rounded-[2px]">
                       {["Up Main", "Down Main", "Line 3 Up", "Freight Loop"].map((l) => (
-                        <SelectItem key={l} value={l}>
+                        <SelectItem key={l} value={l} className="text-xs">
                           {l}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="grid gap-1.5">
-                  <Label className="text-xs font-semibold uppercase text-muted-foreground">
-                    Chainage
+                <div className="grid gap-1">
+                  <Label className="text-[11px] font-bold uppercase text-slate-700 dark:text-slate-300">
+                    Chainage (KM)
                   </Label>
                   <Input
-                    className="bg-background font-mono text-sm"
+                    className="h-8 font-mono text-xs rounded-[2px] bg-background"
                     value={chainage}
                     onChange={(e) => setChainage(e.target.value)}
                   />
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div className="grid gap-1.5">
-                  <Label className="text-xs font-semibold uppercase text-muted-foreground">
-                    Block type
+              <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-1">
+                  <Label className="text-[11px] font-bold uppercase text-slate-700 dark:text-slate-300">
+                    Block Nature
                   </Label>
                   <Select
                     value={blockType}
                     onValueChange={(v) => setBlockType(v as Requisition["blockType"])}
                   >
-                    <SelectTrigger className="bg-background">
+                    <SelectTrigger className="h-8 rounded-[2px] text-xs bg-background">
                       <SelectValue />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent className="rounded-[2px]">
                       {["Traffic Block", "Power Block", "Disconnection"].map((b) => (
-                        <SelectItem key={b} value={b}>
+                        <SelectItem key={b} value={b} className="text-xs">
                           {b}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="grid gap-1.5">
-                  <Label className="text-xs font-semibold uppercase text-muted-foreground">
-                    Duration (hrs)
+                <div className="grid gap-1">
+                  <Label className="text-[11px] font-bold uppercase text-slate-700 dark:text-slate-300">
+                    Duration (Hrs)
                   </Label>
                   <Input
-                    className="bg-background"
+                    className="h-8 text-xs rounded-[2px] bg-background"
                     type="number"
                     value={duration}
                     onChange={(e) => setDuration(e.target.value)}
@@ -543,49 +481,44 @@ function RequestsPage() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-3 gap-3">
-                <div className="grid gap-1.5">
-                  <Label className="text-xs font-semibold uppercase text-muted-foreground">
-                    Crew
+              <div className="grid grid-cols-3 gap-2">
+                <div className="grid gap-1">
+                  <Label className="text-[10px] font-bold uppercase text-slate-700 dark:text-slate-300">
+                    Crew Gang
                   </Label>
                   <Input
-                    className="bg-background"
+                    className="h-8 text-xs rounded-[2px] bg-background"
                     type="number"
                     value={crew}
                     onChange={(e) => setCrew(e.target.value)}
                   />
                 </div>
-                <div className="grid gap-1.5">
-                  <Label className="text-xs font-semibold uppercase text-muted-foreground">
+                <div className="grid gap-1">
+                  <Label className="text-[10px] font-bold uppercase text-slate-700 dark:text-slate-300">
                     Criticality
                   </Label>
                   <Select
                     value={criticality}
                     onValueChange={(v) => setCriticality(v as Requisition["criticality"])}
                   >
-                    <SelectTrigger className="bg-background">
+                    <SelectTrigger className="h-8 rounded-[2px] text-xs bg-background">
                       <SelectValue />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent className="rounded-[2px]">
                       {["High", "Medium", "Low", "Critical"].map((c) => (
-                        <SelectItem key={c} value={c}>
-                          <div className="flex items-center gap-1.5">
-                            <span
-                              className={`size-2 rounded-full ${c === "Critical" ? "bg-destructive" : c === "High" ? "bg-warn" : c === "Medium" ? "bg-blue-500" : "bg-safe"}`}
-                            ></span>
-                            {c}
-                          </div>
+                        <SelectItem key={c} value={c} className="text-xs">
+                          {c}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="grid gap-1.5">
-                  <Label className="text-xs font-semibold uppercase text-muted-foreground">
-                    Days overdue
+                <div className="grid gap-1">
+                  <Label className="text-[10px] font-bold uppercase text-slate-700 dark:text-slate-300">
+                    Days Overdue
                   </Label>
                   <Input
-                    className="bg-background"
+                    className="h-8 text-xs rounded-[2px] bg-background"
                     type="number"
                     value={overdue}
                     onChange={(e) => setOverdue(e.target.value)}
@@ -593,55 +526,51 @@ function RequestsPage() {
                 </div>
               </div>
 
-              <div className="flex items-center justify-between rounded-lg border border-border bg-background p-3">
+              <div className="flex items-center justify-between border border-border bg-slate-50 dark:bg-slate-800/60 p-2.5 rounded-[2px]">
                 <div className="flex flex-col gap-0.5">
-                  <Label className="text-sm cursor-pointer" htmlFor="tsr-toggle">
-                    TSR risk if deferred
+                  <Label className="text-xs font-bold cursor-pointer" htmlFor="tsr-toggle">
+                    TSR Risk If Deferred
                   </Label>
-                  <span className="text-[10px] text-muted-foreground">
-                    Impacts temp speed restriction
-                  </span>
+                  <span className="text-[10px] text-slate-500">Imposes sectional caution order</span>
                 </div>
                 <Switch id="tsr-toggle" checked={tsr} onCheckedChange={setTsr} />
               </div>
 
-              <div className="rounded-lg border border-border bg-background p-4">
-                <div className="flex justify-between items-end mb-2">
-                  <span className="text-xs font-semibold uppercase text-muted-foreground">
-                    Live Priority Score
+              {/* Live Priority Score Tile */}
+              <div className="border border-border bg-slate-50 dark:bg-slate-800/80 p-3 rounded-[2px]">
+                <div className="flex justify-between items-center mb-1.5">
+                  <span className="text-[10px] font-bold uppercase text-slate-600 dark:text-slate-400">
+                    Calculated Criticality Index
                   </span>
-                  <div
-                    className={`px-2 py-0.5 rounded text-[10px] font-bold tracking-wider ${scoreBg} ${scoreColor}`}
-                  >
+                  <span className={`px-2 py-0.5 rounded-[2px] text-[10px] font-bold ${scoreBg}`}>
                     {scoreLabel}
-                  </div>
+                  </span>
                 </div>
                 <div className="flex items-center gap-3">
-                  <div className="h-2 flex-1 rounded-full bg-secondary overflow-hidden">
+                  <div className="h-2 flex-1 rounded-[2px] bg-slate-200 dark:bg-slate-700 overflow-hidden">
                     <div
-                      className={`h-full transition-all duration-300 ${scoreColor.replace("text-", "bg-")}`}
+                      className="h-full bg-[#003366] dark:bg-sky-400"
                       style={{ width: `${currentScore}%` }}
                     />
                   </div>
-                  <span className="font-mono text-lg font-bold">
-                    {currentScore}
-                    <span className="text-xs text-muted-foreground">/100</span>
+                  <span className="font-mono text-base font-bold text-slate-900 dark:text-slate-100">
+                    {currentScore}/100
                   </span>
                 </div>
               </div>
 
               <Button
-                className="w-full h-11 bg-blue-600 hover:bg-blue-700 text-white font-semibold mt-2"
+                className="w-full h-9 bg-[#003366] hover:bg-[#002244] text-white font-bold text-xs rounded-[2px]"
                 onClick={submit}
                 disabled={isSubmitting}
               >
                 {isSubmitting ? (
                   <>
-                    <RefreshCw className="mr-2 size-4 animate-spin" /> Submitting...
+                    <RefreshCw className="mr-2 size-3.5 animate-spin" /> Transmitting to Optimizer...
                   </>
                 ) : (
                   <>
-                    <Send className="mr-2 size-4" /> Submit Requisition
+                    <Send className="mr-2 size-3.5" /> Submit Requisition for Shadow Scheduling
                   </>
                 )}
               </Button>
@@ -649,197 +578,48 @@ function RequestsPage() {
           </Card>
         </div>
 
-        {/* RIGHT PANEL */}
-        <div className="space-y-6">
-          {/* REQUISITION INTELLIGENCE & READINESS */}
-          <div className="grid sm:grid-cols-2 gap-6">
-            <Card className="shadow-sm">
-              <CardHeader className="border-b border-border/50 bg-secondary/10 py-3 px-4">
-                <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                  <Sparkles className="size-4 text-amber-500" />
-                  Requisition Intelligence
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="p-4 space-y-4">
-                {insights.highestPriority && (
-                  <div className="flex justify-between items-center">
-                    <div>
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                        Highest Priority
-                      </p>
-                      <p className="text-xs font-semibold mt-0.5">{insights.highestPriority.id}</p>
-                    </div>
-                    <Badge
-                      variant="outline"
-                      className="text-[10px] border-warn/30 text-warn bg-warn/10"
-                    >
-                      Score{" "}
-                      {insights.highestPriority.score ?? criticalityScore(insights.highestPriority)}
-                    </Badge>
-                  </div>
-                )}
-                {insights.mostOverdue && (
-                  <div className="flex justify-between items-center">
-                    <div>
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                        Most Overdue
-                      </p>
-                      <p className="text-xs font-semibold mt-0.5">{insights.mostOverdue.id}</p>
-                    </div>
-                    <Badge
-                      variant="outline"
-                      className="text-[10px] border-destructive/30 text-destructive bg-destructive/10"
-                    >
-                      {insights.mostOverdue.daysOverdue} days
-                    </Badge>
-                  </div>
-                )}
-                {insights.longestBlock && (
-                  <div className="flex justify-between items-center">
-                    <div>
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                        Longest Block
-                      </p>
-                      <p className="text-xs font-semibold mt-0.5">{insights.longestBlock.id}</p>
-                    </div>
-                    <Badge
-                      variant="outline"
-                      className="text-[10px] border-primary/30 text-primary bg-primary/10"
-                    >
-                      {insights.longestBlock.duration} hrs
-                    </Badge>
-                  </div>
-                )}
-                {insights.activeWork ? (
-                  <div className="flex justify-between items-center">
-                    <div>
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                        Active Work
-                      </p>
-                      <p className="text-xs font-semibold mt-0.5">{insights.activeWork.id}</p>
-                    </div>
-                    <Badge
-                      variant="outline"
-                      className="text-[10px] border-safe/30 text-safe bg-safe/10"
-                    >
-                      In progress
-                    </Badge>
-                  </div>
-                ) : (
-                  <div className="flex justify-between items-center">
-                    <div>
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                        Active Work
-                      </p>
-                      <p className="text-xs text-muted-foreground mt-0.5">None currently</p>
-                    </div>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            <Card className="shadow-sm border-purple-500/20 bg-gradient-to-br from-card to-purple-900/5">
-              <CardHeader className="border-b border-purple-500/10 py-3 px-4">
-                <CardTitle className="text-sm font-semibold flex items-center gap-2 text-purple-500">
-                  <Brain className="size-4" />
-                  AI Scheduling Readiness
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="p-4 flex flex-col h-[calc(100%-45px)]">
-                <div className="space-y-4 flex-1">
-                  <div className="flex justify-between items-center">
-                    <span className="text-xs text-muted-foreground font-medium">
-                      Ready for optimization
-                    </span>
-                    <span className="text-sm font-bold">{stats.pending}</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-xs text-muted-foreground font-medium">
-                      Critical requests
-                    </span>
-                    <span className="text-sm font-bold text-destructive">
-                      {reqs.filter((r) => (r.score ?? criticalityScore(r)) > 85).length}
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-xs text-muted-foreground font-medium">
-                      Data completeness
-                    </span>
-                    <span className="text-sm font-bold text-safe">100%</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-xs text-muted-foreground font-medium">BDMS queue</span>
-                    <Badge className="bg-safe/20 text-safe hover:bg-safe/20 text-[10px] uppercase font-bold tracking-wider border-0">
-                      Ready
-                    </Badge>
-                  </div>
-                </div>
-                <Button
-                  asChild
-                  className="mt-4 w-full bg-purple-600 hover:bg-purple-700 text-white shadow-sm font-semibold h-9 text-xs"
-                >
-                  <Link to="/optimizer">
-                    Run Optimization Engine <ArrowRight className="ml-1.5 size-3" />
-                  </Link>
-                </Button>
-              </CardContent>
-            </Card>
-          </div>
-
-          <Card className="shadow-sm border-t-2 border-t-secondary-foreground overflow-hidden flex flex-col">
-            <CardHeader className="border-b border-border/50 bg-secondary/10 pb-4">
-              <div className="flex flex-wrap items-center justify-between gap-4">
-                <div>
-                  <CardTitle className="text-base font-semibold flex items-center gap-2">
-                    <ClipboardList className="size-4" />
-                    Unified Departmental Ledger
+        {/* RIGHT PANEL: REQUISITIONS LEDGER */}
+        <div className="space-y-4">
+          <Card className="border border-border bg-white dark:bg-slate-900 rounded-[2px] shadow-none flex flex-col">
+            <CardHeader className="bg-slate-100 dark:bg-slate-900/80 p-3.5 border-b border-border">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <FileSpreadsheet className="size-4 text-[#003366] dark:text-sky-400" />
+                  <CardTitle className="text-xs font-bold uppercase text-[#003366] dark:text-sky-400">
+                    Departmental Maintenance Ledger
                   </CardTitle>
-                  <CardDescription className="mt-1">
-                    Cross-department requisitions awaiting BDMS scheduling.
-                  </CardDescription>
                 </div>
-                <div className="font-semibold text-sm">{filtered.length} Requests</div>
+                <span className="text-xs font-mono font-bold text-slate-700 dark:text-slate-300">
+                  {filtered.length} Requisitions Filtered
+                </span>
               </div>
 
-              <div className="mt-4 flex flex-wrap items-center gap-3">
-                <Tabs
-                  value={tab}
-                  onValueChange={(v) => setTab(v as Dept | "ALL")}
-                  className="w-auto"
-                >
-                  <TabsList className="h-9">
-                    <TabsTrigger value="ALL" className="text-xs">
-                      ALL
-                    </TabsTrigger>
-                    <TabsTrigger value="TMS" className="text-xs">
-                      TMS
-                    </TabsTrigger>
-                    <TabsTrigger value="SMMS" className="text-xs">
-                      SMMS
-                    </TabsTrigger>
-                    <TabsTrigger value="TDMS" className="text-xs">
-                      TDMS
-                    </TabsTrigger>
+              {/* Filter Controls Bar */}
+              <div className="mt-3 flex flex-wrap items-center gap-3">
+                <Tabs value={tab} onValueChange={(v) => setTab(v as Dept | "ALL")} className="w-auto">
+                  <TabsList className="h-8 rounded-[2px] bg-slate-200 dark:bg-slate-800 p-0.5">
+                    <TabsTrigger value="ALL" className="text-xs px-2.5 h-7 rounded-[2px] font-bold">ALL</TabsTrigger>
+                    <TabsTrigger value="TMS" className="text-xs px-2.5 h-7 rounded-[2px] font-bold">TMS (Civil)</TabsTrigger>
+                    <TabsTrigger value="SMMS" className="text-xs px-2.5 h-7 rounded-[2px] font-bold">SMMS (Signal)</TabsTrigger>
+                    <TabsTrigger value="TDMS" className="text-xs px-2.5 h-7 rounded-[2px] font-bold">TDMS (OHE)</TabsTrigger>
                   </TabsList>
                 </Tabs>
-                <div className="flex-1 flex gap-3 min-w-[200px]">
+
+                <div className="flex-1 flex gap-2 min-w-[220px]">
                   <div className="relative flex-1">
-                    <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
+                    <Search className="absolute left-2.5 top-2 size-3.5 text-muted-foreground" />
                     <Input
-                      placeholder="Search requisition, asset or section..."
-                      className="pl-9 h-9 text-xs"
+                      placeholder="Search by ID, asset or corridor..."
+                      className="pl-8 h-8 text-xs rounded-[2px] bg-background"
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
                     />
                   </div>
                   <Select value={status} onValueChange={(v) => setStatus(v as Status | "All")}>
-                    <SelectTrigger className="w-[180px] h-9 text-xs">
-                      <div className="flex items-center gap-2">
-                        <SlidersHorizontal className="size-3" />
-                        <SelectValue />
-                      </div>
+                    <SelectTrigger className="w-[180px] h-8 text-xs rounded-[2px] bg-background">
+                      <SelectValue />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent className="rounded-[2px]">
                       {STATUSES.map((s) => (
                         <SelectItem key={s} value={s} className="text-xs">
                           {s}
@@ -853,102 +633,73 @@ function RequestsPage() {
 
             <CardContent className="p-0 flex-1 overflow-x-auto">
               <Table>
-                <TableHeader className="bg-secondary/20">
+                <TableHeader>
                   <TableRow>
-                    <TableHead className="text-xs font-semibold uppercase tracking-wider h-10">
-                      Requisition
-                    </TableHead>
-                    <TableHead className="text-xs font-semibold uppercase tracking-wider h-10">
-                      Dept
-                    </TableHead>
-                    <TableHead className="text-xs font-semibold uppercase tracking-wider h-10">
-                      Section / Line
-                    </TableHead>
-                    <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 text-right">
-                      Dur.
-                    </TableHead>
-                    <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 text-right">
-                      Score
-                    </TableHead>
-                    <TableHead className="text-xs font-semibold uppercase tracking-wider h-10">
-                      Status
-                    </TableHead>
-                    <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 text-right">
-                      Action
-                    </TableHead>
+                    <TableHead>Requisition ID / Asset</TableHead>
+                    <TableHead>Dept</TableHead>
+                    <TableHead>Section / Line</TableHead>
+                    <TableHead className="text-right">Duration</TableHead>
+                    <TableHead className="text-right">Score</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Action</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filtered.map((r) => {
                     const rScore = r.score ?? criticalityScore(r);
                     let scrLabel = "LOW";
-                    let scrColor = "text-safe";
+                    let scrClass = "bg-emerald-100 text-emerald-900 border-emerald-300";
                     if (rScore > 40) {
                       scrLabel = "MED";
-                      scrColor = "text-blue-500";
+                      scrClass = "bg-blue-100 text-blue-900 border-blue-300";
                     }
                     if (rScore > 65) {
                       scrLabel = "HIGH";
-                      scrColor = "text-warn";
+                      scrClass = "bg-amber-100 text-amber-900 border-amber-300";
                     }
                     if (rScore > 85) {
                       scrLabel = "CRIT";
-                      scrColor = "text-destructive";
+                      scrClass = "bg-red-100 text-red-900 border-red-300 font-bold";
                     }
 
                     return (
-                      <TableRow
-                        key={r.id}
-                        className="hover:bg-secondary/30 transition-colors group"
-                      >
-                        <TableCell className="py-2.5">
-                          <p className="text-sm font-bold text-foreground">{r.id}</p>
-                          <p className="text-[11px] font-mono text-muted-foreground mt-0.5">
-                            {r.assetId}
+                      <TableRow key={r.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                        <TableCell>
+                          <p className="font-mono font-bold text-xs text-[#003366] dark:text-sky-400">
+                            {r.id}
                           </p>
+                          <p className="text-[10px] font-mono text-slate-500">{r.assetId}</p>
                         </TableCell>
-                        <TableCell className="py-2.5">
-                          <Badge
-                            variant="outline"
-                            className={`text-[10px] uppercase font-bold tracking-wider ${getDeptStyle(r.dept)}`}
-                          >
+                        <TableCell>
+                          <span className={`border px-1.5 py-0.5 text-[9px] uppercase rounded-[2px] font-bold ${getDeptStyle(r.dept)}`}>
                             {r.dept}
-                          </Badge>
+                          </span>
                         </TableCell>
-                        <TableCell className="py-2.5 text-xs">
-                          <span className="font-medium text-foreground">{r.section}</span>
-                          <br />
-                          <span className="text-muted-foreground">{r.line}</span>
+                        <TableCell className="text-xs">
+                          <p className="font-semibold text-slate-800 dark:text-slate-200">{r.section}</p>
+                          <p className="text-[10px] text-slate-500">{r.line} · {r.chainage}</p>
                         </TableCell>
-                        <TableCell className="py-2.5 text-xs font-mono text-right">
-                          {r.duration}h
+                        <TableCell className="text-xs font-mono text-right font-bold">
+                          {r.duration} hrs
                         </TableCell>
-                        <TableCell className="py-2.5 text-right">
-                          <div className="flex flex-col items-end">
-                            <span className="font-mono font-bold text-sm">{rScore}</span>
-                            <span
-                              className={`text-[9px] font-bold uppercase tracking-wider ${scrColor}`}
-                            >
-                              {scrLabel}
-                            </span>
-                          </div>
+                        <TableCell className="text-right">
+                          <span className={`border px-1.5 py-0.5 text-[9px] uppercase rounded-[2px] font-mono font-bold ${scrClass}`}>
+                            {rScore} ({scrLabel})
+                          </span>
                         </TableCell>
-                        <TableCell className="py-2.5">
-                          <Badge
-                            variant="outline"
-                            className={`text-[10px] font-semibold ${getStatusStyle(r.status)}`}
-                          >
+                        <TableCell>
+                          <span className={`border px-1.5 py-0.5 text-[9px] uppercase rounded-[2px] font-semibold ${getStatusStyle(r.status)}`}>
                             {r.status}
-                          </Badge>
+                          </span>
                         </TableCell>
-                        <TableCell className="py-2.5 text-right">
+                        <TableCell className="text-right">
                           <Button
                             size="sm"
-                            variant="ghost"
-                            className="h-8 text-xs font-medium text-blue-500 hover:text-blue-600 opacity-80 group-hover:opacity-100"
+                            variant="outline"
+                            className="h-7 px-2 text-[11px] font-bold border-slate-300 dark:border-slate-700"
                             onClick={() => setDetail(r)}
                           >
-                            View <ArrowRight className="ml-1 size-3" />
+                            Details <ArrowRight className="ml-1 size-3" />
                           </Button>
                         </TableCell>
                       </TableRow>
@@ -956,105 +707,89 @@ function RequestsPage() {
                   })}
                   {filtered.length === 0 && (
                     <TableRow>
-                      <TableCell
-                        colSpan={7}
-                        className="text-center py-12 text-sm text-muted-foreground"
-                      >
-                        <div className="flex flex-col items-center gap-2">
-                          <Search className="size-8 text-muted-foreground/50" />
-                          <p>No requisitions found</p>
-                          <p className="text-xs">Try changing the department or status filter.</p>
-                        </div>
+                      <TableCell colSpan={7} className="text-center py-12 text-xs text-muted-foreground">
+                        No requisitions matching selected filters.
                       </TableCell>
                     </TableRow>
                   )}
                 </TableBody>
               </Table>
             </CardContent>
-            <div className="border-t border-border bg-secondary/10 px-5 py-3 text-xs text-muted-foreground flex justify-between items-center">
-              <span>
-                Showing {filtered.length} of {reqs.length} total requisitions
-              </span>
+            <div className="border-t border-border bg-slate-50 dark:bg-slate-900/60 px-4 py-2 text-[11px] text-slate-500 flex justify-between items-center">
+              <span>National Railway BDMS Register (Audit Compliant)</span>
+              <span>Showing {filtered.length} of {reqs.length} Total Records</span>
             </div>
           </Card>
         </div>
       </div>
 
+      {/* Official Requisition Detail Modal */}
       <Dialog open={!!detail} onOpenChange={(o) => !o && setDetail(null)}>
-        <DialogContent className="sm:max-w-md border-border bg-card shadow-lg p-0 overflow-hidden">
-          <DialogHeader className="bg-secondary/30 p-5 pb-4 border-b border-border/50">
+        <DialogContent className="sm:max-w-md border-2 border-[#003366] bg-white dark:bg-slate-950 p-0 rounded-[2px] shadow-lg">
+          <DialogHeader className="bg-[#003366] p-4 text-white border-b-2 border-[#FF9933]">
             <div className="flex justify-between items-start">
               <div>
-                <Badge
-                  variant="outline"
-                  className={`mb-2 text-[10px] uppercase font-bold tracking-wider ${detail ? getDeptStyle(detail.dept) : ""}`}
-                >
-                  {detail?.dept}
-                </Badge>
-                <DialogTitle className="text-xl font-bold flex items-center gap-2">
-                  <FileText className="size-5 text-muted-foreground" />
+                <span className="bg-white/20 text-white text-[9px] font-bold px-1.5 py-0.5 uppercase tracking-wider rounded-[2px]">
+                  {detail?.dept} REQUISITION RECORD
+                </span>
+                <DialogTitle className="text-base font-bold uppercase mt-1 text-white">
                   {detail?.id}
                 </DialogTitle>
-                <p className="text-sm text-muted-foreground mt-1 flex items-center gap-1.5">
-                  <Box className="size-3.5" /> {detail?.assetId}
-                </p>
+                <p className="text-[11px] text-slate-300 font-mono mt-0.5">Asset Tag: {detail?.assetId}</p>
               </div>
-              <Badge
-                variant="outline"
-                className={`text-xs font-semibold px-2 py-1 ${detail ? getStatusStyle(detail.status) : ""}`}
-              >
+              <span className={`border px-2 py-0.5 text-[10px] uppercase font-bold rounded-[2px] bg-white text-slate-900`}>
                 {detail?.status}
-              </Badge>
+              </span>
             </div>
           </DialogHeader>
 
           {detail && (
-            <div className="p-5 space-y-4">
-              <div className="rounded-md bg-secondary/20 p-3 border border-border/50">
-                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">
-                  Nature of Work
-                </p>
-                <p className="font-medium text-sm">{detail.work}</p>
+            <div className="p-4 space-y-3 text-xs">
+              <div className="border border-border bg-slate-50 dark:bg-slate-900 p-2.5 rounded-[2px]">
+                <p className="text-[10px] font-bold uppercase text-slate-500">Nature of Work</p>
+                <p className="font-semibold text-slate-800 dark:text-slate-200 mt-0.5">{detail.work}</p>
               </div>
 
-              <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
-                <Row k="Section" v={detail.section} />
-                <Row k="Line" v={detail.line} />
-                <Row k="Chainage" v={detail.chainage} className="col-span-2" />
-
-                <div className="col-span-2 my-1 border-t border-border/50"></div>
-
-                <Row k="Block type" v={detail.blockType} />
-                <Row k="Duration" v={`${detail.duration} hours`} />
-                <Row k="Crew size" v={`${detail.crew} staff`} />
-                <Row k="Criticality" v={detail.criticality} />
-                <Row k="Days overdue" v={`${detail.daysOverdue} days`} />
-                <Row k="TSR risk" v={detail.tsrRisk ? "Yes" : "No"} />
-
-                <div className="col-span-2 my-1 border-t border-border/50"></div>
-
-                <Row k="Requested by" v={detail.requestedBy} />
-                <Row
-                  k="AI priority score"
-                  v={
-                    <span className="font-bold text-foreground">{`${detail.score ?? criticalityScore(detail)} / 100`}</span>
-                  }
-                />
-
+              <div className="grid grid-cols-2 gap-2.5 border border-border p-3 rounded-[2px]">
+                <div>
+                  <span className="text-[10px] font-bold uppercase text-slate-500">Section</span>
+                  <p className="font-semibold">{detail.section}</p>
+                </div>
+                <div>
+                  <span className="text-[10px] font-bold uppercase text-slate-500">Line</span>
+                  <p className="font-semibold">{detail.line}</p>
+                </div>
                 <div className="col-span-2">
-                  <Row
-                    k="Scheduled slot"
-                    v={
-                      detail.slot ? (
-                        <Badge variant="secondary" className="font-medium text-xs bg-secondary">
-                          <CalendarClock className="mr-1.5 size-3" />
-                          {DAYS[detail.slot.day]} {fmt(detail.slot.start)}â€“{fmt(detail.slot.end)}
-                        </Badge>
-                      ) : (
-                        "Not scheduled"
-                      )
-                    }
-                  />
+                  <span className="text-[10px] font-bold uppercase text-slate-500">Chainage</span>
+                  <p className="font-mono font-semibold">{detail.chainage}</p>
+                </div>
+                <div>
+                  <span className="text-[10px] font-bold uppercase text-slate-500">Block Type</span>
+                  <p className="font-semibold">{detail.blockType}</p>
+                </div>
+                <div>
+                  <span className="text-[10px] font-bold uppercase text-slate-500">Duration</span>
+                  <p className="font-mono font-semibold">{detail.duration} hrs</p>
+                </div>
+                <div>
+                  <span className="text-[10px] font-bold uppercase text-slate-500">Crew Strength</span>
+                  <p className="font-semibold">{detail.crew} staff</p>
+                </div>
+                <div>
+                  <span className="text-[10px] font-bold uppercase text-slate-500">Criticality</span>
+                  <p className="font-semibold">{detail.criticality}</p>
+                </div>
+                <div>
+                  <span className="text-[10px] font-bold uppercase text-slate-500">Days Overdue</span>
+                  <p className="font-semibold">{detail.daysOverdue} days</p>
+                </div>
+                <div>
+                  <span className="text-[10px] font-bold uppercase text-slate-500">TSR Risk</span>
+                  <p className="font-semibold">{detail.tsrRisk ? "Imposed (Yes)" : "No"}</p>
+                </div>
+                <div className="col-span-2">
+                  <span className="text-[10px] font-bold uppercase text-slate-500">Filed By</span>
+                  <p className="font-semibold">{detail.requestedBy}</p>
                 </div>
               </div>
             </div>
@@ -1062,16 +797,5 @@ function RequestsPage() {
         </DialogContent>
       </Dialog>
     </>
-  );
-}
-
-function Row({ k, v, className = "" }: { k: string; v: React.ReactNode; className?: string }) {
-  return (
-    <div className={`flex flex-col gap-1 ${className}`}>
-      <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-        {k}
-      </span>
-      <span className="text-sm">{v}</span>
-    </div>
   );
 }

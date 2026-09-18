@@ -16,17 +16,14 @@ import {
   Clock3,
   TrainFront,
   Layers3,
+  Calendar,
+  SlidersHorizontal,
 } from "lucide-react";
 import { toast } from "sonner";
-
+import { PageHeader } from "@/components/AppShell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -46,7 +43,7 @@ import {
 export const Route = createFileRoute("/planner")({
   head: () => ({
     meta: [
-      { title: "Gantt Planner | IR-ABPS" },
+      { title: "Gantt Planner | IR-ABPS Corridor Timetable" },
       {
         name: "description",
         content:
@@ -90,9 +87,7 @@ type Train = {
 
 function timeToMinutes(timeStr: string) {
   if (!timeStr) return 0;
-
   const [h, m] = timeStr.split(":");
-
   return parseInt(h || "0") * 60 + parseInt(m || "0");
 }
 
@@ -103,23 +98,19 @@ function formatTime(time?: string) {
 
 function formatStatus(status: string) {
   if (!status) return "PLANNED";
-
   return status.replaceAll("_", " ");
 }
 
 function statusClass(status: string) {
   switch (status?.toUpperCase()) {
     case "APPROVED":
-      return "bg-safe/15 text-safe border-safe/30";
-
+      return "bg-emerald-100 text-emerald-900 border-emerald-300 font-bold";
     case "REJECTED":
-      return "bg-destructive/15 text-destructive border-destructive/30";
-
+      return "bg-red-100 text-red-900 border-red-300 font-bold";
     case "REWORK":
-      return "bg-warn/15 text-warn border-warn/30";
-
+      return "bg-amber-100 text-amber-900 border-amber-300 font-bold";
     default:
-      return "bg-primary/15 text-primary border-primary/30";
+      return "bg-blue-100 text-blue-900 border-blue-300 font-bold";
   }
 }
 
@@ -133,12 +124,10 @@ function PlannerPage() {
 
   const [dateStr, setDateStr] = useState("2026-09-01");
   const [selectedCorridor, setSelectedCorridor] = useState<string>("ALL");
-  const [selectedBlock, setSelectedBlock] =
-    useState<OptimizedBlock | null>(null);
+  const [selectedBlock, setSelectedBlock] = useState<OptimizedBlock | null>(null);
 
   const fetchData = async () => {
     setLoading(true);
-
     try {
       const [cRes, bRes, tRes] = await Promise.all([
         fetch("http://127.0.0.1:8000/corridors/"),
@@ -173,8 +162,7 @@ function PlannerPage() {
     return blocks.filter(
       (b) =>
         b.block_date === dateStr &&
-        (selectedCorridor === "ALL" ||
-          b.corridor_id === selectedCorridor),
+        (selectedCorridor === "ALL" || b.corridor_id === selectedCorridor),
     );
   }, [blocks, dateStr, selectedCorridor]);
 
@@ -182,30 +170,20 @@ function PlannerPage() {
     return trains.filter(
       (t) =>
         t.travel_date === dateStr &&
-        (selectedCorridor === "ALL" ||
-          t.corridor_id === selectedCorridor),
+        (selectedCorridor === "ALL" || t.corridor_id === selectedCorridor),
     );
   }, [trains, dateStr, selectedCorridor]);
 
   const activeCorridors = useMemo(() => {
     if (selectedCorridor !== "ALL") {
-      return corridors.filter(
-        (c) => c.corridor_id === selectedCorridor,
-      );
+      return corridors.filter((c) => c.corridor_id === selectedCorridor);
     }
-
     const cIds = new Set([
       ...filteredBlocks.map((b) => b.corridor_id),
       ...filteredTrains.map((t) => t.corridor_id),
     ]);
-
     return corridors.filter((c) => cIds.has(c.corridor_id));
-  }, [
-    corridors,
-    filteredBlocks,
-    filteredTrains,
-    selectedCorridor,
-  ]);
+  }, [corridors, filteredBlocks, filteredTrains, selectedCorridor]);
 
   const totalBlockMinutes = filteredBlocks.reduce(
     (acc, b) => acc + parseInt(b.duration_min || "0"),
@@ -215,116 +193,54 @@ function PlannerPage() {
   const avgUtil =
     filteredBlocks.length > 0
       ? filteredBlocks.reduce(
-          (acc, b) =>
-            acc +
-            parseFloat(b.utilization_percent || "0"),
+          (acc, b) => acc + parseFloat(b.utilization_percent || "0"),
           0,
         ) / filteredBlocks.length
       : 0;
 
-  /*
-   * Conflict detection.
-   *
-   * A conflict occurs when an optimized maintenance block
-   * overlaps with a known train movement on the same corridor.
-   */
   const overlaps = useMemo(() => {
     let count = 0;
-
-    const conflictsList: {
-      block: string;
-      train: string;
-    }[] = [];
+    const conflictsList: { block: string; train: string }[] = [];
 
     filteredBlocks.forEach((b) => {
       const bStart = timeToMinutes(b.start_time);
-
       let bEnd = timeToMinutes(b.end_time);
-
-      if (bEnd < bStart) {
-        bEnd += 1440;
-      }
+      if (bEnd < bStart) bEnd += 1440;
 
       filteredTrains.forEach((t) => {
-        if (t.corridor_id !== b.corridor_id) {
-          return;
-        }
-
+        if (t.corridor_id !== b.corridor_id) return;
         const tStart = timeToMinutes(t.arrival_time);
-
         let tEnd = timeToMinutes(t.departure_time);
-
-        if (tEnd < tStart) {
-          tEnd += 1440;
-        }
+        if (tEnd < tStart) tEnd += 1440;
 
         if (bStart < tEnd && tStart < bEnd) {
           count++;
-
-          conflictsList.push({
-            block: b.block_id,
-            train: t.train_id,
-          });
+          conflictsList.push({ block: b.block_id, train: t.train_id });
         }
       });
     });
 
-    return {
-      count,
-      list: conflictsList,
-    };
+    return { count, list: conflictsList };
   }, [filteredBlocks, filteredTrains]);
 
-  /*
-   * Find trains associated with the selected block.
-   */
   const selectedBlockTrains = useMemo(() => {
     if (!selectedBlock) return [];
-
-    const blockStart = timeToMinutes(
-      selectedBlock.start_time,
-    );
-
-    let blockEnd = timeToMinutes(
-      selectedBlock.end_time,
-    );
-
-    if (blockEnd < blockStart) {
-      blockEnd += 1440;
-    }
+    const blockStart = timeToMinutes(selectedBlock.start_time);
+    let blockEnd = timeToMinutes(selectedBlock.end_time);
+    if (blockEnd < blockStart) blockEnd += 1440;
 
     return filteredTrains.filter((t) => {
-      if (t.corridor_id !== selectedBlock.corridor_id) {
-        return false;
-      }
-
+      if (t.corridor_id !== selectedBlock.corridor_id) return false;
       const trainStart = timeToMinutes(t.arrival_time);
-
-      let trainEnd = timeToMinutes(
-        t.departure_time,
-      );
-
-      if (trainEnd < trainStart) {
-        trainEnd += 1440;
-      }
-
-      return (
-        blockStart < trainEnd &&
-        trainStart < blockEnd
-      );
+      let trainEnd = timeToMinutes(t.departure_time);
+      if (trainEnd < trainStart) trainEnd += 1440;
+      return blockStart < trainEnd && trainStart < blockEnd;
     });
   }, [selectedBlock, filteredTrains]);
 
-  /*
-   * Approve / Reject / Rework
-   */
-  const updateBlockStatus = async (
-    action: "approve" | "reject" | "rework",
-  ) => {
+  const updateBlockStatus = async (action: "approve" | "reject" | "rework") => {
     if (!selectedBlock) return;
-
     setActionLoading(true);
-
     try {
       const url =
         action === "approve"
@@ -335,54 +251,32 @@ function PlannerPage() {
 
       const response = await fetch(url, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        ...(action === "approve"
-          ? {
-              body: JSON.stringify({
-                approved_by: "Senior Officer",
-              }),
-            }
-          : {}),
+        headers: { "Content-Type": "application/json" },
+        ...(action === "approve" ? { body: JSON.stringify({ approved_by: "Senior Officer" }) } : {}),
       });
 
       const data = await response.json();
-
       if (!response.ok) {
-        throw new Error(
-          data?.detail ||
-            `Unable to ${action} block.`,
-        );
+        throw new Error(data?.detail || `Unable to ${action} block.`);
       }
 
       const messages = {
-        approve: "Block approved successfully.",
-        reject: "Block rejected successfully.",
-        rework: "Block sent for rework.",
+        approve: "Block authorized & recorded into operational schedule.",
+        reject: "Block rejected and returned to controller queue.",
+        rework: "Block sent back for shadow window adjustment.",
       };
 
       toast.success(messages[action]);
-
       setSelectedBlock(null);
-
       await fetchData();
     } catch (err) {
       console.error(err);
-
-      toast.error(
-        err instanceof Error
-          ? err.message
-          : "Unable to update block status.",
-      );
+      toast.error(err instanceof Error ? err.message : "Unable to update block status.");
     } finally {
       setActionLoading(false);
     }
   };
 
-  /*
-   * Export current filtered plan as CSV.
-   */
   const exportPlan = () => {
     if (filteredBlocks.length === 0) {
       toast.info("There are no blocks to export.");
@@ -419,409 +313,221 @@ function PlannerPage() {
       b.block_status,
     ]);
 
-    const csv = [
-      headers,
-      ...rows,
-    ]
-      .map((row) =>
-        row
-          .map((value) =>
-            `"${String(value ?? "").replaceAll('"', '""')}"`,
-          )
-          .join(","),
-      )
+    const csv = [headers, ...rows]
+      .map((row) => row.map((v) => `"${String(v ?? "").replaceAll('"', '""')}"`).join(","))
       .join("\n");
 
-    const blob = new Blob([csv], {
-      type: "text/csv;charset=utf-8;",
-    });
-
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
-
     const link = document.createElement("a");
-
     link.href = url;
-    link.download = `IR-ABPS-plan-${dateStr}.csv`;
-
+    link.download = `IR-ABPS-GanttPlan-${dateStr}.csv`;
     document.body.appendChild(link);
     link.click();
     link.remove();
-
     URL.revokeObjectURL(url);
-
-    toast.success("Optimization plan exported.");
+    toast.success("Official CSV Corridor Schedule Exported.");
   };
 
   return (
     <>
-      {/* HEADER */}
-      <div className="mb-6 flex flex-wrap items-end justify-between gap-4 border-b border-border pb-6">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-            Gantt Planner
-          </h1>
-
-          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-            Time-window planning for maintenance blocks,
-            train movements and corridor availability.
-          </p>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-3">
-          <Input
-            type="date"
-            value={dateStr}
-            onChange={(e) =>
-              setDateStr(e.target.value)
-            }
-            className="h-9 w-auto bg-background"
-          />
-
-          <Select
-            value={selectedCorridor}
-            onValueChange={setSelectedCorridor}
-          >
-            <SelectTrigger className="h-9 w-[180px] bg-background">
-              <SelectValue placeholder="All Corridors" />
-            </SelectTrigger>
-
-            <SelectContent>
-              <SelectItem value="ALL">
-                All Corridors
-              </SelectItem>
-
-              {corridors.map((c) => (
-                <SelectItem
-                  key={c.corridor_id}
-                  value={c.corridor_id}
-                >
-                  {c.corridor_id} - {c.corridor_name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={fetchData}
-            disabled={loading}
-            className="h-9"
-          >
-            <RefreshCw
-              className={`mr-2 size-4 ${
-                loading ? "animate-spin" : ""
-              }`}
+      <PageHeader
+        title="Corridor Operational Gantt & Megablock Schedule Planner"
+        subtitle="Time-window visualization of AI-generated maintenance blocks, Sectional Express train paths, and corridor line capacity."
+        action={
+          <div className="flex flex-wrap items-center gap-2">
+            <Input
+              type="date"
+              value={dateStr}
+              onChange={(e) => setDateStr(e.target.value)}
+              className="h-8 w-auto text-xs bg-background rounded-[2px] border-slate-300 dark:border-slate-700"
             />
 
-            Refresh
-          </Button>
+            <Select value={selectedCorridor} onValueChange={setSelectedCorridor}>
+              <SelectTrigger className="h-8 w-[160px] text-xs bg-background rounded-[2px] border-slate-300 dark:border-slate-700">
+                <SelectValue placeholder="All Corridors" />
+              </SelectTrigger>
+              <SelectContent className="rounded-[2px]">
+                <SelectItem value="ALL" className="text-xs">All Corridors</SelectItem>
+                {corridors.map((c) => (
+                  <SelectItem key={c.corridor_id} value={c.corridor_id} className="text-xs">
+                    {c.corridor_id} – {c.corridor_name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
 
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={exportPlan}
-            className="h-9"
-          >
-            <Download className="mr-2 size-4" />
-            Export Plan
-          </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={fetchData}
+              disabled={loading}
+              className="h-8 text-xs font-bold border-slate-300 dark:border-slate-700"
+            >
+              <RefreshCw className={`mr-1 size-3.5 ${loading ? "animate-spin" : ""}`} /> Refresh
+            </Button>
 
-          <Button
-            asChild
-            size="sm"
-            className="h-9 bg-purple-600 text-white hover:bg-purple-700"
-          >
-            <Link to="/optimizer">
-              <Play className="mr-2 size-4" />
-              Run Optimization
-            </Link>
-          </Button>
-        </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={exportPlan}
+              className="h-8 text-xs font-bold border-slate-300 dark:border-slate-700"
+            >
+              <Download className="mr-1 size-3.5" /> Export Schedule
+            </Button>
+
+            <Button
+              asChild
+              size="sm"
+              className="h-8 text-xs font-bold bg-[#003366] hover:bg-[#002244] text-white rounded-[2px]"
+            >
+              <Link to="/optimizer">
+                <Play className="mr-1 size-3.5 text-[#FF9933]" /> Run Optimizer
+              </Link>
+            </Button>
+          </div>
+        }
+      />
+
+      {/* KPI Metric Blocks */}
+      <div className="mb-6 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        <MetricCard label="Planned Megablocks" value={filteredBlocks.length} />
+        <MetricCard label="Block Hours" value={`${(totalBlockMinutes / 60).toFixed(1)}h`} />
+        <MetricCard
+          label="Trains in Corridor"
+          value={filteredTrains.length}
+          tone="text-slate-800 dark:text-slate-200"
+        />
+        <MetricCard label="Avg Utilization" value={`${avgUtil.toFixed(1)}%`} tone="text-emerald-700 dark:text-emerald-400" />
+        <MetricCard
+          label="Path Conflicts"
+          value={overlaps.count}
+          tone={overlaps.count > 0 ? "text-red-700 dark:text-red-400 font-bold" : "text-emerald-700 dark:text-emerald-400"}
+        />
+        <MetricCard label="Active Corridors" value={activeCorridors.length} />
       </div>
 
-      {/* KPI CARDS */}
-      <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
-        <MetricCard
-          label="Planned Blocks"
-          value={filteredBlocks.length}
-        />
-
-        <MetricCard
-          label="Total Block Hours"
-          value={
-            (totalBlockMinutes / 60).toFixed(1) + "h"
-          }
-        />
-
-        <MetricCard
-          label="Trains Affected"
-          value={overlaps.count}
-          tone={
-            overlaps.count > 0
-              ? "text-warn"
-              : "text-foreground"
-          }
-        />
-
-        <MetricCard
-          label="Avg Utilization"
-          value={avgUtil.toFixed(1) + "%"}
-          tone="text-safe"
-        />
-
-        <MetricCard
-          label="Conflicts Detected"
-          value={overlaps.count}
-          tone={
-            overlaps.count > 0
-              ? "text-destructive"
-              : "text-safe"
-          }
-        />
-
-        <MetricCard
-          label="Available Windows"
-          value={activeCorridors.length * 2}
-        />
-      </div>
-
-      {/* MAIN CONTENT */}
+      {/* Main Gantt Timeline Section */}
       <div className="grid gap-6 lg:grid-cols-4">
-        {/* GANTT */}
-        <Card className="lg:col-span-3">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <CalendarRange className="size-4" />
-
-              Gantt Timeline ({dateStr})
+        {/* GANTT TIMELINE */}
+        <Card className="lg:col-span-3 border border-border bg-white dark:bg-slate-900 rounded-[2px] shadow-none">
+          <CardHeader className="bg-slate-100 dark:bg-slate-900/80 p-3.5 border-b border-border flex items-center justify-between">
+            <CardTitle className="text-xs font-bold uppercase text-[#003366] dark:text-sky-400 flex items-center gap-2">
+              <CalendarRange className="size-4" /> 24-Hour Corridor Operational Timeline ({dateStr})
             </CardTitle>
+            <span className="text-[10px] text-slate-500 font-mono">COA Real-Time Grid</span>
           </CardHeader>
 
-          <CardContent className="overflow-x-auto">
+          <CardContent className="p-4 overflow-x-auto">
             {activeCorridors.length === 0 ? (
-              <div className="flex flex-col items-center py-12 text-center text-muted-foreground">
-                <CalendarRange className="mb-3 size-8 opacity-20" />
-
-                <p>
-                  No optimized blocks available for
-                  this date.
+              <div className="flex flex-col items-center py-12 text-center text-xs text-muted-foreground">
+                <CalendarRange className="mb-2 size-8 text-slate-400 opacity-40" />
+                <p className="font-semibold text-slate-700 dark:text-slate-300">
+                  No maintenance blocks scheduled for this date.
                 </p>
-
-                <Button
-                  asChild
-                  variant="outline"
-                  className="mt-4"
-                >
+                <Button asChild variant="outline" size="sm" className="mt-3 text-xs font-bold border-slate-300 dark:border-slate-700">
                   <Link to="/optimizer">
-                    Run IR-ABPS Optimization
+                    Run IR-ABPS Optimizer Engine
                   </Link>
                 </Button>
               </div>
             ) : (
-              <div className="min-w-[900px]">
-                {/* HOUR HEADER */}
-                <div className="mb-2 flex border-b border-border pb-1 pl-[120px] text-[10px] text-muted-foreground">
-                  {Array.from({ length: 24 }).map(
-                    (_, h) => (
-                      <div
-                        key={h}
-                        className="flex-1 border-l border-border/30 pl-1"
-                      >
-                        {h
-                          .toString()
-                          .padStart(2, "0")}
-                        :00
-                      </div>
-                    ),
-                  )}
+              <div className="min-w-[920px]">
+                {/* 24-HOUR HEADER */}
+                <div className="mb-2 flex border-b border-border pb-1 pl-[130px] text-[10px] font-mono font-bold text-slate-500">
+                  {Array.from({ length: 24 }).map((_, h) => (
+                    <div key={h} className="flex-1 border-l border-border/40 pl-1">
+                      {h.toString().padStart(2, "0")}:00
+                    </div>
+                  ))}
                 </div>
 
-                {/* CORRIDORS */}
+                {/* CORRIDORS TIMELINE BARS */}
                 {activeCorridors.map((corr) => {
-                  const corrBlocks =
-                    filteredBlocks.filter(
-                      (b) =>
-                        b.corridor_id ===
-                        corr.corridor_id,
-                    );
-
-                  const corrTrains =
-                    filteredTrains.filter(
-                      (t) =>
-                        t.corridor_id ===
-                        corr.corridor_id,
-                    );
+                  const corrBlocks = filteredBlocks.filter((b) => b.corridor_id === corr.corridor_id);
+                  const corrTrains = filteredTrains.filter((t) => t.corridor_id === corr.corridor_id);
 
                   return (
-                    <div
-                      key={corr.corridor_id}
-                      className="mb-3 flex items-stretch"
-                    >
-                      {/* CORRIDOR NAME */}
-                      <div className="flex w-[120px] flex-col justify-center truncate border-r border-border py-2 pr-2 text-xs font-semibold">
-                        <span
-                          title={
-                            corr.corridor_name
-                          }
-                        >
+                    <div key={corr.corridor_id} className="mb-3 flex items-stretch border border-border bg-slate-50/50 dark:bg-slate-900/40">
+                      {/* Corridor Label */}
+                      <div className="flex w-[130px] flex-col justify-center border-r border-border p-2 bg-slate-100 dark:bg-slate-800">
+                        <span className="text-xs font-bold font-mono text-[#003366] dark:text-sky-400">
                           {corr.corridor_id}
                         </span>
-
-                        <span className="truncate text-[9px] font-normal text-muted-foreground">
+                        <span className="truncate text-[10px] text-slate-600 dark:text-slate-400" title={corr.corridor_name}>
                           {corr.corridor_name}
                         </span>
                       </div>
 
-                      {/* TIMELINE */}
-                      <div className="relative min-h-[72px] flex-1 border-y border-border bg-secondary/10 py-1">
-                        {/* HOUR GRID */}
-                        {Array.from({
-                          length: 24,
-                        }).map((_, h) => (
+                      {/* Timeline Bar Track */}
+                      <div className="relative min-h-[68px] flex-1 bg-white dark:bg-slate-950 py-1">
+                        {/* Hour Gridlines */}
+                        {Array.from({ length: 24 }).map((_, h) => (
                           <div
                             key={h}
-                            className="pointer-events-none absolute bottom-0 top-0 border-l border-border/20"
-                            style={{
-                              left: `${
-                                (h / 24) * 100
-                              }%`,
-                            }}
+                            className="pointer-events-none absolute bottom-0 top-0 border-l border-border/30"
+                            style={{ left: `${(h / 24) * 100}%` }}
                           />
                         ))}
 
-                        {/* TRAINS */}
+                        {/* Train movements */}
                         {corrTrains.map((t) => {
-                          const startMins =
-                            timeToMinutes(
-                              t.arrival_time,
-                            );
+                          const startMins = timeToMinutes(t.arrival_time);
+                          let endMins = timeToMinutes(t.departure_time);
+                          if (endMins < startMins) endMins += 1440;
 
-                          let endMins =
-                            timeToMinutes(
-                              t.departure_time,
-                            );
-
-                          if (endMins < startMins) {
-                            endMins += 1440;
-                          }
-
-                          let left =
-                            (startMins / 1440) *
-                            100;
-
-                          let width =
-                            ((endMins -
-                              startMins) /
-                              1440) *
-                            100;
-
-                          if (left > 100) {
-                            return null;
-                          }
-
-                          if (
-                            left + width >
-                            100
-                          ) {
-                            width = 100 - left;
-                          }
+                          let left = (startMins / 1440) * 100;
+                          let width = ((endMins - startMins) / 1440) * 100;
+                          if (left > 100) return null;
+                          if (left + width > 100) width = 100 - left;
 
                           return (
                             <div
                               key={t.train_id}
-                              title={`${t.train_number} - ${t.train_name}`}
-                              className="absolute z-10 h-2 rounded-full bg-slate-500/60 transition-all hover:bg-slate-400"
+                              title={`${t.train_number} - ${t.train_name} (${t.arrival_time} to ${t.departure_time})`}
+                              className="absolute z-10 h-2 rounded-[1px] bg-slate-500/70 border border-slate-600 hover:bg-slate-400 transition-all cursor-pointer"
                               style={{
                                 left: `${left}%`,
-                                width: `${Math.max(
-                                  width,
-                                  0.5,
-                                )}%`,
-                                top: "8px",
+                                width: `${Math.max(width, 0.6)}%`,
+                                top: "6px",
                               }}
                             />
                           );
                         })}
 
-                        {/* OPTIMIZED BLOCKS */}
+                        {/* Optimized Maintenance Megablocks */}
                         {corrBlocks.map((b) => {
-                          const startMins =
-                            timeToMinutes(
-                              b.start_time,
-                            );
+                          const startMins = timeToMinutes(b.start_time);
+                          let endMins = timeToMinutes(b.end_time);
+                          if (endMins < startMins) endMins += 1440;
 
-                          let endMins =
-                            timeToMinutes(
-                              b.end_time,
-                            );
+                          let left = (startMins / 1440) * 100;
+                          let width = ((endMins - startMins) / 1440) * 100;
+                          if (left > 100) return null;
+                          if (left + width > 100) width = 100 - left;
 
-                          if (endMins < startMins) {
-                            endMins += 1440;
-                          }
-
-                          let left =
-                            (startMins / 1440) *
-                            100;
-
-                          let width =
-                            ((endMins -
-                              startMins) /
-                              1440) *
-                            100;
-
-                          if (left > 100) {
-                            return null;
-                          }
-
-                          if (
-                            left + width >
-                            100
-                          ) {
-                            width = 100 - left;
-                          }
-
-                          const isConflict =
-                            overlaps.list.some(
-                              (o) =>
-                                o.block ===
-                                b.block_id,
-                            );
+                          const isConflict = overlaps.list.some((o) => o.block === b.block_id);
 
                           return (
                             <button
                               key={b.block_id}
                               type="button"
-                              onClick={() =>
-                                setSelectedBlock(b)
-                              }
-                              title="Open block details"
-                              className={`absolute z-20 flex h-9 flex-col items-start justify-center overflow-hidden rounded px-1.5 text-left text-[10px] font-bold text-white transition-all hover:scale-[1.01] hover:brightness-110 ${
+                              onClick={() => setSelectedBlock(b)}
+                              title="Click to scrutinize and authorize block"
+                              className={`absolute z-20 flex h-8 flex-col items-start justify-center overflow-hidden rounded-[2px] px-1.5 text-left text-[10px] font-bold text-white border transition-transform hover:scale-[1.01] ${
                                 isConflict
-                                  ? "bg-destructive shadow-[0_0_8px_rgba(220,38,38,0.8)]"
-                                  : "bg-primary"
+                                  ? "bg-[#800000] border-red-400 shadow-sm"
+                                  : "bg-[#003366] border-[#FF9933]"
                               }`}
                               style={{
                                 left: `${left}%`,
-                                width: `${Math.max(
-                                  width,
-                                  2,
-                                )}%`,
-                                top: "25px",
+                                width: `${Math.max(width, 2.5)}%`,
+                                top: "24px",
                               }}
                             >
-                              <span className="w-full truncate">
-                                {b.block_id}
-                              </span>
-
-                              <span className="w-full truncate text-[8px] font-normal opacity-80">
-                                {formatTime(
-                                  b.start_time,
-                                )}{" "}
-                                -{" "}
-                                {formatTime(
-                                  b.end_time,
-                                )}
+                              <span className="w-full truncate">{b.block_id}</span>
+                              <span className="w-full truncate text-[8px] font-mono opacity-80">
+                                {formatTime(b.start_time)} – {formatTime(b.end_time)}
                               </span>
                             </button>
                           );
@@ -834,415 +540,207 @@ function PlannerPage() {
             )}
           </CardContent>
 
-          {/* LEGEND */}
-          <div className="mt-2 flex flex-wrap gap-4 border-t border-border px-6 pb-4 pt-2 text-xs">
-            <span className="flex items-center gap-1.5">
-              <span className="h-2 w-4 rounded bg-primary" />
-              Maintenance Block
+          {/* Timeline Legend */}
+          <div className="flex flex-wrap items-center gap-5 border-t border-border px-4 py-2.5 bg-slate-50 dark:bg-slate-900/60 text-xs">
+            <span className="flex items-center gap-1.5 text-slate-700 dark:text-slate-300 font-semibold">
+              <span className="h-2.5 w-4 rounded-[1px] bg-[#003366] border border-[#FF9933]" />
+              AI Maintenance Megablock
             </span>
-
-            <span className="flex items-center gap-1.5">
-              <span className="h-1 w-4 rounded bg-slate-500/60" />
-              Train Movement
+            <span className="flex items-center gap-1.5 text-slate-700 dark:text-slate-300 font-semibold">
+              <span className="h-2 w-4 rounded-[1px] bg-slate-500 border border-slate-600" />
+              Express Train Movement Path
             </span>
-
-            <span className="flex items-center gap-1.5">
-              <span className="h-2 w-4 rounded bg-destructive" />
-              Conflict Highlight
+            <span className="flex items-center gap-1.5 text-slate-700 dark:text-slate-300 font-semibold">
+              <span className="h-2.5 w-4 rounded-[1px] bg-[#800000] border border-red-400" />
+              Overlapping Train Conflict
             </span>
           </div>
         </Card>
 
-        {/* AI INTELLIGENCE */}
-        <Card className="border-t-2 border-t-purple-500/50 bg-gradient-to-br from-card to-purple-900/5 shadow-sm">
-          <CardHeader className="border-b border-purple-500/10 pb-4">
-            <CardTitle className="flex items-center gap-2 text-base font-semibold text-purple-500">
-              <Zap className="size-4" />
-
-              IR-ABPS Planning Intelligence
+        {/* AI Planning Intelligence Sidebar */}
+        <Card className="border border-border bg-white dark:bg-slate-900 rounded-[2px] shadow-none flex flex-col justify-between">
+          <CardHeader className="bg-slate-100 dark:bg-slate-900/80 p-3.5 border-b border-border">
+            <CardTitle className="text-xs font-bold uppercase text-[#003366] dark:text-sky-400 flex items-center gap-2">
+              <Zap className="size-4" /> Controller Scrutiny Notes
             </CardTitle>
           </CardHeader>
-
-          <CardContent className="space-y-4 pt-4">
+          <CardContent className="p-3.5 space-y-3 text-xs">
             {filteredBlocks.length > 0 ? (
               <>
-                {/* OPTIMIZATION INSIGHT */}
-                <div className="rounded-md border border-purple-500/20 bg-purple-500/10 p-3 text-sm">
-                  <p className="mb-1 flex items-center gap-2 font-semibold text-purple-600">
-                    <Info className="size-4" />
-
-                    Optimization Insight
+                <div className="border border-border bg-slate-50 dark:bg-slate-800 p-2.5 rounded-[2px] leading-relaxed">
+                  <p className="font-bold text-[#003366] dark:text-sky-400 text-[11px] mb-1">
+                    Corridor Clearance
                   </p>
-
-                  AI generated{" "}
-                  {filteredBlocks.length} block(s)
-                  for {dateStr}. The average
-                  utilization is{" "}
-                  {avgUtil.toFixed(1)}%.
+                  <p className="text-slate-600 dark:text-slate-400">
+                    {filteredBlocks.length} megablocks computed for {dateStr}. Avg capacity utilization: <strong>{avgUtil.toFixed(1)}%</strong>.
+                  </p>
                 </div>
 
-                {/* RISK */}
-                {overlaps.count > 0 && (
-                  <div className="rounded-md border border-destructive/20 bg-destructive/10 p-3 text-sm">
-                    <p className="mb-1 flex items-center gap-2 font-semibold text-destructive">
-                      <TriangleAlert className="size-4" />
-
-                      High Scheduling Risk
+                {overlaps.count > 0 ? (
+                  <div className="border border-red-300 bg-red-50 dark:bg-red-950/40 p-2.5 rounded-[2px] text-red-900 dark:text-red-200">
+                    <p className="font-bold text-xs flex items-center gap-1.5">
+                      <TriangleAlert className="size-3.5 text-destructive" />
+                      {overlaps.count} Potential Train Overlap(s)
                     </p>
-
-                    AI detected{" "}
-                    {overlaps.count} potential
-                    overlap(s) with scheduled
-                    trains.
+                    <p className="text-[11px] mt-1">
+                      Scrutiny required by Section Controller before approving block orders.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="border border-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 p-2.5 rounded-[2px] text-emerald-900 dark:text-emerald-200">
+                    <p className="font-bold text-xs flex items-center gap-1.5">
+                      <ShieldCheck className="size-3.5 text-emerald-700 dark:text-emerald-400" />
+                      Zero-Conflict Clearance
+                    </p>
+                    <p className="text-[11px] mt-1">
+                      All blocks on this date are free from express path interference.
+                    </p>
                   </div>
                 )}
 
-                {/* SAFE */}
-                {filteredBlocks.length > 0 &&
-                  overlaps.count === 0 && (
-                    <div className="rounded-md border border-safe/20 bg-safe/10 p-3 text-sm">
-                      <p className="mb-1 flex items-center gap-2 font-semibold text-safe">
-                        <ShieldCheck className="size-4" />
-
-                        Safe Scheduling
-                      </p>
-
-                      All blocks for this date
-                      are currently conflict-free
-                      with respect to known train
-                      paths.
-                    </div>
-                  )}
-
-                {/* QUICK STATS */}
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="rounded-lg border border-border bg-secondary/10 p-3">
-                    <p className="text-[10px] uppercase text-muted-foreground">
-                      Blocks
-                    </p>
-
-                    <p className="mt-1 text-xl font-bold">
-                      {filteredBlocks.length}
-                    </p>
+                <div className="grid grid-cols-2 gap-2 text-center pt-1">
+                  <div className="border border-border bg-slate-50 dark:bg-slate-800 p-2 rounded-[2px]">
+                    <span className="text-[10px] text-slate-500 font-bold uppercase block">Megablocks</span>
+                    <span className="font-mono font-bold text-base">{filteredBlocks.length}</span>
                   </div>
-
-                  <div className="rounded-lg border border-border bg-secondary/10 p-3">
-                    <p className="text-[10px] uppercase text-muted-foreground">
-                      Utilization
-                    </p>
-
-                    <p className="mt-1 text-xl font-bold text-safe">
-                      {avgUtil.toFixed(1)}%
-                    </p>
+                  <div className="border border-border bg-slate-50 dark:bg-slate-800 p-2 rounded-[2px]">
+                    <span className="text-[10px] text-slate-500 font-bold uppercase block">Efficiency</span>
+                    <span className="font-mono font-bold text-base text-emerald-700 dark:text-emerald-400">{avgUtil.toFixed(1)}%</span>
                   </div>
                 </div>
               </>
             ) : (
-              <div className="py-8 text-center text-muted-foreground">
-                <p>No active insights.</p>
+              <div className="text-center py-8 text-slate-500">
+                No active block schedule on selected date.
               </div>
             )}
           </CardContent>
+          <div className="p-3 border-t border-border bg-slate-50 dark:bg-slate-900/60">
+            <Button asChild variant="outline" size="sm" className="w-full text-xs font-bold border-slate-300 dark:border-slate-700">
+              <Link to="/conflicts">
+                Open Conflicts Scrutiny Desk <ArrowRight className="ml-1 size-3" />
+              </Link>
+            </Button>
+          </div>
         </Card>
       </div>
 
-      {/* BLOCK DETAILS SHEET */}
-      <Sheet
-        open={!!selectedBlock}
-        onOpenChange={(open) =>
-          !open && setSelectedBlock(null)
-        }
-      >
-        <SheetContent className="w-full overflow-y-auto border-l border-border sm:max-w-md">
+      {/* Block Details Sheet for Officer Authorization */}
+      <Sheet open={!!selectedBlock} onOpenChange={(open) => !open && setSelectedBlock(null)}>
+        <SheetContent className="w-full overflow-y-auto sm:max-w-md border-2 border-[#003366] bg-white dark:bg-slate-950 p-0 rounded-[2px]">
           {selectedBlock && (
             <>
-              <SheetHeader className="mb-5 border-b border-border pb-4">
-                <Badge
-                  className={`w-fit border ${statusClass(
-                    selectedBlock.block_status,
-                  )}`}
-                >
-                  {formatStatus(
-                    selectedBlock.block_status,
-                  )}
-                </Badge>
-
-                <SheetTitle className="text-xl">
-                  {selectedBlock.block_id}
-                </SheetTitle>
-
-                <SheetDescription>
-                  {selectedBlock.corridor_id} ·{" "}
-                  {selectedBlock.block_date}
-                </SheetDescription>
+              <SheetHeader className="bg-[#003366] p-4 text-white border-b-2 border-[#FF9933]">
+                <div className="flex justify-between items-center">
+                  <div>
+                    <span className="bg-white/20 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-[2px] uppercase">
+                      BLOCK AUTHORIZATION DOSSIER
+                    </span>
+                    <SheetTitle className="text-base font-bold uppercase text-white mt-1">
+                      {selectedBlock.block_id}
+                    </SheetTitle>
+                    <SheetDescription className="text-xs text-slate-300 font-mono">
+                      {selectedBlock.corridor_id} · Date: {selectedBlock.block_date}
+                    </SheetDescription>
+                  </div>
+                  <span className={`border px-2 py-0.5 text-[10px] font-bold uppercase rounded-[2px] bg-white text-slate-900`}>
+                    {formatStatus(selectedBlock.block_status)}
+                  </span>
+                </div>
               </SheetHeader>
 
-              <div className="space-y-5">
-                {/* TIME WINDOW */}
-                <div className="rounded-lg border border-border bg-secondary/10 p-4">
-                  <div className="mb-3 flex items-center gap-2">
-                    <Clock3 className="size-4 text-primary" />
-
-                    <p className="text-sm font-semibold">
-                      Scheduled Window
-                    </p>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <DetailItem
-                      label="Start"
-                      value={formatTime(
-                        selectedBlock.start_time,
-                      )}
-                    />
-
-                    <DetailItem
-                      label="End"
-                      value={formatTime(
-                        selectedBlock.end_time,
-                      )}
-                    />
-
-                    <DetailItem
-                      label="Duration"
-                      value={`${selectedBlock.duration_min} min`}
-                    />
-
-                    <DetailItem
-                      label="Date"
-                      value={selectedBlock.block_date}
-                    />
+              <div className="p-4 space-y-3.5 text-xs">
+                {/* Window Timings */}
+                <div className="border border-border bg-slate-50 dark:bg-slate-900 p-3 rounded-[2px]">
+                  <p className="font-bold text-[#003366] dark:text-sky-400 uppercase text-[10px] mb-2">
+                    Authorized Window Schedule
+                  </p>
+                  <div className="grid grid-cols-2 gap-2 font-mono">
+                    <div>
+                      <span className="text-[10px] text-slate-500 uppercase block font-sans">Start</span>
+                      <strong className="text-slate-900 dark:text-slate-100">{formatTime(selectedBlock.start_time)} IST</strong>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-slate-500 uppercase block font-sans">End</span>
+                      <strong className="text-slate-900 dark:text-slate-100">{formatTime(selectedBlock.end_time)} IST</strong>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-slate-500 uppercase block font-sans">Duration</span>
+                      <strong>{selectedBlock.duration_min} minutes</strong>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-slate-500 uppercase block font-sans">Utilization</span>
+                      <strong className="text-emerald-700 dark:text-emerald-400">{selectedBlock.utilization_percent}%</strong>
+                    </div>
                   </div>
                 </div>
 
-                {/* OPTIMIZATION METRICS */}
-                <div className="rounded-lg border border-border p-4">
-                  <div className="mb-3 flex items-center gap-2">
-                    <Zap className="size-4 text-purple-500" />
-
-                    <p className="text-sm font-semibold">
-                      Optimization Metrics
-                    </p>
-                  </div>
-
-                  <div className="space-y-4">
-                    <ScoreRow
-                      label="Utilization"
-                      value={`${selectedBlock.utilization_percent}%`}
-                      percentage={Math.min(
-                        100,
-                        parseFloat(
-                          selectedBlock.utilization_percent ||
-                            "0",
-                        ),
-                      )}
-                    />
-
-                    <ScoreRow
-                      label="Optimization Score"
-                      value={`${selectedBlock.optimization_score}/100`}
-                      percentage={Math.min(
-                        100,
-                        parseFloat(
-                          selectedBlock.optimization_score ||
-                            "0",
-                        ),
-                      )}
-                    />
-
-                    <ScoreRow
-                      label="Train Impact"
-                      value={`${selectedBlock.train_impact_score}`}
-                      percentage={Math.min(
-                        100,
-                        parseFloat(
-                          selectedBlock.train_impact_score ||
-                            "0",
-                        ),
-                      )}
-                    />
+                {/* Work Package */}
+                <div className="border border-border p-3 rounded-[2px]">
+                  <p className="font-bold text-[#003366] dark:text-sky-400 uppercase text-[10px] mb-2">
+                    Work Package Contents
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <span className="text-[10px] text-slate-500 uppercase block">Tasks Coordinated</span>
+                      <strong className="font-mono">{selectedBlock.number_of_tasks} Tasks</strong>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-slate-500 uppercase block">Departments</span>
+                      <strong>{selectedBlock.number_of_departments} Depts</strong>
+                    </div>
                   </div>
                 </div>
 
-                {/* WORK PACKAGE */}
-                <div className="rounded-lg border border-border p-4">
-                  <div className="mb-3 flex items-center gap-2">
-                    <Layers3 className="size-4 text-primary" />
-
-                    <p className="text-sm font-semibold">
-                      Work Package
-                    </p>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <DetailItem
-                      label="Tasks Included"
-                      value={`${selectedBlock.number_of_tasks} tasks`}
-                    />
-
-                    <DetailItem
-                      label="Departments"
-                      value={
-                        selectedBlock.number_of_departments
-                      }
-                    />
-
-                    <DetailItem
-                      label="Corridor"
-                      value={
-                        selectedBlock.corridor_id
-                      }
-                    />
-
-                    <DetailItem
-                      label="Status"
-                      value={formatStatus(
-                        selectedBlock.block_status,
-                      )}
-                    />
-                  </div>
-                </div>
-
-                {/* TRAIN IMPACT */}
-                <div className="rounded-lg border border-border p-4">
-                  <div className="mb-3 flex items-center gap-2">
-                    <TrainFront className="size-4 text-primary" />
-
-                    <p className="text-sm font-semibold">
-                      Train Path Analysis
-                    </p>
-                  </div>
-
-                  {selectedBlockTrains.length ===
-                  0 ? (
-                    <div className="rounded-md border border-safe/20 bg-safe/10 p-3">
-                      <p className="flex items-center gap-2 text-sm font-semibold text-safe">
-                        <ShieldCheck className="size-4" />
-
-                        No train conflicts
-                      </p>
-
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        No known train path overlaps
-                        this maintenance window.
-                      </p>
+                {/* Train Conflicts Check */}
+                <div className="border border-border p-3 rounded-[2px]">
+                  <p className="font-bold text-[#003366] dark:text-sky-400 uppercase text-[10px] mb-2">
+                    COA Train Movement Conflict Check
+                  </p>
+                  {selectedBlockTrains.length === 0 ? (
+                    <div className="text-emerald-700 dark:text-emerald-400 font-semibold flex items-center gap-1.5">
+                      <ShieldCheck className="size-4" /> Zero Train Overlaps Reported
                     </div>
                   ) : (
-                    <div className="space-y-2">
-                      {selectedBlockTrains.map(
-                        (train) => (
-                          <div
-                            key={train.train_id}
-                            className="rounded-md border border-destructive/30 bg-destructive/10 p-3"
-                          >
-                            <p className="text-sm font-semibold">
-                              {train.train_number}{" "}
-                              ·{" "}
-                              {train.train_name}
-                            </p>
-
-                            <p className="mt-1 text-xs text-muted-foreground">
-                              {formatTime(
-                                train.arrival_time,
-                              )}{" "}
-                              -{" "}
-                              {formatTime(
-                                train.departure_time,
-                              )}
-                            </p>
-                          </div>
-                        ),
-                      )}
+                    <div className="space-y-1.5">
+                      {selectedBlockTrains.map((t) => (
+                        <div key={t.train_id} className="border border-red-300 bg-red-50 dark:bg-red-950/40 p-2 rounded-[2px] text-[11px]">
+                          <span className="font-bold text-red-900 dark:text-red-200">{t.train_number} {t.train_name}</span>
+                          <span className="text-slate-500 block font-mono">Passing: {formatTime(t.arrival_time)} – {formatTime(t.departure_time)}</span>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
 
-                {/* SAFETY MESSAGE */}
-                {selectedBlockTrains.length ===
-                  0 && (
-                  <div className="rounded-lg border border-safe/30 bg-safe/10 p-4">
-                    <p className="flex items-center gap-2 text-sm font-bold text-safe">
-                      <ShieldCheck className="size-4" />
-
-                      Safety Validation Passed
-                    </p>
-
-                    <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-                      The proposed maintenance window
-                      does not overlap with known train
-                      paths in the current planning
-                      dataset. Final operational approval
-                      remains with the authorized railway
-                      officer.
-                    </p>
-                  </div>
-                )}
-
-                {/* APPROVAL ACTIONS */}
-                <div className="border-t border-border pt-5">
-                  <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    Human Approval Workflow
-                  </p>
-
+                {/* Controller Authorization Buttons */}
+                <div className="pt-2 border-t border-border space-y-2">
+                  <p className="text-[10px] font-bold uppercase text-slate-500">Section Controller Action</p>
                   <div className="grid gap-2">
                     <Button
-                      onClick={() =>
-                        updateBlockStatus("approve")
-                      }
-                      disabled={
-                        actionLoading ||
-                        selectedBlock.block_status ===
-                          "APPROVED"
-                      }
-                      className="w-full bg-safe text-white hover:bg-safe/90"
+                      onClick={() => updateBlockStatus("approve")}
+                      disabled={actionLoading || selectedBlock.block_status === "APPROVED"}
+                      className="w-full bg-[#137547] hover:bg-[#0f5c38] text-white font-bold h-8 text-xs rounded-[2px]"
                     >
-                      <CheckCircle2 className="mr-2 size-4" />
-
-                      {actionLoading
-                        ? "Processing..."
-                        : "Approve Block"}
+                      <CheckCircle2 className="mr-1.5 size-3.5" /> Approve & Issue Block Order
                     </Button>
-
                     <Button
-                      onClick={() =>
-                        updateBlockStatus("rework")
-                      }
+                      onClick={() => updateBlockStatus("rework")}
                       disabled={actionLoading}
                       variant="outline"
-                      className="w-full border-warn/40 text-warn hover:bg-warn/10"
+                      className="w-full border-amber-400 text-amber-900 dark:text-amber-300 hover:bg-amber-50 h-8 text-xs font-bold rounded-[2px]"
                     >
-                      <RotateCcw className="mr-2 size-4" />
-
-                      Send for Rework
+                      <RotateCcw className="mr-1.5 size-3.5" /> Send Back For Window Adjustment
                     </Button>
-
                     <Button
-                      onClick={() =>
-                        updateBlockStatus("reject")
-                      }
+                      onClick={() => updateBlockStatus("reject")}
                       disabled={actionLoading}
                       variant="outline"
-                      className="w-full border-destructive/40 text-destructive hover:bg-destructive/10"
+                      className="w-full border-red-400 text-red-900 dark:text-red-300 hover:bg-red-50 h-8 text-xs font-bold rounded-[2px]"
                     >
-                      <XCircle className="mr-2 size-4" />
-
-                      Reject Block
+                      <XCircle className="mr-1.5 size-3.5" /> Reject Block Application
                     </Button>
                   </div>
-                </div>
-
-                {/* OTHER WORKFLOWS */}
-                <div className="border-t border-border pt-4">
-                  <Button
-                    asChild
-                    variant="outline"
-                    className="w-full"
-                  >
-                    <Link to="/conflicts">
-                      Open Conflicts & Approvals
-                      <ArrowRight className="ml-2 size-4" />
-                    </Link>
-                  </Button>
                 </div>
               </div>
             </>
@@ -1256,81 +754,16 @@ function PlannerPage() {
 function MetricCard({
   label,
   value,
-  tone = "text-foreground",
+  tone = "text-slate-900 dark:text-slate-100",
 }: {
   label: string;
   value: string | number;
   tone?: string;
 }) {
   return (
-    <Card className="border-border shadow-sm">
-      <CardContent className="flex h-full flex-col justify-between p-4">
-        <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-          {label}
-        </p>
-
-        <p
-          className={`font-mono text-2xl font-bold ${tone}`}
-        >
-          {value}
-        </p>
-      </CardContent>
+    <Card className="border border-border bg-white dark:bg-slate-900 rounded-[2px] shadow-none p-3">
+      <p className="text-[10px] font-bold uppercase text-slate-500 truncate">{label}</p>
+      <p className={`font-mono text-xl font-bold mt-0.5 ${tone}`}>{value}</p>
     </Card>
-  );
-}
-
-function DetailItem({
-  label,
-  value,
-}: {
-  label: string;
-  value: string;
-}) {
-  return (
-    <div>
-      <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-        {label}
-      </p>
-
-      <p className="mt-1 break-words font-medium">
-        {value}
-      </p>
-    </div>
-  );
-}
-
-function ScoreRow({
-  label,
-  value,
-  percentage,
-}: {
-  label: string;
-  value: string;
-  percentage: number;
-}) {
-  return (
-    <div>
-      <div className="mb-1 flex items-center justify-between text-xs">
-        <span className="text-muted-foreground">
-          {label}
-        </span>
-
-        <span className="font-mono font-semibold">
-          {value}
-        </span>
-      </div>
-
-      <div className="h-2 overflow-hidden rounded-full bg-secondary">
-        <div
-          className="h-full rounded-full bg-primary transition-all"
-          style={{
-            width: `${Math.max(
-              0,
-              Math.min(100, percentage),
-            )}%`,
-          }}
-        />
-      </div>
-    </div>
   );
 }

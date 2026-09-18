@@ -5,27 +5,22 @@
 @custom-variant dark (&:is(.dark *));
 
 /*
- * Design system definition.
- *
- * The @theme inline block maps CSS custom properties to Tailwind utility
- * classes (e.g. --color-primary -> bg-primary, text-primary).
- *
- * The :root and .dark blocks define the actual color values using oklch.
- * All colors MUST use oklch format.
- *
- * To add a new semantic color:
- * 1. Add the variable to :root (light value) and .dark (dark value)
- * 2. Register it in @theme inline as --color-<name>: var(--<name>)
+ * Design system definition for Indian Railways / Government of India Portal (IR-ABPS).
+ * Colors follow official National Portal guidelines:
+ * - Primary: Deep Railway Navy (#003366 / #0B2545)
+ * - Accent: GoI National Saffron (#FF9933 / #E65100)
+ * - Secondary / Alerts: IR Maroon (#800000), Forest Green (#137547)
+ * - Boxy, dense, bordered utilitarian layout (2px border-radius max)
  */
 
 @theme inline {
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
-  --radius-2xl: calc(var(--radius) + 8px);
-  --radius-3xl: calc(var(--radius) + 12px);
-  --radius-4xl: calc(var(--radius) + 16px);
+  --radius-sm: calc(var(--radius) - 1px);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) + 1px);
+  --radius-xl: calc(var(--radius) + 2px);
+  --radius-2xl: calc(var(--radius) + 4px);
+  --radius-3xl: calc(var(--radius) + 6px);
+  --radius-4xl: calc(var(--radius) + 8px);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -66,100 +61,114 @@
   --color-traffic: var(--traffic);
   --color-safe: var(--safe);
   --color-warn: var(--warn);
+  --color-saffron: var(--saffron);
+  --color-navy: var(--ir-navy);
+  --color-maroon: var(--ir-maroon);
 }
 
 :root {
-  --radius: 0.5rem;
-  --background: oklch(0.975 0.008 250);
-  --foreground: oklch(0.2 0.025 260);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.2 0.025 260);
+  --radius: 2px;
+  --background: oklch(0.975 0.005 240); /* #f4f6f9 Crisp govt off-white */
+  --foreground: oklch(0.18 0.03 255); /* Deep slate-black */
+  --card: oklch(1 0 0); /* Pure White */
+  --card-foreground: oklch(0.18 0.03 255);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.2 0.025 260);
-  --primary: oklch(0.52 0.2 255);
+  --popover-foreground: oklch(0.18 0.03 255);
+  --primary: oklch(0.32 0.12 250); /* #003366 Deep Indian Railways Navy */
   --primary-foreground: oklch(0.99 0 0);
-  --secondary: oklch(0.935 0.012 250);
-  --secondary-foreground: oklch(0.22 0.025 260);
-  --muted: oklch(0.935 0.012 250);
-  --muted-foreground: oklch(0.48 0.025 260);
-  --accent: oklch(0.92 0.018 250);
-  --accent-foreground: oklch(0.18 0.025 260);
-  --destructive: oklch(0.55 0.22 25);
+  --secondary: oklch(0.935 0.008 240); /* #e9ecef */
+  --secondary-foreground: oklch(0.20 0.03 255);
+  --muted: oklch(0.94 0.005 240);
+  --muted-foreground: oklch(0.44 0.02 250); /* Clear readable slate */
+  --accent: oklch(0.92 0.02 240);
+  --accent-foreground: oklch(0.18 0.03 255);
+  --destructive: oklch(0.45 0.18 25); /* #800000 Indian Railways Maroon */
   --destructive-foreground: oklch(0.99 0 0);
-  --border: oklch(0.87 0.012 250);
-  --input: oklch(0.87 0.012 250);
-  --ring: oklch(0.52 0.2 255);
+  --border: oklch(0.85 0.01 240); /* #cbd5e1 Crisp 1px border */
+  --input: oklch(0.85 0.01 240);
+  --ring: oklch(0.32 0.12 250);
 
-  --eng: oklch(0.55 0.17 65);
-  --snt: oklch(0.48 0.16 155);
-  --trd: oklch(0.48 0.16 235);
-  --joint: oklch(0.5 0.2 300);
-  --traffic: oklch(0.45 0.03 260);
-  --safe: oklch(0.48 0.16 155);
-  --warn: oklch(0.55 0.17 65);
-  --gradient-brain: linear-gradient(135deg, oklch(0.52 0.2 255), oklch(0.5 0.2 300));
-  --shadow-panel: 0 10px 30px -10px oklch(0.2 0.03 260 / 0.12);
+  /* Indian Railways Departmental Semantic Colors */
+  --eng: oklch(0.48 0.14 55); /* Track/Civil: Ochre/Brown #9a5b13 */
+  --snt: oklch(0.44 0.15 155); /* S&T: Signal Forest Green #1b5e20 */
+  --trd: oklch(0.38 0.14 250); /* Electrical/TRD: Railway Blue #0d47a1 */
+  --joint: oklch(0.42 0.16 310); /* Joint Operations: Deep Purple #6a1b9a */
+  --traffic: oklch(0.30 0.04 250); /* Operating Department */
+  --safe: oklch(0.44 0.15 155); /* Approved / Safe: #137547 */
+  --warn: oklch(0.64 0.18 60); /* Caution / High Priority: #d97706 / Saffron */
+  --saffron: oklch(0.68 0.19 55); /* National Saffron #FF9933 */
+  --ir-navy: oklch(0.28 0.11 250); /* Deep Rail Blue #002B49 */
+  --ir-maroon: oklch(0.40 0.16 25); /* Deep IR Maroon #800000 */
 
-  --chart-1: oklch(0.55 0.17 65);
-  --chart-2: oklch(0.48 0.16 155);
-  --chart-3: oklch(0.48 0.16 235);
-  --chart-4: oklch(0.5 0.2 300);
-  --chart-5: oklch(0.55 0.22 25);
-  --sidebar: oklch(0.985 0.006 250);
-  --sidebar-foreground: oklch(0.2 0.025 260);
-  --sidebar-primary: oklch(0.52 0.2 255);
+  --gradient-brain: linear-gradient(135deg, #003366, #004d80);
+  --shadow-panel: 0 1px 3px rgba(0, 0, 0, 0.1);
+
+  --chart-1: oklch(0.32 0.12 250); /* Navy */
+  --chart-2: oklch(0.44 0.15 155); /* Green */
+  --chart-3: oklch(0.68 0.19 55);  /* Saffron */
+  --chart-4: oklch(0.45 0.18 25);  /* Maroon */
+  --chart-5: oklch(0.42 0.16 310); /* Purple */
+
+  --sidebar: oklch(0.985 0.005 240);
+  --sidebar-foreground: oklch(0.18 0.03 255);
+  --sidebar-primary: oklch(0.32 0.12 250);
   --sidebar-primary-foreground: oklch(0.99 0 0);
-  --sidebar-accent: oklch(0.92 0.015 250);
-  --sidebar-accent-foreground: oklch(0.18 0.025 260);
-  --sidebar-border: oklch(0.88 0.012 250);
-  --sidebar-ring: oklch(0.52 0.2 255);
+  --sidebar-accent: oklch(0.92 0.015 240);
+  --sidebar-accent-foreground: oklch(0.15 0.03 255);
+  --sidebar-border: oklch(0.85 0.01 240);
+  --sidebar-ring: oklch(0.32 0.12 250);
 }
 
 .dark {
-  --radius: 0.5rem;
-  --background: oklch(0.19 0.02 260);
-  --foreground: oklch(0.96 0.005 250);
-  --card: oklch(0.235 0.022 260);
-  --card-foreground: oklch(0.96 0.005 250);
-  --popover: oklch(0.235 0.022 260);
-  --popover-foreground: oklch(0.96 0.005 250);
-  --primary: oklch(0.68 0.16 245);
-  --primary-foreground: oklch(0.16 0.02 260);
-  --secondary: oklch(0.3 0.025 260);
-  --secondary-foreground: oklch(0.96 0.005 250);
-  --muted: oklch(0.3 0.025 260);
-  --muted-foreground: oklch(0.72 0.02 255);
-  --accent: oklch(0.33 0.03 260);
-  --accent-foreground: oklch(0.96 0.005 250);
-  --destructive: oklch(0.6 0.22 25);
-  --destructive-foreground: oklch(0.97 0.01 250);
-  --border: oklch(0.36 0.025 260);
-  --input: oklch(0.33 0.025 260);
-  --ring: oklch(0.68 0.16 245);
+  --radius: 2px;
+  --background: oklch(0.15 0.02 250); /* #0b1320 High-contrast govt dark */
+  --foreground: oklch(0.96 0.005 240);
+  --card: oklch(0.20 0.02 250); /* #162235 Dark navy-slate panel */
+  --card-foreground: oklch(0.96 0.005 240);
+  --popover: oklch(0.20 0.02 250);
+  --popover-foreground: oklch(0.96 0.005 240);
+  --primary: oklch(0.62 0.15 250); /* Vibrant Rail Navy */
+  --primary-foreground: oklch(0.12 0.02 250);
+  --secondary: oklch(0.26 0.02 250);
+  --secondary-foreground: oklch(0.96 0.005 240);
+  --muted: oklch(0.26 0.02 250);
+  --muted-foreground: oklch(0.72 0.015 240);
+  --accent: oklch(0.28 0.025 250);
+  --accent-foreground: oklch(0.96 0.005 240);
+  --destructive: oklch(0.55 0.20 25);
+  --destructive-foreground: oklch(0.98 0 0);
+  --border: oklch(0.32 0.02 250);
+  --input: oklch(0.30 0.02 250);
+  --ring: oklch(0.62 0.15 250);
 
-  --eng: oklch(0.78 0.16 78);
-  --snt: oklch(0.75 0.16 160);
-  --trd: oklch(0.74 0.13 230);
-  --joint: oklch(0.68 0.19 300);
-  --traffic: oklch(0.58 0.02 260);
-  --safe: oklch(0.75 0.16 160);
-  --warn: oklch(0.78 0.16 78);
-  --gradient-brain: linear-gradient(135deg, oklch(0.68 0.16 245), oklch(0.68 0.19 300));
-  --shadow-panel: 0 12px 40px -18px oklch(0.1 0.03 260 / 0.9);
+  --eng: oklch(0.68 0.16 60);
+  --snt: oklch(0.65 0.16 155);
+  --trd: oklch(0.65 0.14 250);
+  --joint: oklch(0.65 0.17 310);
+  --traffic: oklch(0.55 0.02 250);
+  --safe: oklch(0.65 0.16 155);
+  --warn: oklch(0.72 0.17 65);
+  --saffron: oklch(0.74 0.18 60);
+  --ir-navy: oklch(0.40 0.12 250);
+  --ir-maroon: oklch(0.50 0.18 25);
 
-  --chart-1: oklch(0.78 0.16 78);
-  --chart-2: oklch(0.75 0.16 160);
-  --chart-3: oklch(0.74 0.13 230);
-  --chart-4: oklch(0.68 0.19 300);
-  --chart-5: oklch(0.6 0.22 25);
-  --sidebar: oklch(0.215 0.02 260);
-  --sidebar-foreground: oklch(0.96 0.005 250);
-  --sidebar-primary: oklch(0.68 0.16 245);
-  --sidebar-primary-foreground: oklch(0.16 0.02 260);
-  --sidebar-accent: oklch(0.3 0.025 260);
-  --sidebar-accent-foreground: oklch(0.96 0.005 250);
-  --sidebar-border: oklch(0.36 0.025 260);
-  --sidebar-ring: oklch(0.68 0.16 245);
+  --gradient-brain: linear-gradient(135deg, #0f2744, #1b3d6b);
+  --shadow-panel: 0 1px 4px rgba(0, 0, 0, 0.4);
+
+  --chart-1: oklch(0.62 0.15 250);
+  --chart-2: oklch(0.65 0.16 155);
+  --chart-3: oklch(0.74 0.18 60);
+  --chart-4: oklch(0.55 0.20 25);
+  --chart-5: oklch(0.65 0.17 310);
+
+  --sidebar: oklch(0.18 0.02 250);
+  --sidebar-foreground: oklch(0.96 0.005 240);
+  --sidebar-primary: oklch(0.62 0.15 250);
+  --sidebar-primary-foreground: oklch(0.12 0.02 250);
+  --sidebar-accent: oklch(0.25 0.02 250);
+  --sidebar-accent-foreground: oklch(0.96 0.005 240);
+  --sidebar-border: oklch(0.30 0.02 250);
+  --sidebar-ring: oklch(0.62 0.15 250);
 }
 
 @layer base {
@@ -167,9 +176,47 @@
     border-color: var(--color-border);
   }
 
+  html {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans", Helvetica, Arial, sans-serif;
+  }
+
   body {
     background-color: var(--color-background);
     color: var(--color-foreground);
-    transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+    font-size: 0.875rem; /* 14px utilitarian base size */
+    line-height: 1.4;
   }
 }
+
+/* Government Portal Utility Classes */
+.tricolor-stripe {
+  background: linear-gradient(90deg, #FF9933 0%, #FF9933 33.3%, #FFFFFF 33.3%, #FFFFFF 66.6%, #138808 66.6%, #138808 100%);
+  height: 3px;
+}
+
+.govt-nav-link {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  font-size: 0.75rem;
+}
+
+.govt-card-header {
+  background-color: #003366;
+  color: #ffffff;
+  padding: 0.5rem 0.875rem;
+  font-weight: 600;
+  font-size: 0.8125rem;
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+  border-bottom: 2px solid #FF9933;
+}
+
+.govt-table-zebra tr:nth-child(even) {
+  background-color: rgba(0, 51, 102, 0.025);
+}
+
+.dark .govt-table-zebra tr:nth-child(even) {
+  background-color: rgba(255, 255, 255, 0.03);
+}
+

@@ -14,7 +14,7 @@ const THEME_STORAGE_KEY = "ir-abps-theme";
 
 export function ThemeProvider({
   children,
-  defaultTheme = "dark",
+  defaultTheme = "light",
 }: {
   children: ReactNode;
   defaultTheme?: Theme;

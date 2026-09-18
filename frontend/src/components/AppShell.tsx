@@ -10,12 +10,18 @@ import {
   Lock,
   LogOut,
   ShieldAlert,
+  ShieldCheck,
   Siren,
   TrainFront,
+  Building2,
+  CheckCircle2,
+  PhoneCall,
+  UserCheck,
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { useAbps } from "@/context/AbpsContext";
+import { useLanguage } from "@/context/LanguageContext";
 import { ROLES, type RoleId } from "@/lib/abps-data";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,21 +33,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ThemeToggle } from "./ThemeToggle";
-
-const NAV = [
-  { to: "/dashboard", label: "Control Dashboard", icon: LayoutDashboard },
-  { to: "/requests", label: "Requisition Portal", icon: ClipboardList },
-  { to: "/optimizer", label: "IR-ABPS Brain", icon: BrainCircuit },
-  { to: "/planner", label: "Gantt Planner", icon: CalendarRange },
-  { to: "/conflicts", label: "Conflicts & Approvals", icon: ShieldAlert },
-  { to: "/maintenance-tasks", label: "Maintenance Tasks", icon: ClipboardList },
-  { to: "/analytics", label: "Impact Analytics", icon: BarChart3 },
-  { to: "/emergency", label: "Emergency Blocking", icon: Siren },
-] as const;
+import { GovtTopUtilityBar } from "./GovtTopUtilityBar";
+import { GovtHeader } from "./GovtHeader";
+import { GovtSidebar } from "./GovtSidebar";
+import { GovtFooter } from "./GovtFooter";
+import { GovtNationalEmblem } from "./GovtNationalEmblem";
 
 export function AppShell({ children }: { children: ReactNode }) {
   const { role, signedIn, signIn, signOut } = useAbps();
+  const { t } = useLanguage();
   const location = useLocation();
 
   const [selectedRoleId, setSelectedRoleId] = useState<RoleId>("admin");
@@ -56,193 +56,161 @@ export function AppShell({ children }: { children: ReactNode }) {
       setErrorMsg("");
       setPassword("");
       signIn(selectedRoleId);
-      toast.success("Authenticated successfully.");
+      toast.success(t("Officer Authenticated Successfully", "अधिकारी सफलतापूर्वक प्रमाणित"), {
+        description: `${t("Welcome", "स्वागत है")}, ${role.name || "Authorized Controller"}.`,
+      });
     } else {
-      setErrorMsg("Incorrect password. Please enter the valid role password.");
+      setErrorMsg(t("Security credentials invalid. Please enter valid password (12345).", "सुरक्षा क्रेडेंशियल अमान्य हैं। कृपया सही पासवर्ड (12345) दर्ज करें।"));
     }
   };
 
-  // 1. NOT SIGNED IN & NOT ON HOME PAGE -> SHOW LOGIN SCREEN
+  // 1. NOT SIGNED IN & NOT ON HOME PAGE -> SHOW OFFICIAL RAILWAYS LOGIN PORTAL
   if (!signedIn && !isHomePage) {
     return (
-      <div className="relative flex min-h-screen items-center justify-center bg-background px-4 py-10">
-        <div className="absolute right-6 top-6">
-          <ThemeToggle variant="outline" size="sm" />
-        </div>
-        <div className="w-full max-w-md rounded-xl border border-border bg-card p-8 shadow-[var(--shadow-panel)]">
-          <div className="flex items-center gap-3">
-            <div className="rounded-lg p-2" style={{ background: "var(--gradient-brain)" }}>
-              <TrainFront className="size-6 text-primary-foreground" />
+      <div className="flex min-h-screen flex-col bg-[#f4f6f9] dark:bg-[#0b1320] text-foreground">
+        <GovtTopUtilityBar />
+        <GovtHeader />
+
+        <main id="main-content" className="flex flex-1 items-center justify-center px-4 py-12">
+          <div className="w-full max-w-lg border-2 border-[#003366] bg-white dark:bg-slate-950 p-0 shadow-sm rounded-[2px]">
+            {/* Header bar */}
+            <div className="bg-[#003366] px-6 py-4 text-white border-b-2 border-[#FF9933]">
+              <div className="flex items-center gap-3">
+                <GovtNationalEmblem className="size-10" />
+                <div>
+                  <h1 className="text-base font-bold uppercase tracking-wider">
+                    {t("Officer Authorization Desk", "अधिकारी प्रमाणीकरण डेस्क")}
+                  </h1>
+                  <p className="text-[11px] text-slate-300">
+                    {t("Indian Railways · Automatic Block Planning System (IR-ABPS)", "भारतीय रेल • स्वचालित ब्लॉक नियोजन प्रणाली (आईआर-एबीपीएस)")}
+                  </p>
+                </div>
+              </div>
             </div>
-            <div>
-              <h1 className="text-xl font-semibold">IR-ABPS Control Access</h1>
-              <p className="text-xs text-muted-foreground">
-                AI-Powered Automatic Block Planning System
-              </p>
+
+            {/* Form body */}
+            <div className="p-6">
+              <div className="mb-5 border-l-4 border-[#003366] bg-slate-100 dark:bg-slate-900 p-3 text-xs text-slate-700 dark:text-slate-300">
+                <p className="font-bold text-[#003366] dark:text-sky-400">
+                  {t("RESTRICTED ACCESS PORTAL", "प्रतिबंधित प्रवेश पोर्टल")}
+                </p>
+                <p className="text-[11px] mt-0.5">
+                  {t(
+                    "Authorized railway officers only (TMS, SMMS, TDMS, Section Controller, DRM/Sr.DOM, CRIS Admin).",
+                    "केवल अधिकृत रेलवे अधिकारी (टीएमएस, एसएमएमएस, टीडीएमएस, सेक्शन कंट्रोलर, डीआरएम, क्रिस एडमिन)।"
+                  )}
+                </p>
+              </div>
+
+              <form onSubmit={handleLogin} className="space-y-4">
+                <div className="space-y-1.5">
+                  <Label htmlFor="role-select" className="text-xs font-bold uppercase text-slate-700 dark:text-slate-300">
+                    {t("Select Designation / System Authority", "पदनाम / सिस्टम प्राधिकरण चुनें")}
+                  </Label>
+                  <Select
+                    value={selectedRoleId}
+                    onValueChange={(val) => setSelectedRoleId(val as RoleId)}
+                  >
+                    <SelectTrigger id="role-select" className="w-full bg-background border-slate-300 dark:border-slate-700 rounded-[2px] text-xs h-9 font-medium">
+                      <SelectValue placeholder="Select official designation..." />
+                    </SelectTrigger>
+                    <SelectContent className="rounded-[2px] border-slate-300 dark:border-slate-700">
+                      {Object.entries(ROLES).map(([id, r]) => (
+                        <SelectItem key={id} value={id} className="text-xs">
+                          <div className="flex flex-col py-0.5">
+                            <span className="font-bold text-slate-900 dark:text-slate-100">{r.title}</span>
+                            <span className="text-[10px] text-muted-foreground">{r.name} · {r.system}</span>
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="password-input" className="text-xs font-bold uppercase text-slate-700 dark:text-slate-300">
+                      {t("Officer Security Passcode", "अधिकारी सुरक्षा पासकोड")}
+                    </Label>
+                    <span className="text-[10px] text-muted-foreground font-mono">{t("DEMO PASSCODE: 12345", "डेमो पासकोड: 12345")}</span>
+                  </div>
+                  <div className="relative">
+                    <Input
+                      id="password-input"
+                      type="password"
+                      placeholder="•••••"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      className="rounded-[2px] bg-background border-slate-300 dark:border-slate-700 text-xs h-9 pl-9 font-mono"
+                      autoFocus
+                    />
+                    <Lock className="absolute left-3 top-2.5 size-3.5 text-muted-foreground" />
+                  </div>
+                  {errorMsg && (
+                    <p className="text-[11px] font-bold text-destructive mt-1">{errorMsg}</p>
+                  )}
+                </div>
+
+                <Button type="submit" className="w-full h-9 bg-[#003366] hover:bg-[#002244] text-white font-bold rounded-[2px] cursor-pointer">
+                  <KeyRound className="mr-2 size-4" /> {t("Authenticate & Access Console", "प्रमाणित करें एवं कंसोल खोलें")}
+                </Button>
+
+                <div className="pt-2 text-center border-t border-border/80 mt-4">
+                  <Link to="/" className="text-xs font-semibold text-[#003366] dark:text-sky-400 hover:underline">
+                    ← {t("Return to National Portal Homepage", "राष्ट्रीय पोर्टल मुख्य पृष्ठ पर लौटें")}
+                  </Link>
+                </div>
+              </form>
+            </div>
+
+            {/* Security warning footer */}
+            <div className="bg-slate-50 dark:bg-slate-900/80 px-6 py-2.5 border-t border-border text-center text-[10px] text-slate-500">
+              {t(
+                "National Informatics Centre (NIC) / CRIS Security Policy Compliant",
+                "राष्ट्रीय सूचना विज्ञान केंद्र (एनआईसी) / क्रिस सुरक्षा नीति के अनुरूप"
+              )}
             </div>
           </div>
+        </main>
 
-          <form onSubmit={handleLogin} className="mt-6 space-y-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="role-select">Select Access Role</Label>
-              <Select
-                value={selectedRoleId}
-                onValueChange={(val) => {
-                  setSelectedRoleId(val as RoleId);
-                  setErrorMsg("");
-                }}
-              >
-                <SelectTrigger id="role-select" className="w-full">
-                  <SelectValue placeholder="Select role" />
-                </SelectTrigger>
-                <SelectContent>
-                  {ROLES.map((r) => (
-                    <SelectItem key={r.id} value={r.id}>
-                      {r.title}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="role-password">Role Password</Label>
-              <div className="relative">
-                <Input
-                  id="role-password"
-                  type="password"
-                  value={password}
-                  onChange={(e) => {
-                    setPassword(e.target.value);
-                    if (errorMsg) setErrorMsg("");
-                  }}
-                  placeholder="Enter role password"
-                  className="pr-10"
-                  required
-                />
-                <Lock className="absolute right-3 top-2.5 size-4 text-muted-foreground" />
-              </div>
-              {errorMsg && <p className="text-xs font-medium text-destructive">{errorMsg}</p>}
-            </div>
-
-            <Button type="submit" className="w-full">
-              <KeyRound className="mr-2 size-4" /> Sign In
-            </Button>
-
-            <div className="pt-2 text-center">
-              <Link to="/" className="text-xs text-muted-foreground hover:text-foreground">
-                ← Back to Homepage
-              </Link>
-            </div>
-          </form>
-        </div>
+        <GovtFooter />
       </div>
     );
   }
 
-  // 2. PUBLIC LANDING HEADER FOR HOMEPAGE (ONLY VISIBLE WHEN LOGGED OUT)
-  if (isHomePage && !signedIn) {
+  // 2. AUTHENTICATED WORKSPACE: FULL-WIDTH WITH FLUSH LEFT-DOCKED SIDEBAR
+  if (signedIn) {
     return (
-      <div className="flex min-h-screen flex-col bg-background text-foreground">
-        <header className="sticky top-0 z-20 flex items-center justify-between border-b border-border bg-background/85 px-6 py-4 backdrop-blur">
-          <Link to="/" className="flex items-center gap-2">
-            <div className="rounded-md p-1.5" style={{ background: "var(--gradient-brain)" }}>
-              <TrainFront className="size-5 text-primary-foreground" />
-            </div>
-            <span className="font-semibold tracking-tight">IR-ABPS</span>
-          </Link>
-          <div className="flex items-center gap-3">
-            <ThemeToggle variant="ghost" size="sm" />
-            <Button asChild size="sm">
-              <Link to="/dashboard">Sign In to Dashboard</Link>
-            </Button>
-          </div>
-        </header>
-        <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-10 sm:px-6">{children}</main>
+      <div className="flex min-h-screen flex-col bg-[#f4f6f9] dark:bg-[#0b1320] text-foreground">
+        <GovtTopUtilityBar />
+        <GovtHeader />
+
+        <div className="flex flex-1 flex-col lg:flex-row w-full items-stretch min-h-0">
+          {/* Flush Left Sidebar */}
+          <GovtSidebar />
+
+          {/* Main Operational Workspace */}
+          <main id="main-content" className="flex-1 min-w-0 p-4 sm:p-6 lg:p-8 overflow-x-hidden">
+            {children}
+          </main>
+        </div>
+
+        <GovtFooter />
       </div>
     );
   }
 
-  // 3. AUTHENTICATED DASHBOARD LAYOUT
+  // 3. PUBLIC / LANDING PAGE
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <aside className="fixed inset-y-0 left-0 hidden w-64 flex-col border-r border-border bg-sidebar lg:flex">
-        <div className="flex items-center gap-2 border-b border-border px-5 py-4">
-          <div className="rounded-md p-1.5" style={{ background: "var(--gradient-brain)" }}>
-            <TrainFront className="size-5 text-primary-foreground" />
-          </div>
-          <div>
-            <p className="text-sm font-semibold leading-tight">IR-ABPS</p>
-            <p className="text-[11px] text-muted-foreground">Block Planning Suite</p>
-          </div>
-        </div>
-        <nav className="flex-1 space-y-1 px-3 py-4">
-          {NAV.map((n) => (
-            <Link
-              key={n.to}
-              to={n.to}
-              activeOptions={{ exact: n.to === "/dashboard" }}
-              activeProps={{ className: "bg-accent text-accent-foreground" }}
-              inactiveProps={{ className: "text-muted-foreground hover:bg-accent/60" }}
-              className="flex items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-colors"
-            >
-              <n.icon className="size-4" />
-              {n.label}
-            </Link>
-          ))}
-        </nav>
-        <div className="border-t border-border px-4 py-3 text-xs text-muted-foreground">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5">
-              <span className="relative flex size-2">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-safe opacity-75"></span>
-                <span className="relative inline-flex size-2 rounded-full bg-safe"></span>
-              </span>
-              COA feed active
-            </div>
-            <span className="font-medium text-foreground">NDLS → BSB</span>
-          </div>
-        </div>
-      </aside>
+    <div className="flex min-h-screen flex-col bg-[#f4f6f9] dark:bg-[#0b1320] text-foreground">
+      <GovtTopUtilityBar />
+      <GovtHeader />
 
-      <div className="lg:pl-64">
-        <header className="sticky top-0 z-20 border-b border-border bg-background/85 backdrop-blur">
-          <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6">
-            <div>
-              <p className="text-sm font-semibold uppercase text-foreground">{role.title}</p>
-              <p className="text-xs text-muted-foreground">
-                {role.name} · Access: {role.system}
-              </p>
-            </div>
-            <div className="flex items-center gap-3 sm:gap-4">
-              <div className="hidden items-center gap-1.5 rounded-full border border-border bg-secondary/50 px-3 py-1 text-xs font-medium text-safe sm:flex">
-                <span className="relative flex size-2">
-                  <span className="relative inline-flex size-2 rounded-full bg-safe"></span>
-                </span>
-                SYSTEM OPERATIONAL
-              </div>
-              <ThemeToggle variant="outline" size="sm" />
-              <Button size="sm" variant="ghost" onClick={signOut}>
-                <LogOut className="size-4" /> Sign Out
-              </Button>
-            </div>
-          </div>
-          <nav className="flex gap-1 overflow-x-auto border-t border-border px-3 py-2 lg:hidden">
-            {NAV.map((n) => (
-              <Link
-                key={n.to}
-                to={n.to}
-                activeOptions={{ exact: n.to === "/dashboard" }}
-                activeProps={{ className: "bg-accent text-accent-foreground" }}
-                className="whitespace-nowrap rounded-md px-3 py-1.5 text-xs text-muted-foreground"
-              >
-                {n.label}
-              </Link>
-            ))}
-          </nav>
-        </header>
-        <main className="px-4 py-6 sm:px-6">{children}</main>
-      </div>
+      <main id="main-content" className="w-full flex-1 px-4 py-8 sm:px-6 lg:px-8 max-w-[1720px] mx-auto">
+        {children}
+      </main>
+
+      <GovtFooter />
     </div>
   );
 }
@@ -257,19 +225,33 @@ export function PageHeader({
   action?: ReactNode;
 }) {
   return (
-    <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
-        <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{subtitle}</p>
+    <div className="mb-6 border-b-2 border-[#003366] bg-white dark:bg-slate-900 p-5 rounded-[2px] border border-border shadow-xs">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <span className="bg-[#003366] text-white text-[10px] font-extrabold px-2.5 py-0.5 rounded-[2px] uppercase tracking-wider">
+              INDIAN RAILWAYS
+            </span>
+            <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
+              IR-ABPS CONTROL MODULE
+            </span>
+          </div>
+          <h1 className="text-xl sm:text-2xl font-black uppercase tracking-tight text-[#003366] dark:text-sky-400">
+            {title}
+          </h1>
+          <p className="mt-1 max-w-4xl text-xs sm:text-sm text-slate-600 dark:text-slate-400 leading-relaxed font-medium">
+            {subtitle}
+          </p>
+        </div>
+        {action && <div className="flex items-center gap-3">{action}</div>}
       </div>
-      {action}
     </div>
   );
 }
 
 export const deptColor: Record<string, string> = {
-  TMS: "bg-eng/20 text-eng border-eng/40",
-  SMMS: "bg-snt/20 text-snt border-snt/40",
-  TDMS: "bg-trd/20 text-trd border-trd/40",
-  JOINT: "bg-joint/20 text-joint border-joint/40",
+  TMS: "bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-950/60 dark:text-amber-200 dark:border-amber-800",
+  SMMS: "bg-emerald-100 text-emerald-900 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-200 dark:border-emerald-800",
+  TDMS: "bg-blue-100 text-blue-900 border-blue-300 dark:bg-blue-950/60 dark:text-blue-200 dark:border-blue-800",
+  JOINT: "bg-purple-100 text-purple-900 border-purple-300 dark:bg-purple-950/60 dark:text-purple-200 dark:border-purple-800",
 };

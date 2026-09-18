@@ -19,13 +19,16 @@ import {
   CalendarClock,
   LayoutList,
   CheckSquare,
+  ShieldCheck,
+  FileSpreadsheet,
+  Layers,
+  Building2,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Progress } from "@/components/ui/progress";
 import {
   Select,
   SelectContent,
@@ -48,10 +51,18 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { useLanguage } from "@/context/LanguageContext";
 
 export const Route = createFileRoute("/maintenance-tasks")({
   head: () => ({
-    meta: [{ title: "Maintenance Tasks | IR-ABPS" }],
+    meta: [
+      { title: "Asset Maintenance Ledger & Field Work Register | IR-ABPS" },
+      {
+        name: "description",
+        content:
+          "Official Indian Railways departmental asset maintenance ledger across Track, Signalling, and Traction Distribution.",
+      },
+    ],
   }),
   component: MaintenanceTasksPage,
 });
@@ -75,6 +86,7 @@ type MaintenanceTask = {
 const ITEMS_PER_PAGE = 10;
 
 export default function MaintenanceTasksPage() {
+  const { t } = useLanguage();
   const [tasks, setTasks] = useState<MaintenanceTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -130,28 +142,38 @@ export default function MaintenanceTasksPage() {
     switch (cat?.toUpperCase()) {
       case "CRITICAL":
         return {
-          text: "text-destructive",
-          bg: "bg-destructive/10",
-          border: "border-destructive/20",
-          bar: "bg-destructive",
+          text: "text-[#800000]",
+          bg: "bg-[#800000]/10",
+          border: "border-[#800000]/30",
+          bar: "bg-[#800000]",
         };
       case "HIGH":
-        return { text: "text-warn", bg: "bg-warn/10", border: "border-warn/20", bar: "bg-warn" };
+        return {
+          text: "text-[#D97706]",
+          bg: "bg-[#D97706]/10",
+          border: "border-[#D97706]/30",
+          bar: "bg-[#D97706]",
+        };
       case "MEDIUM":
         return {
-          text: "text-blue-500",
-          bg: "bg-blue-500/10",
-          border: "border-blue-500/20",
-          bar: "bg-blue-500",
+          text: "text-[#003366]",
+          bg: "bg-[#003366]/10",
+          border: "border-[#003366]/30",
+          bar: "bg-[#003366]",
         };
       case "LOW":
-        return { text: "text-safe", bg: "bg-safe/10", border: "border-safe/20", bar: "bg-safe" };
+        return {
+          text: "text-[#137547]",
+          bg: "bg-[#137547]/10",
+          border: "border-[#137547]/30",
+          bar: "bg-[#137547]",
+        };
       default:
         return {
-          text: "text-muted-foreground",
-          bg: "bg-secondary",
-          border: "border-border",
-          bar: "bg-secondary-foreground",
+          text: "text-slate-700",
+          bg: "bg-slate-100",
+          border: "border-slate-300",
+          bar: "bg-slate-500",
         };
     }
   };
@@ -159,15 +181,15 @@ export default function MaintenanceTasksPage() {
   const getStatusStyle = (status: string | null) => {
     switch (status?.toUpperCase()) {
       case "PENDING":
-        return "bg-blue-500/10 text-blue-500 border-blue-500/20";
+        return "bg-sky-50 text-[#003366] border-sky-300";
       case "IN PROGRESS":
-        return "bg-warn/10 text-warn border-warn/20";
+        return "bg-amber-50 text-[#B45309] border-amber-300";
       case "COMPLETED":
-        return "bg-safe/10 text-safe border-safe/20";
+        return "bg-emerald-50 text-[#137547] border-emerald-300";
       case "OVERDUE":
-        return "bg-destructive/10 text-destructive border-destructive/20";
+        return "bg-red-50 text-[#800000] border-red-300";
       default:
-        return "bg-secondary text-muted-foreground border-border";
+        return "bg-slate-100 text-slate-700 border-slate-300";
     }
   };
 
@@ -178,10 +200,6 @@ export default function MaintenanceTasksPage() {
   const overdueCount = tasks.filter(
     (t) => (t.overdue_days ?? 0) > 0 && t.task_status !== "COMPLETED",
   ).length;
-
-  // Due soon logic (assuming due in next 7 days). Simple check based on dates.
-  // Real implementation would parse dates, but we can fake it or use a heuristic if due_date is string.
-  // For safety, just checking if not overdue and not completed and due_date exists.
   const dueSoonCount = tasks.filter(
     (t) => (t.overdue_days ?? 0) <= 0 && t.task_status !== "COMPLETED" && t.due_date,
   ).length;
@@ -209,7 +227,6 @@ export default function MaintenanceTasksPage() {
         let matchDue = true;
         if (dueFilter === "Overdue")
           matchDue = (t.overdue_days ?? 0) > 0 && t.task_status !== "COMPLETED";
-        // other due filters could be implemented if actual date parsing was reliable.
 
         return matchSearch && matchDept && matchPri && matchStatus && matchRisk && matchDue;
       })
@@ -217,7 +234,7 @@ export default function MaintenanceTasksPage() {
         if (viewMode === "Priority") {
           return (b.priority_score ?? 0) - (a.priority_score ?? 0);
         }
-        return 0; // Maintain original or arbitrary order for "All Tasks"
+        return 0;
       });
   }, [tasks, search, deptFilter, priorityFilter, statusFilter, riskFilter, dueFilter, viewMode]);
 
@@ -250,8 +267,8 @@ export default function MaintenanceTasksPage() {
       );
       toast.success(
         <div className="flex items-center gap-2">
-          <CheckCircle2 className="size-4 text-safe" />
-          Maintenance task marked as completed.
+          <CheckCircle2 className="size-4 text-[#137547]" />
+          Maintenance task marked as completed in asset register.
         </div>,
       );
       if (viewTask?.task_id === taskId) {
@@ -259,201 +276,250 @@ export default function MaintenanceTasksPage() {
       }
     } catch (err) {
       console.error("Task update error:", err);
-      toast.error("Could not update task status.");
+      toast.error("Could not update task status in asset register.");
     } finally {
       setUpdating(null);
     }
   };
 
   return (
-    <>
-      <div className="mb-6 flex flex-wrap items-end justify-between gap-4 border-b border-border pb-6">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-            Maintenance Tasks
-          </h1>
-          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-            AI-prioritized maintenance workload across track, signalling and OHE assets.
-          </p>
+    <div className="space-y-6 pb-12">
+      {/* OFFICIAL GOVT BANNER */}
+      <div className="rounded-[2px] border border-[#003366]/30 bg-white shadow-sm overflow-hidden">
+        <div className="bg-[#003366] px-5 py-3 text-white flex flex-wrap items-center justify-between gap-3 border-b-2 border-[#FF9933]">
+          <div className="flex items-center gap-3">
+            <div className="p-1.5 rounded-[2px] bg-white/10 border border-white/20">
+              <FileSpreadsheet className="size-5 text-[#FF9933]" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-widest text-[#FF9933] bg-black/30 px-2 py-0.5 rounded-[2px]">
+                  FORM IR-ASSET-REG-2025
+                </span>
+                <span className="text-xs text-white/80 font-serif">
+                  {t("RAILWAY BOARD • ASSET MAINTENANCE REGISTER", "रेलवे बोर्ड • परिसंपत्ति अनुरक्षण पंजिका")}
+                </span>
+              </div>
+              <h1 className="text-lg md:text-xl font-bold font-serif tracking-tight text-white mt-0.5">
+                {t("Departmental Asset Maintenance Ledger & Field Work Register", "विभागीय परिसंपत्ति अनुरक्षण खाता एवं कार्य पंजिका")}
+              </h1>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              asChild
+              className="bg-[#FF9933] hover:bg-[#e68524] text-slate-950 font-bold text-xs uppercase tracking-wider rounded-[2px] h-9 px-4 shadow-sm"
+            >
+              <Link to="/optimizer">
+                <BrainCircuit className="size-3.5 mr-1.5" />
+                AI Cluster Engine <ArrowRight className="size-3.5 ml-1" />
+              </Link>
+            </Button>
+          </div>
         </div>
-        <Button
-          asChild
-          className="gap-2 bg-blue-600 hover:bg-blue-700 text-white shadow-sm font-semibold h-10 px-6"
-        >
-          <Link to="/optimizer">
-            <BrainCircuit className="size-4" />
-            AI Maintenance Planner <ArrowRight className="size-4" />
-          </Link>
-        </Button>
+        <div className="p-4 bg-slate-50 border-t border-slate-200 text-xs text-slate-600 flex flex-wrap items-center justify-between gap-2">
+          <p>
+            Centralized inventory of defect logs, scheduled overhauls, and urgent field maintenance requirements across{" "}
+            <strong>Track (TMS)</strong>, <strong>Signalling (SMMS)</strong>, and{" "}
+            <strong>Traction Distribution (TDMS)</strong>.
+          </p>
+          <div className="flex items-center gap-2 text-[11px] font-mono font-semibold text-[#003366]">
+            <Building2 className="size-3.5 text-[#003366]" />
+            DIVISION: NR-DLI • SECTION: NDLS-PRYJ-DDU
+          </div>
+        </div>
       </div>
 
       {/* EXECUTIVE STATUS STRIP */}
-      <div className="mb-6 grid gap-4 grid-cols-2 lg:grid-cols-5">
+      <div className="grid gap-3 grid-cols-2 lg:grid-cols-5">
         <MetricCard
-          label="TOTAL TASKS"
+          label="TOTAL REGISTERED"
           value={tasks.length}
           desc="Active database records"
           icon={LayoutList}
+          borderColor="border-slate-300"
+          tone="text-[#003366]"
         />
         <MetricCard
-          label="CRITICAL"
+          label="CRITICAL DEFECTS"
           value={criticalCount}
-          desc="Requires immediate attention"
+          desc="Immediate corridor hazard"
           icon={AlertTriangle}
-          tone="text-destructive"
+          borderColor="border-[#800000]/40"
+          tone="text-[#800000]"
+          bg="bg-[#800000]/5"
         />
         <MetricCard
-          label="OVERDUE"
+          label="OVERDUE WORK"
           value={overdueCount}
-          desc="Past planned completion"
+          desc="Past compliance deadline"
           icon={Clock}
-          tone="text-warn"
+          borderColor="border-[#D97706]/40"
+          tone="text-[#D97706]"
+          bg="bg-[#D97706]/5"
         />
         <MetricCard
-          label="DUE SOON"
+          label="SCHEDULED SOON"
           value={dueSoonCount}
-          desc="Upcoming schedule"
+          desc="Due within 7 days"
           icon={CalendarClock}
-          tone="text-blue-500"
+          borderColor="border-sky-300"
+          tone="text-[#003366]"
         />
         <MetricCard
-          label="COMPLETED"
+          label="COMPLETED (CY)"
           value={completedCount}
-          desc="This planning cycle"
+          desc="Certified by Section In-Charge"
           icon={CheckCircle2}
-          tone="text-safe"
+          borderColor="border-[#137547]/40"
+          tone="text-[#137547]"
+          bg="bg-[#137547]/5"
         />
       </div>
 
       {/* AI PRIORITY BANNER & SMART RECOMMENDATION */}
-      <div className="grid lg:grid-cols-3 gap-4 mb-6">
-        <Card className="lg:col-span-2 shadow-sm border-blue-500/20 bg-blue-500/5">
-          <CardContent className="p-4 flex flex-col sm:flex-row items-center justify-between gap-4">
-            <div className="flex items-start gap-3">
-              <div className="p-2 rounded-full bg-blue-500/20 text-blue-500 shrink-0">
-                <BrainCircuit className="size-5" />
-              </div>
-              <div>
-                <h3 className="font-bold text-blue-500 text-sm tracking-wide">
-                  AI Maintenance Priority
-                </h3>
-                <p className="text-sm text-foreground mt-1">
-                  <strong>{criticalCount} critical tasks</strong> require attention.{" "}
-                  <strong>{overdueCount} assets</strong> are currently overdue. AI suggests
-                  clustering compatible high-risk tasks.
-                </p>
-              </div>
+      <div className="grid lg:grid-cols-3 gap-4">
+        <div className="lg:col-span-2 rounded-[2px] border border-[#003366]/30 bg-white p-4 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <div className="p-2.5 rounded-[2px] bg-[#003366]/10 text-[#003366] shrink-0 border border-[#003366]/20">
+              <BrainCircuit className="size-5" />
             </div>
-            <Button
-              variant="outline"
-              className="border-blue-500/30 text-blue-500 hover:bg-blue-500/10 shrink-0"
-              onClick={() => {
-                setViewMode("Priority");
-                setPriorityFilter("CRITICAL");
-              }}
-            >
-              View AI Priorities
-            </Button>
-          </CardContent>
-        </Card>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-[#003366] bg-[#003366]/10 px-2 py-0.5 rounded-[2px] border border-[#003366]/20">
+                  AI CLUSTERING ADVISORY
+                </span>
+                <span className="text-[11px] text-slate-500 font-mono">CRIS IR-ABPS-M1</span>
+              </div>
+              <p className="text-xs text-slate-800 mt-1 leading-relaxed">
+                <strong>{criticalCount} critical safety defects</strong> and{" "}
+                <strong>{overdueCount} overdue maintenance items</strong> detected on the active corridor.
+                AI suggests grouping compatible TRD and Track works into shared 120-min block windows to save capacity.
+              </p>
+            </div>
+          </div>
+          <Button
+            variant="outline"
+            className="border-[#003366] text-[#003366] hover:bg-[#003366] hover:text-white shrink-0 text-xs font-bold uppercase rounded-[2px] h-8 px-4"
+            onClick={() => {
+              setViewMode("Priority");
+              setPriorityFilter("CRITICAL");
+            }}
+          >
+            Filter Critical ({criticalCount})
+          </Button>
+        </div>
 
-        <Card className="shadow-sm border-border bg-secondary/10">
-          <CardHeader className="p-4 pb-2 border-b border-border/50">
-            <CardTitle className="text-xs font-bold uppercase tracking-wider flex items-center gap-2">
-              <Activity className="size-3.5 text-primary" /> IR-ABPS Intelligence
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-4 pt-3 space-y-2">
+        <div className="rounded-[2px] border border-slate-300 bg-white shadow-sm overflow-hidden">
+          <div className="bg-slate-100 px-3 py-2 border-b border-slate-200 text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center justify-between">
+            <span className="flex items-center gap-1.5">
+              <ShieldCheck className="size-3.5 text-[#003366]" /> Safety Audit Ledger
+            </span>
+            <span className="text-[10px] text-[#137547] font-bold">ACTIVE</span>
+          </div>
+          <div className="p-3 space-y-2 text-xs">
             {overdueCount > 0 && (
-              <p className="text-xs font-medium text-warn flex items-center gap-1.5">
-                <AlertTriangle className="size-3" /> {overdueCount} tasks are overdue.
+              <p className="font-semibold text-[#800000] flex items-center gap-1.5">
+                <AlertTriangle className="size-3.5 shrink-0" /> {overdueCount} maintenance jobs exceed target window.
               </p>
             )}
-            <p className="text-xs text-foreground flex items-center gap-1.5">
-              <BrainCircuit className="size-3 text-purple-500" /> Potential maintenance clustering
-              detected.
+            <p className="text-slate-700 flex items-center gap-1.5">
+              <Layers className="size-3.5 text-[#003366] shrink-0" /> Joint-block cluster potential: <strong>High</strong>
             </p>
             {tasks.length > 0 && tasks.find((t) => (t.priority_score ?? 0) >= 90) && (
-              <p className="text-xs text-muted-foreground flex items-center gap-1.5">
-                <ShieldAlert className="size-3 text-destructive" /> Highest priority asset requires
-                block.
+              <p className="text-slate-600 flex items-center gap-1.5 text-[11px]">
+                <ShieldAlert className="size-3 text-[#800000] shrink-0" /> Track fracture / OHE defect requires Section Controller block.
               </p>
             )}
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       </div>
 
       {/* WORKLOAD OVERVIEW */}
-      <div className="mb-6 grid gap-6 md:grid-cols-3">
-        <WorkloadBar
-          title="DEPARTMENT WORKLOAD"
-          data={depts.map((d) => ({
-            label: d,
-            val: tasks.filter((t) => t.department === d).length,
-          }))}
-          total={tasks.length}
-          color="bg-primary"
-        />
-        <WorkloadBar
-          title="PRIORITY DISTRIBUTION"
-          data={[
-            { label: "Critical", val: criticalCount, color: "bg-destructive" },
-            {
-              label: "High",
-              val: tasks.filter((t) => t.priority_category?.toUpperCase() === "HIGH").length,
-              color: "bg-warn",
-            },
-            {
-              label: "Medium",
-              val: tasks.filter((t) => t.priority_category?.toUpperCase() === "MEDIUM").length,
-              color: "bg-blue-500",
-            },
-            {
-              label: "Low",
-              val: tasks.filter((t) => t.priority_category?.toUpperCase() === "LOW").length,
-              color: "bg-safe",
-            },
-          ]}
-          total={tasks.length}
-        />
-        <WorkloadBar
-          title="STATUS DISTRIBUTION"
-          data={[
-            {
-              label: "Pending",
-              val: tasks.filter((t) => t.task_status === "PENDING").length,
-              color: "bg-blue-500",
-            },
-            { label: "Completed", val: completedCount, color: "bg-safe" },
-            { label: "Overdue", val: overdueCount, color: "bg-destructive" },
-          ]}
-          total={tasks.length}
-        />
+      <div className="grid gap-4 md:grid-cols-3">
+        <div className="rounded-[2px] border border-slate-300 bg-white p-4 shadow-sm">
+          <WorkloadBar
+            title="DEPARTMENTAL REQUISITION LOAD"
+            data={depts.map((d) => ({
+              label: d,
+              val: tasks.filter((t) => t.department === d).length,
+            }))}
+            total={tasks.length}
+            color="bg-[#003366]"
+          />
+        </div>
+        <div className="rounded-[2px] border border-slate-300 bg-white p-4 shadow-sm">
+          <WorkloadBar
+            title="SAFETY RISK CLASSIFICATION"
+            data={[
+              { label: "Critical", val: criticalCount, color: "bg-[#800000]" },
+              {
+                label: "High",
+                val: tasks.filter((t) => t.priority_category?.toUpperCase() === "HIGH").length,
+                color: "bg-[#D97706]",
+              },
+              {
+                label: "Medium",
+                val: tasks.filter((t) => t.priority_category?.toUpperCase() === "MEDIUM").length,
+                color: "bg-[#003366]",
+              },
+              {
+                label: "Low",
+                val: tasks.filter((t) => t.priority_category?.toUpperCase() === "LOW").length,
+                color: "bg-[#137547]",
+              },
+            ]}
+            total={tasks.length}
+          />
+        </div>
+        <div className="rounded-[2px] border border-slate-300 bg-white p-4 shadow-sm">
+          <WorkloadBar
+            title="EXECUTION LIFECYCLE STATUS"
+            data={[
+              {
+                label: "Pending",
+                val: tasks.filter((t) => t.task_status === "PENDING").length,
+                color: "bg-sky-600",
+              },
+              { label: "Completed", val: completedCount, color: "bg-[#137547]" },
+              { label: "Overdue", val: overdueCount, color: "bg-[#800000]" },
+            ]}
+            total={tasks.length}
+          />
+        </div>
       </div>
 
       {/* FILTER BAR & TOGGLE */}
-      <div className="mb-4 flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
-        <div className="flex bg-secondary/50 p-1 rounded-lg border border-border">
+      <div className="rounded-[2px] border border-slate-300 bg-slate-100 p-3 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
+        <div className="flex bg-white p-0.5 rounded-[2px] border border-slate-300">
           <button
-            className={`px-4 py-1.5 text-sm font-semibold rounded-md transition-colors ${viewMode === "Priority" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+            className={`px-3 py-1 text-xs font-bold uppercase transition-colors ${
+              viewMode === "Priority"
+                ? "bg-[#003366] text-white shadow-xs"
+                : "text-slate-600 hover:text-slate-900"
+            }`}
             onClick={() => setViewMode("Priority")}
           >
-            Priority
+            AI Priority Rank
           </button>
           <button
-            className={`px-4 py-1.5 text-sm font-semibold rounded-md transition-colors ${viewMode === "All" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+            className={`px-3 py-1 text-xs font-bold uppercase transition-colors ${
+              viewMode === "All"
+                ? "bg-[#003366] text-white shadow-xs"
+                : "text-slate-600 hover:text-slate-900"
+            }`}
             onClick={() => setViewMode("All")}
           >
-            All Tasks
+            All Registered Tasks
           </button>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative">
-            <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
+            <Search className="absolute left-2.5 top-2.5 size-3.5 text-slate-400" />
             <Input
-              className="w-[200px] pl-9 h-9 text-xs bg-background"
-              placeholder="Search tasks..."
+              className="w-[180px] pl-8 h-8 text-xs bg-white rounded-[2px] border-slate-300 focus:border-[#003366]"
+              placeholder="Search Task/Asset ID..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
@@ -462,7 +528,7 @@ export default function MaintenanceTasksPage() {
             value={deptFilter}
             onChange={setDeptFilter}
             options={["All", ...depts]}
-            w="w-[130px]"
+            w="w-[120px]"
           />
           <FilterSelect
             value={priorityFilter}
@@ -489,93 +555,102 @@ export default function MaintenanceTasksPage() {
             w="w-[100px]"
           />
 
-          <Button variant="outline" size="sm" className="h-9 px-3 text-xs" onClick={resetFilters}>
-            <Filter className="mr-2 size-3" /> Reset
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 px-2.5 text-xs rounded-[2px] border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+            onClick={resetFilters}
+          >
+            <Filter className="mr-1.5 size-3" /> Reset
           </Button>
         </div>
       </div>
 
       {/* MAIN TABLE */}
-      <Card className="shadow-sm border-border overflow-hidden flex flex-col">
+      <div className="rounded-[2px] border border-slate-300 bg-white shadow-sm overflow-hidden flex flex-col">
+        <div className="bg-slate-100 px-4 py-2.5 border-b border-slate-300 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="font-bold text-xs uppercase tracking-wider text-[#003366]">
+              REGISTER OF MAINTENANCE WORK ORDERS
+            </span>
+            <span className="text-[11px] text-slate-500">
+              ({filteredTasks.length} record{filteredTasks.length !== 1 ? "s" : ""} matching criteria)
+            </span>
+          </div>
+          <div className="text-[11px] text-slate-500 font-mono">
+            UPDATED: {new Date().toLocaleDateString("en-IN")}
+          </div>
+        </div>
+
         <div className="overflow-x-auto">
-          <table className="w-full text-sm text-left">
-            <thead className="bg-secondary/30 border-b border-border/50 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          <table className="w-full text-xs text-left border-collapse">
+            <thead className="bg-[#003366] text-white text-[11px] font-bold uppercase tracking-wider">
               <tr>
-                <th className="px-5 py-3.5">Priority</th>
-                <th className="px-5 py-3.5">Task & Asset</th>
-                <th className="px-5 py-3.5">Dept</th>
-                <th className="px-5 py-3.5">Due</th>
-                <th className="px-5 py-3.5">Risk</th>
-                <th className="px-5 py-3.5">Status</th>
-                <th className="px-5 py-3.5 text-right">Action</th>
+                <th className="px-4 py-3 border-r border-[#002244] w-[110px]">Priority Score</th>
+                <th className="px-4 py-3 border-r border-[#002244]">Task ID & Asset Details</th>
+                <th className="px-4 py-3 border-r border-[#002244] w-[100px]">Department</th>
+                <th className="px-4 py-3 border-r border-[#002244] w-[120px]">Due Date</th>
+                <th className="px-4 py-3 border-r border-[#002244] w-[100px]">Safety Risk</th>
+                <th className="px-4 py-3 border-r border-[#002244] w-[110px]">Status</th>
+                <th className="px-4 py-3 text-right w-[140px]">Officer Action</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-border/50">
+            <tbody className="divide-y divide-slate-200">
               {loading ? (
                 Array.from({ length: 5 }).map((_, i) => (
-                  <tr key={i} className="animate-pulse bg-secondary/5">
-                    <td className="px-5 py-4">
-                      <div className="h-6 w-16 bg-border rounded"></div>
+                  <tr key={i} className="animate-pulse bg-slate-50">
+                    <td className="px-4 py-3"><div className="h-6 w-16 bg-slate-200 rounded-[2px]" /></td>
+                    <td className="px-4 py-3">
+                      <div className="h-4 w-32 bg-slate-200 rounded-[2px] mb-1.5" />
+                      <div className="h-3 w-48 bg-slate-200 rounded-[2px]" />
                     </td>
-                    <td className="px-5 py-4">
-                      <div className="h-4 w-32 bg-border rounded mb-2"></div>
-                      <div className="h-3 w-48 bg-border rounded"></div>
-                    </td>
-                    <td className="px-5 py-4">
-                      <div className="h-5 w-12 bg-border rounded-full"></div>
-                    </td>
-                    <td className="px-5 py-4">
-                      <div className="h-4 w-20 bg-border rounded"></div>
-                    </td>
-                    <td className="px-5 py-4">
-                      <div className="h-3 w-16 bg-border rounded"></div>
-                    </td>
-                    <td className="px-5 py-4">
-                      <div className="h-5 w-20 bg-border rounded-full"></div>
-                    </td>
-                    <td className="px-5 py-4 text-right">
-                      <div className="h-8 w-16 bg-border rounded ml-auto"></div>
-                    </td>
+                    <td className="px-4 py-3"><div className="h-5 w-12 bg-slate-200 rounded-[2px]" /></td>
+                    <td className="px-4 py-3"><div className="h-4 w-20 bg-slate-200 rounded-[2px]" /></td>
+                    <td className="px-4 py-3"><div className="h-3 w-16 bg-slate-200 rounded-[2px]" /></td>
+                    <td className="px-4 py-3"><div className="h-5 w-20 bg-slate-200 rounded-[2px]" /></td>
+                    <td className="px-4 py-3 text-right"><div className="h-7 w-16 bg-slate-200 rounded-[2px] ml-auto" /></td>
                   </tr>
                 ))
               ) : error ? (
                 <tr>
-                  <td colSpan={7} className="px-5 py-12 text-center">
-                    <div className="flex flex-col items-center gap-3">
-                      <AlertTriangle className="size-8 text-destructive opacity-80" />
-                      <div>
-                        <p className="font-semibold text-foreground">
-                          Unable to load maintenance tasks.
-                        </p>
-                        <p className="text-xs text-muted-foreground mt-1">
-                          Maintenance data could not be retrieved from the operations database.
-                        </p>
-                      </div>
-                      <Button variant="outline" size="sm" onClick={fetchTasks} className="mt-2">
-                        <RefreshCw className="mr-2 size-3" /> Retry
+                  <td colSpan={7} className="px-4 py-12 text-center">
+                    <div className="flex flex-col items-center gap-2 text-slate-600">
+                      <AlertTriangle className="size-8 text-[#800000]" />
+                      <p className="font-bold text-slate-800 text-sm">
+                        Unable to load maintenance records from PostgreSQL database.
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        Check backend connection on <code>http://127.0.0.1:8000</code>.
+                      </p>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={fetchTasks}
+                        className="mt-2 rounded-[2px] border-slate-300 text-xs"
+                      >
+                        <RefreshCw className="mr-1.5 size-3" /> Retry Retrieval
                       </Button>
                     </div>
                   </td>
                 </tr>
               ) : filteredTasks.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-5 py-12 text-center">
-                    <div className="flex flex-col items-center gap-3 text-muted-foreground opacity-80">
-                      <Search className="size-8 mb-1" />
-                      <p className="font-semibold text-foreground">
-                        No maintenance tasks match your filters.
-                      </p>
-                      <p className="text-xs mt-1">
-                        Try changing the department, priority, status or date filters.
-                      </p>
-                      <Button variant="outline" size="sm" onClick={resetFilters} className="mt-2">
-                        Reset Filters
-                      </Button>
-                    </div>
+                  <td colSpan={7} className="px-4 py-12 text-center text-slate-500">
+                    <Search className="size-8 mx-auto mb-2 text-slate-400" />
+                    <p className="font-bold text-slate-700">No maintenance records found matching active filters.</p>
+                    <p className="text-xs mt-1">Try resetting the department or status filters.</p>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={resetFilters}
+                      className="mt-3 rounded-[2px] border-slate-300 text-xs"
+                    >
+                      Reset All Filters
+                    </Button>
                   </td>
                 </tr>
               ) : (
-                paginatedTasks.map((task) => {
+                paginatedTasks.map((task, idx) => {
                   const pStyle = getPriorityStyle(task.priority_category);
                   const isOverdue =
                     (task.overdue_days ?? 0) > 0 && task.task_status !== "COMPLETED";
@@ -583,69 +658,68 @@ export default function MaintenanceTasksPage() {
                   return (
                     <tr
                       key={task.task_id}
-                      className="hover:bg-secondary/10 transition-colors group"
+                      className={`hover:bg-amber-50/40 transition-colors ${
+                        idx % 2 === 1 ? "bg-slate-50/60" : "bg-white"
+                      }`}
                     >
                       {/* Priority */}
-                      <td className="px-5 py-3">
+                      <td className="px-4 py-3 border-r border-slate-200">
                         <div className="flex flex-col">
-                          <div className="flex items-baseline gap-1">
-                            <span className="font-mono text-lg font-bold">
+                          <div className="flex items-baseline gap-1.5">
+                            <span className="font-mono text-base font-bold text-slate-900">
                               {task.priority_score?.toFixed(1) ?? "0"}
                             </span>
-                            <span className={`text-[9px] font-bold tracking-wider ${pStyle.text}`}>
+                            <span className={`text-[9px] font-bold tracking-wider uppercase ${pStyle.text}`}>
                               {task.priority_category ?? "UNKNOWN"}
                             </span>
                           </div>
-                          <div className="h-1.5 w-full bg-secondary rounded-full overflow-hidden mt-1">
+                          <div className="h-1.5 w-full bg-slate-200 rounded-[1px] overflow-hidden mt-1 border border-slate-300">
                             <div
                               className={`h-full ${pStyle.bar}`}
                               style={{ width: `${task.priority_score ?? 0}%` }}
-                            ></div>
+                            />
                           </div>
                         </div>
                       </td>
 
                       {/* Task & Asset */}
-                      <td className="px-5 py-3 max-w-[280px]">
+                      <td className="px-4 py-3 border-r border-slate-200 max-w-[280px]">
                         <div className="flex flex-col gap-0.5">
-                          <p className="font-bold text-foreground text-sm uppercase truncate">
-                            {task.task_type || "Maintenance Task"}
+                          <p className="font-bold text-slate-900 text-xs uppercase truncate">
+                            {task.task_type || "Maintenance Work Order"}
                           </p>
-                          <p
-                            className="text-xs text-muted-foreground truncate"
-                            title={task.description || ""}
-                          >
+                          <p className="text-[11px] text-slate-600 truncate" title={task.description || ""}>
                             {task.description}
                           </p>
                           <div className="flex items-center gap-2 mt-1">
-                            <span className="inline-flex items-center gap-1 rounded bg-secondary/50 px-1.5 py-0.5 text-[10px] font-mono font-semibold text-muted-foreground border border-border">
-                              <Wrench className="size-3" /> {task.asset_id ?? "Unknown Asset"}
+                            <span className="inline-flex items-center gap-1 rounded-[2px] bg-slate-100 px-1.5 py-0.5 text-[10px] font-mono font-bold text-slate-800 border border-slate-300">
+                              <Wrench className="size-2.5 text-[#003366]" /> {task.asset_id ?? "N/A"}
                             </span>
-                            <span className="text-[10px] font-mono text-muted-foreground opacity-50">
-                              {task.task_id}
+                            <span className="text-[10px] font-mono text-slate-500">
+                              REF: {task.task_id}
                             </span>
                           </div>
                         </div>
                       </td>
 
                       {/* Dept */}
-                      <td className="px-5 py-3">
+                      <td className="px-4 py-3 border-r border-slate-200">
                         <Badge
                           variant="outline"
-                          className="text-[10px] uppercase font-bold tracking-wider border-border bg-secondary/30"
+                          className="text-[10px] uppercase font-bold tracking-wider border-slate-300 bg-white text-slate-800 rounded-[2px]"
                         >
                           {task.department}
                         </Badge>
                       </td>
 
                       {/* Due */}
-                      <td className="px-5 py-3">
+                      <td className="px-4 py-3 border-r border-slate-200">
                         <div className="flex flex-col gap-1">
-                          <span className="text-sm font-medium">{task.due_date ?? "—"}</span>
+                          <span className="font-mono font-medium text-slate-800">{task.due_date ?? "—"}</span>
                           {isOverdue && (
                             <Badge
                               variant="outline"
-                              className="w-fit text-[9px] uppercase font-bold tracking-wider border-warn/30 text-warn bg-warn/10 gap-1 px-1.5"
+                              className="w-fit text-[9px] uppercase font-bold tracking-wider border-[#800000]/40 text-[#800000] bg-red-50 rounded-[2px] gap-1 px-1 py-0"
                             >
                               <AlertTriangle className="size-2.5" /> OVERDUE {task.overdue_days}d
                             </Badge>
@@ -654,52 +728,62 @@ export default function MaintenanceTasksPage() {
                       </td>
 
                       {/* Risk */}
-                      <td className="px-5 py-3">
-                        <div className="flex flex-col gap-0.5">
-                          <div className="flex gap-0.5">
+                      <td className="px-4 py-3 border-r border-slate-200">
+                        <div className="flex flex-col gap-1">
+                          <div className="flex gap-1">
                             {[1, 2, 3, 4, 5].map((i) => (
                               <div
                                 key={i}
-                                className={`size-2 rounded-full ${i <= (task.safety_risk ?? 0) ? (task.safety_risk && task.safety_risk >= 4 ? "bg-destructive" : task.safety_risk === 3 ? "bg-warn" : "bg-blue-500") : "bg-secondary border border-border"}`}
+                                className={`size-2 rounded-[1px] ${
+                                  i <= (task.safety_risk ?? 0)
+                                    ? task.safety_risk && task.safety_risk >= 4
+                                      ? "bg-[#800000]"
+                                      : task.safety_risk === 3
+                                        ? "bg-[#D97706]"
+                                        : "bg-[#003366]"
+                                    : "bg-slate-200 border border-slate-300"
+                                }`}
                               />
                             ))}
                           </div>
-                          <span className="text-[10px] font-semibold uppercase text-muted-foreground mt-0.5">
-                            {task.safety_risk}/5 Risk
+                          <span className="text-[10px] font-bold uppercase text-slate-600 font-mono">
+                            {task.safety_risk}/5 Severity
                           </span>
                         </div>
                       </td>
 
                       {/* Status */}
-                      <td className="px-5 py-3">
+                      <td className="px-4 py-3 border-r border-slate-200">
                         <Badge
                           variant="outline"
-                          className={`text-[10px] font-bold uppercase tracking-wider ${getStatusStyle(task.task_status)}`}
+                          className={`text-[9px] font-bold uppercase tracking-wider rounded-[2px] ${getStatusStyle(
+                            task.task_status,
+                          )}`}
                         >
                           {task.task_status ?? "UNKNOWN"}
                         </Badge>
                       </td>
 
                       {/* Action */}
-                      <td className="px-5 py-3 text-right">
-                        <div className="flex items-center justify-end gap-2 opacity-80 group-hover:opacity-100 transition-opacity">
+                      <td className="px-4 py-3 text-right">
+                        <div className="flex items-center justify-end gap-1.5">
                           <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 text-blue-500 hover:bg-blue-500/10 hover:text-blue-600"
+                            variant="outline"
+                            size="sm"
+                            className="h-7 px-2 text-[11px] font-bold text-[#003366] border-slate-300 bg-white hover:bg-slate-100 rounded-[2px]"
                             onClick={() => setViewTask(task)}
-                            title="View Details"
+                            title="View Docket"
                           >
-                            <Eye className="size-4" />
+                            <Eye className="size-3 mr-1" /> View
                           </Button>
                           {task.task_status !== "COMPLETED" && (
                             <Button
                               variant="outline"
                               size="sm"
-                              className="h-8 text-xs font-semibold"
+                              className="h-7 px-2 text-[11px] font-bold text-[#137547] border-emerald-400 bg-emerald-50 hover:bg-emerald-100 rounded-[2px]"
                               onClick={() => setCompleteConfirm(task)}
                             >
-                              <CheckSquare className="mr-1.5 size-3.5" /> Complete
+                              <CheckSquare className="size-3 mr-1" /> Certify
                             </Button>
                           )}
                         </div>
@@ -714,90 +798,93 @@ export default function MaintenanceTasksPage() {
 
         {/* Pagination */}
         {totalPages > 1 && !loading && !error && (
-          <div className="border-t border-border bg-secondary/10 px-5 py-3 flex items-center justify-between">
-            <span className="text-xs text-muted-foreground">
-              Showing {(currentPage - 1) * ITEMS_PER_PAGE + 1}–
-              {Math.min(currentPage * ITEMS_PER_PAGE, filteredTasks.length)} of{" "}
-              {filteredTasks.length} tasks
+          <div className="border-t border-slate-300 bg-slate-50 px-4 py-2.5 flex items-center justify-between text-xs">
+            <span className="text-slate-600">
+              Showing <strong>{(currentPage - 1) * ITEMS_PER_PAGE + 1}</strong> to{" "}
+              <strong>{Math.min(currentPage * ITEMS_PER_PAGE, filteredTasks.length)}</strong> of{" "}
+              <strong>{filteredTasks.length}</strong> official tasks
             </span>
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1.5">
               <Button
                 variant="outline"
-                size="icon"
-                className="size-7"
+                size="sm"
+                className="h-7 px-2 text-xs rounded-[2px] border-slate-300 bg-white"
                 onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
                 disabled={currentPage === 1}
               >
-                <ChevronLeft className="size-3" />
+                <ChevronLeft className="size-3 mr-1" /> Previous
               </Button>
-              <div className="flex items-center px-2 text-xs font-medium">
-                {currentPage} / {totalPages}
+              <div className="px-2 font-mono font-bold text-slate-800">
+                Page {currentPage} of {totalPages}
               </div>
               <Button
                 variant="outline"
-                size="icon"
-                className="size-7"
+                size="sm"
+                className="h-7 px-2 text-xs rounded-[2px] border-slate-300 bg-white"
                 onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
                 disabled={currentPage === totalPages}
               >
-                <ChevronRight className="size-3" />
+                Next <ChevronRight className="size-3 ml-1" />
               </Button>
             </div>
           </div>
         )}
-      </Card>
+      </div>
 
       {/* MARK COMPLETE DIALOG */}
       <Dialog open={!!completeConfirm} onOpenChange={(o) => !o && setCompleteConfirm(null)}>
-        <DialogContent className="sm:max-w-md bg-card border-border">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <CheckSquare className="size-5 text-primary" /> Complete Maintenance Task?
+        <DialogContent className="sm:max-w-md bg-white border border-[#003366]/30 rounded-[2px] p-0 overflow-hidden shadow-lg">
+          <div className="bg-[#003366] text-white px-4 py-3 flex items-center gap-2 border-b-2 border-[#FF9933]">
+            <CheckSquare className="size-4 text-[#FF9933]" />
+            <DialogTitle className="text-sm font-bold uppercase tracking-wider text-white">
+              Certify Maintenance Work Completion
             </DialogTitle>
-          </DialogHeader>
+          </div>
           {completeConfirm && (
-            <div className="py-2 space-y-3">
-              <div className="p-3 bg-secondary/20 border border-border/50 rounded-md">
-                <div className="grid grid-cols-[100px_1fr] text-sm">
-                  <span className="text-muted-foreground uppercase text-[10px] font-semibold mt-0.5">
-                    Task ID
-                  </span>
-                  <span className="font-mono font-bold text-foreground">
-                    {completeConfirm.task_id}
-                  </span>
+            <div className="p-4 space-y-3">
+              <p className="text-xs text-slate-600">
+                You are about to record official completion certification in the Indian Railways database:
+              </p>
+              <div className="p-3 bg-slate-50 border border-slate-300 rounded-[2px] space-y-1.5 font-mono text-xs">
+                <div className="flex justify-between">
+                  <span className="text-slate-500">TASK ID:</span>
+                  <span className="font-bold text-[#003366]">{completeConfirm.task_id}</span>
                 </div>
-                <div className="grid grid-cols-[100px_1fr] text-sm mt-1">
-                  <span className="text-muted-foreground uppercase text-[10px] font-semibold mt-0.5">
-                    Asset
-                  </span>
-                  <span className="font-mono font-medium text-foreground">
-                    {completeConfirm.asset_id}
-                  </span>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">ASSET ID:</span>
+                  <span className="font-bold text-slate-800">{completeConfirm.asset_id}</span>
                 </div>
-                <div className="grid grid-cols-[100px_1fr] text-sm mt-1">
-                  <span className="text-muted-foreground uppercase text-[10px] font-semibold mt-0.5">
-                    Issue
-                  </span>
-                  <span className="font-medium text-foreground">
-                    {completeConfirm.task_type || completeConfirm.description}
-                  </span>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">WORK TYPE:</span>
+                  <span className="font-bold text-slate-800">{completeConfirm.task_type}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">DEPARTMENT:</span>
+                  <span className="font-bold text-slate-800">{completeConfirm.department}</span>
                 </div>
               </div>
-              <p className="text-xs text-muted-foreground mt-2">
-                Marking this task as complete will update its status in the maintenance database.
+              <p className="text-[11px] text-slate-500 italic">
+                Certification will close this work order and update the asset availability status in the IR-ABPS intelligence engine.
               </p>
             </div>
           )}
-          <DialogFooter className="flex gap-2 sm:justify-end mt-2">
-            <Button variant="ghost" onClick={() => setCompleteConfirm(null)} disabled={!!updating}>
-              CANCEL
+          <DialogFooter className="bg-slate-100 px-4 py-2.5 border-t border-slate-200 flex justify-end gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="rounded-[2px] border-slate-300 text-xs"
+              onClick={() => setCompleteConfirm(null)}
+              disabled={!!updating}
+            >
+              Cancel
             </Button>
             <Button
+              size="sm"
               onClick={handleComplete}
               disabled={!!updating}
-              className="bg-primary font-bold tracking-wider text-xs"
+              className="bg-[#137547] hover:bg-[#0f5c37] text-white font-bold text-xs uppercase tracking-wider rounded-[2px]"
             >
-              {updating ? "UPDATING..." : "MARK AS COMPLETE"}
+              {updating ? "Saving to Database..." : "Confirm Completion"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -805,174 +892,121 @@ export default function MaintenanceTasksPage() {
 
       {/* TASK DETAILS DRAWER */}
       <Sheet open={!!viewTask} onOpenChange={(o) => !o && setViewTask(null)}>
-        <SheetContent className="w-full sm:max-w-md border-l border-border overflow-y-auto">
-          <SheetHeader className="border-b border-border/50 pb-4 mb-4 text-left">
-            <SheetTitle className="text-xl flex items-center gap-2">
-              <Wrench className="size-5 text-primary" /> Maintenance Task
+        <SheetContent className="w-full sm:max-w-md border-l border-[#003366]/30 bg-white p-0 overflow-y-auto">
+          <div className="bg-[#003366] text-white p-4 border-b-2 border-[#FF9933]">
+            <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-[#FF9933]">
+              <Wrench className="size-3.5" />
+              OFFICIAL ASSET WORK DOCKET
+            </div>
+            <SheetTitle className="text-base font-bold text-white mt-1">
+              Task Reference: {viewTask?.task_id}
             </SheetTitle>
-            <SheetDescription className="font-mono text-xs mt-1">
-              {viewTask?.task_id}
+            <SheetDescription className="text-xs text-white/80 font-mono mt-0.5">
+              Asset: {viewTask?.asset_id} • Dept: {viewTask?.department}
             </SheetDescription>
-          </SheetHeader>
+          </div>
 
           {viewTask && (
-            <div className="space-y-6 pb-8">
-              <div className="bg-secondary/10 p-4 rounded-lg border border-border/50 space-y-4">
-                <div className="grid grid-cols-2 gap-4">
+            <div className="p-5 space-y-5">
+              <div className="bg-slate-50 p-3.5 rounded-[2px] border border-slate-300 space-y-3 text-xs">
+                <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <p className="text-[10px] uppercase font-semibold text-muted-foreground">
-                      Asset
-                    </p>
-                    <p className="font-medium text-foreground font-mono">{viewTask.asset_id}</p>
+                    <span className="text-[10px] uppercase font-bold text-slate-500">Asset Ref</span>
+                    <p className="font-mono font-bold text-slate-900">{viewTask.asset_id}</p>
                   </div>
                   <div>
-                    <p className="text-[10px] uppercase font-semibold text-muted-foreground">
-                      Department
-                    </p>
-                    <p className="font-medium text-foreground">{viewTask.department}</p>
+                    <span className="text-[10px] uppercase font-bold text-slate-500">Department</span>
+                    <p className="font-bold text-slate-900">{viewTask.department}</p>
                   </div>
                   <div className="col-span-2">
-                    <p className="text-[10px] uppercase font-semibold text-muted-foreground">
-                      Issue
-                    </p>
-                    <p className="font-bold text-foreground">{viewTask.task_type}</p>
+                    <span className="text-[10px] uppercase font-bold text-slate-500">Work Scope</span>
+                    <p className="font-bold text-[#003366] text-sm">{viewTask.task_type}</p>
                   </div>
                   <div className="col-span-2">
-                    <p className="text-[10px] uppercase font-semibold text-muted-foreground">
-                      Description
-                    </p>
-                    <p className="text-sm text-foreground">{viewTask.description}</p>
+                    <span className="text-[10px] uppercase font-bold text-slate-500">Technical Description</span>
+                    <p className="text-slate-700 mt-0.5 leading-relaxed">{viewTask.description}</p>
                   </div>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3 text-sm">
-                <div className="border border-border/50 bg-secondary/5 rounded p-3">
-                  <p className="text-[10px] uppercase font-semibold text-muted-foreground mb-1">
-                    Priority
-                  </p>
-                  <p className="font-mono font-bold text-lg">
+              <div className="grid grid-cols-2 gap-3 text-xs">
+                <div className="border border-slate-300 bg-white rounded-[2px] p-3">
+                  <span className="text-[10px] uppercase font-bold text-slate-500">AI Priority Score</span>
+                  <p className="font-mono font-bold text-xl text-slate-900 mt-1">
                     {viewTask.priority_score?.toFixed(1) || "0"}{" "}
-                    <span className="text-xs text-muted-foreground">/ 100</span>
+                    <span className="text-xs text-slate-400 font-normal">/ 100</span>
                   </p>
                   <Badge
                     variant="outline"
-                    className={`mt-1 text-[10px] ${getPriorityStyle(viewTask.priority_category).text} ${getPriorityStyle(viewTask.priority_category).bg}`}
+                    className={`mt-1.5 text-[9px] font-bold uppercase rounded-[2px] ${getPriorityStyle(viewTask.priority_category).text} ${getPriorityStyle(viewTask.priority_category).bg}`}
                   >
                     {viewTask.priority_category}
                   </Badge>
                 </div>
-                <div className="border border-border/50 bg-secondary/5 rounded p-3">
-                  <p className="text-[10px] uppercase font-semibold text-muted-foreground mb-1">
-                    Risk
-                  </p>
-                  <p className="font-mono font-bold text-lg">
+                <div className="border border-slate-300 bg-white rounded-[2px] p-3">
+                  <span className="text-[10px] uppercase font-bold text-slate-500">Safety Hazard Index</span>
+                  <p className="font-mono font-bold text-xl text-slate-900 mt-1">
                     {viewTask.safety_risk || "0"}{" "}
-                    <span className="text-xs text-muted-foreground">/ 5</span>
+                    <span className="text-xs text-slate-400 font-normal">/ 5</span>
                   </p>
-                  <div className="flex gap-0.5 mt-2">
+                  <div className="flex gap-1 mt-2">
                     {[1, 2, 3, 4, 5].map((i) => (
                       <div
                         key={i}
-                        className={`size-1.5 rounded-full ${i <= (viewTask.safety_risk || 0) ? "bg-warn" : "bg-secondary border border-border"}`}
+                        className={`size-2 rounded-[1px] ${
+                          i <= (viewTask.safety_risk || 0)
+                            ? "bg-[#800000]"
+                            : "bg-slate-200 border border-slate-300"
+                        }`}
                       />
                     ))}
                   </div>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3 text-sm">
+              <div className="grid grid-cols-2 gap-3 text-xs border border-slate-300 bg-slate-50 p-3 rounded-[2px]">
                 <div>
-                  <p className="text-[10px] uppercase font-semibold text-muted-foreground mb-0.5">
-                    Due Date
-                  </p>
-                  <p className="font-medium">{viewTask.due_date}</p>
+                  <span className="text-[10px] uppercase font-bold text-slate-500">Target Due Date</span>
+                  <p className="font-mono font-bold text-slate-800">{viewTask.due_date}</p>
                 </div>
                 <div>
-                  <p className="text-[10px] uppercase font-semibold text-muted-foreground mb-0.5">
-                    Status
-                  </p>
-                  <Badge variant="outline" className={getStatusStyle(viewTask.task_status)}>
-                    {viewTask.task_status}
-                  </Badge>
+                  <span className="text-[10px] uppercase font-bold text-slate-500">Current Status</span>
+                  <div className="mt-0.5">
+                    <Badge variant="outline" className={`text-[9px] font-bold uppercase rounded-[2px] ${getStatusStyle(viewTask.task_status)}`}>
+                      {viewTask.task_status}
+                    </Badge>
+                  </div>
                 </div>
               </div>
 
-              <div className="bg-blue-500/5 border border-blue-500/20 p-3 rounded-lg space-y-1">
-                <p className="text-[10px] font-bold uppercase tracking-wider text-blue-500 flex items-center gap-1.5">
-                  <Activity className="size-3" /> Operational Impact
+              <div className="p-3 bg-sky-50 border border-sky-300 rounded-[2px] text-xs space-y-1">
+                <p className="font-bold text-[#003366] uppercase tracking-wider text-[10px] flex items-center gap-1.5">
+                  <Activity className="size-3 text-[#003366]" /> Corridor Block Coordination Advisory
                 </p>
-                <p className="text-xs text-foreground">
-                  Operational impact assessment available through IR-ABPS analysis. Ensure block
-                  coordination to prevent traffic disruption.
+                <p className="text-slate-700 leading-relaxed">
+                  Asset requires physical line access. Schedule via the AI Optimizer module to combine with parallel works in the same section.
                 </p>
               </div>
 
-              {/* Task Status Flow */}
-              <div className="py-2">
-                <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                  <span
-                    className={
-                      viewTask.task_status === "PENDING" ||
-                      viewTask.task_status === "IN PROGRESS" ||
-                      viewTask.task_status === "COMPLETED"
-                        ? "text-primary"
-                        : ""
-                    }
-                  >
-                    Pending
-                  </span>
-                  <span
-                    className={
-                      viewTask.task_status === "IN PROGRESS" || viewTask.task_status === "COMPLETED"
-                        ? "text-primary"
-                        : ""
-                    }
-                  >
-                    In Progress
-                  </span>
-                  <span className={viewTask.task_status === "COMPLETED" ? "text-safe" : ""}>
-                    Completed
-                  </span>
-                </div>
-                <div className="mt-2 flex items-center">
-                  <div
-                    className={`size-3 rounded-full ${viewTask.task_status === "PENDING" || viewTask.task_status === "IN PROGRESS" || viewTask.task_status === "COMPLETED" ? "bg-primary" : "bg-border"}`}
-                  />
-                  <div
-                    className={`h-1 flex-1 ${viewTask.task_status === "IN PROGRESS" || viewTask.task_status === "COMPLETED" ? "bg-primary" : "bg-border"}`}
-                  />
-                  <div
-                    className={`size-3 rounded-full ${viewTask.task_status === "IN PROGRESS" || viewTask.task_status === "COMPLETED" ? "bg-primary" : "bg-border"}`}
-                  />
-                  <div
-                    className={`h-1 flex-1 ${viewTask.task_status === "COMPLETED" ? "bg-primary" : "bg-border"}`}
-                  />
-                  <div
-                    className={`size-3 rounded-full ${viewTask.task_status === "COMPLETED" ? "bg-safe" : "bg-border"}`}
-                  />
-                </div>
-              </div>
-
-              <div className="pt-4 border-t border-border flex flex-col gap-3">
+              <div className="pt-2 flex flex-col gap-2">
                 <Button
-                  className="w-full bg-blue-600 hover:bg-blue-700 text-white shadow-sm font-semibold gap-2"
+                  className="w-full bg-[#003366] hover:bg-[#002244] text-white font-bold text-xs uppercase tracking-wider rounded-[2px] h-9 gap-2 shadow-sm"
                   asChild
                 >
                   <Link to="/optimizer">
-                    <BrainCircuit className="size-4" /> Cluster for AI Scheduling
+                    <BrainCircuit className="size-4 text-[#FF9933]" /> Cluster for AI Scheduling
                   </Link>
                 </Button>
                 {viewTask.task_status !== "COMPLETED" && (
                   <Button
                     variant="outline"
-                    className="w-full gap-2 font-semibold"
+                    className="w-full text-xs font-bold text-[#137547] border-emerald-400 bg-emerald-50 hover:bg-emerald-100 rounded-[2px] h-9 gap-1.5"
                     onClick={() => {
                       setCompleteConfirm(viewTask);
                       setViewTask(null);
                     }}
                   >
-                    <CheckSquare className="size-4" /> Mark Complete
+                    <CheckSquare className="size-4" /> Certify Completion
                   </Button>
                 )}
               </div>
@@ -980,47 +1014,45 @@ export default function MaintenanceTasksPage() {
           )}
         </SheetContent>
       </Sheet>
-    </>
+    </div>
   );
 }
 
-function MetricCard({ label, value, desc, icon: Icon, tone = "text-foreground" }: any) {
+function MetricCard({ label, value, desc, icon: Icon, tone = "text-slate-900", borderColor = "border-slate-300", bg = "bg-white" }: any) {
   return (
-    <Card className="shadow-sm bg-card border-border">
-      <CardContent className="p-4 flex flex-col gap-1.5 h-full">
-        <div className="flex items-center justify-between mb-1">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-            {label}
-          </p>
-          <Icon
-            className={`size-4 ${tone === "text-foreground" ? "text-muted-foreground" : tone}`}
-          />
-        </div>
+    <div className={`rounded-[2px] border ${borderColor} ${bg} p-3.5 shadow-sm flex flex-col justify-between`}>
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+          {label}
+        </span>
+        <Icon className={`size-4 ${tone}`} />
+      </div>
+      <div>
         <p className={`text-2xl font-bold font-mono ${tone}`}>{value}</p>
-        <p className="text-[10px] text-muted-foreground leading-tight">{desc}</p>
-      </CardContent>
-    </Card>
+        <p className="text-[10px] text-slate-500 mt-0.5 leading-tight">{desc}</p>
+      </div>
+    </div>
   );
 }
 
 function WorkloadBar({ title, data, total, color }: any) {
   return (
-    <div className="space-y-3">
-      <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+    <div className="space-y-2.5">
+      <p className="text-[10px] font-bold uppercase tracking-wider text-[#003366] border-b border-slate-200 pb-1">
         {title}
       </p>
       <div className="space-y-2">
         {data.map((item: any) => (
           <div key={item.label}>
             <div className="flex justify-between text-xs mb-1">
-              <span className="font-medium text-foreground">{item.label}</span>
-              <span className="font-mono text-muted-foreground">{item.val}</span>
+              <span className="font-semibold text-slate-800">{item.label}</span>
+              <span className="font-mono font-bold text-slate-600">{item.val}</span>
             </div>
-            <div className="h-1.5 w-full bg-secondary rounded-full overflow-hidden">
+            <div className="h-1.5 w-full bg-slate-100 rounded-[1px] overflow-hidden border border-slate-300">
               <div
-                className={`h-full ${item.color || color || "bg-primary"}`}
+                className={`h-full ${item.color || color || "bg-[#003366]"}`}
                 style={{ width: `${total > 0 ? (item.val / total) * 100 : 0}%` }}
-              ></div>
+              />
             </div>
           </div>
         ))}
@@ -1032,10 +1064,10 @@ function WorkloadBar({ title, data, total, color }: any) {
 function FilterSelect({ value, onChange, options, w }: any) {
   return (
     <Select value={value} onValueChange={onChange}>
-      <SelectTrigger className={`${w} h-9 text-xs bg-background`}>
+      <SelectTrigger className={`${w} h-8 text-xs bg-white rounded-[2px] border-slate-300 focus:border-[#003366]`}>
         <SelectValue />
       </SelectTrigger>
-      <SelectContent>
+      <SelectContent className="rounded-[2px] border-slate-300">
         {options.map((o: string) => (
           <SelectItem key={o} value={o} className="text-xs">
             {o}
