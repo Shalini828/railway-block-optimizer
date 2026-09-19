@@ -15,6 +15,7 @@ import {
   Zap,
 } from "lucide-react";
 import { toast } from "sonner";
+import { apiFetch } from "@/lib/api";
 
 import {
   classifyTrainConflictSeverity,
@@ -138,9 +139,9 @@ function PlannerPage() {
     try {
       const [corridorResponse, blockResponse, trainResponse] =
         await Promise.all([
-          fetch("http://127.0.0.1:8000/corridors/"),
-          fetch("http://127.0.0.1:8000/optimized-plan/"),
-          fetch("http://127.0.0.1:8000/trains/"),
+          apiFetch("/corridors/"),
+          apiFetch("/optimized-plan/"),
+          apiFetch("/trains/"),
         ]);
 
       if (
@@ -335,8 +336,8 @@ function PlannerPage() {
             ? "reject"
             : "rework";
 
-      const response = await fetch(
-        `http://127.0.0.1:8000/optimized-plan/${selectedBlock.block_id}/${actionPath}`,
+      const response = await apiFetch(
+        `/optimized-plan/${selectedBlock.block_id}/${actionPath}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },

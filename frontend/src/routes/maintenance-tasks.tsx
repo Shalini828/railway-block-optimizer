@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { toast } from "sonner";
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { apiFetch } from "@/lib/api";
 import {
   ArrowRight,
   Filter,
@@ -111,7 +112,7 @@ export default function MaintenanceTasksPage() {
   const fetchTasks = () => {
     setLoading(true);
     setError(false);
-    fetch("http://127.0.0.1:8000/maintenance-tasks/")
+    apiFetch("/maintenance-tasks/")
       .then((res) => {
         if (!res.ok) throw new Error("Failed to fetch");
         return res.json();
@@ -254,7 +255,7 @@ export default function MaintenanceTasksPage() {
     setCompleteConfirm(null);
 
     try {
-      const res = await fetch(`http://127.0.0.1:8000/maintenance-tasks/${taskId}/status`, {
+      const res = await apiFetch(`/maintenance-tasks/${taskId}/status`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ task_status: "COMPLETED" }),

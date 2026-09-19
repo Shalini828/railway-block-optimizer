@@ -7,6 +7,7 @@ import {
   FileCheck, AlertOctagon, UserCheck
 } from "lucide-react";
 import { toast } from "sonner";
+import { apiFetch } from "@/lib/api";
 import { PageHeader } from "@/components/AppShell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -91,7 +92,7 @@ function ConflictsPage() {
   const fetchPlan = async () => {
     setLoading(true);
     try {
-      const res = await fetch("http://127.0.0.1:8000/optimized-plan/");
+      const res = await apiFetch("/optimized-plan/");
       const data = await res.json();
       setBlocks(data.blocks || []);
     } catch (err) {
@@ -184,13 +185,12 @@ function ConflictsPage() {
     if (!selectedItem) return;
     setActionLoading(true);
     try {
-      const url = `http://127.0.0.1:8000/optimized-plan/${selectedItem.block.block_id}/${action}`;
-      const payload = action === "approve" ? { approved_by: "DRM Planning" } : undefined;
+      const url = `/optimized-plan/${selectedItem.block.block_id}/${action}`;
       
-      const res = await fetch(url, {
+      const res = await apiFetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: payload ? JSON.stringify(payload) : undefined
+        body: JSON.stringify({})
       });
 
       if (!res.ok) throw new Error("Action failed");

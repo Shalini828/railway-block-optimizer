@@ -25,6 +25,7 @@ import {
   FileSpreadsheet,
 } from "lucide-react";
 import { toast } from "sonner";
+import { apiFetch } from "@/lib/api";
 import {
   Bar,
   BarChart,
@@ -463,7 +464,7 @@ function AnalyticsPage() {
   const refreshAnalytics = () => {
     toast.info("Refreshing intelligence model from PostgreSQL...");
     setLastUpdated(new Date().toLocaleTimeString("en-IN"));
-    fetch("http://127.0.0.1:8000/analytics/")
+    apiFetch("/analytics/")
       .then((res) => {
         if (!res.ok) throw new Error("Failed to fetch analytics");
         return res.json();

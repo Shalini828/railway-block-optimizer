@@ -34,6 +34,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
+import { apiFetch } from "@/lib/api";
 import {
   Sheet,
   SheetContent,
@@ -103,7 +104,7 @@ interface SavedPlanBlock {
 }
 
 async function fetchSavedOptimization(): Promise<OptimizationApiResponse | null> {
-  const response = await fetch("http://127.0.0.1:8000/optimized-plan/");
+  const response = await apiFetch("/optimized-plan/");
 
   if (!response.ok) {
     throw new Error("Unable to load saved optimized plan");
@@ -254,7 +255,7 @@ function OptimizerPage() {
     }, 550);
 
     try {
-      const response = await fetch("http://127.0.0.1:8000/optimization/", {
+      const response = await apiFetch("/optimization/", {
         method: "POST",
       });
 
@@ -266,7 +267,7 @@ function OptimizerPage() {
 
       if (!data.blocks || data.blocks.length === 0) {
         try {
-          const savedResponse = await fetch("http://127.0.0.1:8000/optimized-plan/");
+          const savedResponse = await apiFetch("/optimized-plan/");
           if (savedResponse.ok) {
             const saved = await savedResponse.json();
             if (saved.status === "success" && Array.isArray(saved.blocks) && saved.blocks.length > 0) {

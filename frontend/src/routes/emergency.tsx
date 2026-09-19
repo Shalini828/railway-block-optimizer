@@ -21,6 +21,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
+import { apiFetch } from "@/lib/api";
 
 import {
   Dialog,
@@ -83,8 +84,6 @@ interface ActivityEvent {
   detail?: string;
 }
 
-const API_BASE_URL = "http://localhost:8000";
-
 const SECTIONS = [
   "New Delhi (NDLS) - Ghaziabad (GZB)",
   "Ghaziabad (GZB) - Kanpur (CNB)",
@@ -140,7 +139,7 @@ function EmergencyPage() {
   const fetchEmergencies = async () => {
     try {
       setIsLoading(true);
-      const response = await fetch(`${API_BASE_URL}/emergency/`);
+      const response = await apiFetch("/emergency/");
       if (!response.ok) {
         throw new Error(`Failed to fetch emergency incidents (${response.status})`);
       }
@@ -264,7 +263,7 @@ function EmergencyPage() {
           ? "CRITICAL"
           : "HIGH";
 
-      const response = await fetch(`${API_BASE_URL}/emergency/`, {
+      const response = await apiFetch("/emergency/", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -310,7 +309,7 @@ function EmergencyPage() {
     if (!blockToResolve) return;
 
     try {
-      const response = await fetch(`${API_BASE_URL}/emergency/${resolveModal}/resolve`, {
+      const response = await apiFetch(`/emergency/${resolveModal}/resolve`, {
         method: "PATCH",
       });
 

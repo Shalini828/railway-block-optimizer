@@ -38,6 +38,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { apiFetch } from "@/lib/api";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -187,7 +188,7 @@ function RequestsPage() {
 
     try {
       // 1. Create requisition in PostgreSQL
-      const requestResponse = await fetch("http://127.0.0.1:8000/block-requests/", {
+      const requestResponse = await apiFetch("/block-requests/", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -207,7 +208,7 @@ function RequestsPage() {
       addReq(payload);
 
       // 2. Immediately run IR-ABPS optimization
-      const optimizationResponse = await fetch("http://127.0.0.1:8000/optimization/", {
+      const optimizationResponse = await apiFetch("/optimization/", {
         method: "POST",
       });
 

@@ -28,6 +28,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
+import { apiFetch } from "@/lib/api";
 
 export const Route = createFileRoute("/dashboard")({
   head: () => ({
@@ -223,7 +224,7 @@ function DashboardPage() {
   const fetchData = async () => {
     setIsRefreshing(true);
     try {
-      const res = await fetch("http://127.0.0.1:8000/dashboard/kpis");
+      const res = await apiFetch("/dashboard/kpis");
       if (!res.ok) {
         throw new Error("Failed to fetch dashboard data");
       }
