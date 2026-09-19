@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from datetime import datetime, date
 from pathlib import Path
 import os
@@ -6,6 +6,9 @@ import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
+
+from auth.security import get_current_user, require_permission, CurrentUser
+from auth.scoping import get_relevant_corridor_ids
 
 
 # ============================================================
@@ -110,8 +113,8 @@ def get_status_from_intensity(intensity):
 # DASHBOARD KPI ENDPOINT
 # ============================================================
 
-@router.get("/kpis")
-def get_dashboard_kpis():
+@router.get("/kpis", dependencies=[Depends(require_permission("dashboard.view"))])
+def get_dashboard_kpis(user: CurrentUser = Depends(get_current_user)):
 
     conn = None
 
@@ -124,16 +127,29 @@ def get_dashboard_kpis():
 
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
 
-            cur.execute("""
-                SELECT
-                    COUNT(*) AS total_assets,
-                    AVG(health_score) AS average_health,
-                    COUNT(*) FILTER (
-                        WHERE LOWER(COALESCE(operational_status, ''))
-                        IN ('operational', 'active', 'available')
-                    ) AS operational_assets
-                FROM public.assets
-            """)
+            if user.scope != "network":
+                cur.execute("""
+                    SELECT
+                        COUNT(*) AS total_assets,
+                        AVG(health_score) AS average_health,
+                        COUNT(*) FILTER (
+                            WHERE LOWER(COALESCE(operational_status, ''))
+                            IN ('operational', 'active', 'available')
+                        ) AS operational_assets
+                    FROM public.assets
+                    WHERE UPPER(department) = %s
+                """, (user.dept.upper(),))
+            else:
+                cur.execute("""
+                    SELECT
+                        COUNT(*) AS total_assets,
+                        AVG(health_score) AS average_health,
+                        COUNT(*) FILTER (
+                            WHERE LOWER(COALESCE(operational_status, ''))
+                            IN ('operational', 'active', 'available')
+                        ) AS operational_assets
+                    FROM public.assets
+                """)
 
             asset_row = cur.fetchone()
 
@@ -212,7 +228,14 @@ def get_dashboard_kpis():
 
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
 
-            cur.execute("""
+            where_clause = ""
+            params = ()
+            if user.scope != "network":
+                clean_dept = user.dept.upper()
+                where_clause = "WHERE UPPER(COALESCE(department_id, '')) IN (%s, %s)"
+                params = (f"DEPT-{clean_dept}", clean_dept)
+
+            cur.execute(f"""
                 SELECT
                     COUNT(*) AS total_requests,
 
@@ -251,7 +274,8 @@ def get_dashboard_kpis():
                     ) AS optimized_requested_minutes
 
                 FROM public.block_requests
-            """)
+                {where_clause}
+            """, params)
 
             request_row = cur.fetchone()
 
@@ -362,19 +386,37 @@ def get_dashboard_kpis():
 
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
 
-            cur.execute("""
-                SELECT
-                    corridor_id,
-                    COUNT(*) AS trains_running,
-                    MIN(departure_time) AS first_departure,
-                    MAX(departure_time) AS last_departure
-                FROM public.trains
-                GROUP BY corridor_id
-                ORDER BY COUNT(*) DESC
-                LIMIT 6
-            """)
-
-            corridor_rows = cur.fetchall()
+            if user.scope != "network":
+                relevant_corridors = get_relevant_corridor_ids(cur, user.dept)
+                if relevant_corridors:
+                    cur.execute("""
+                        SELECT
+                            corridor_id,
+                            COUNT(*) AS trains_running,
+                            MIN(departure_time) AS first_departure,
+                            MAX(departure_time) AS last_departure
+                        FROM public.trains
+                        WHERE corridor_id = ANY(%s)
+                        GROUP BY corridor_id
+                        ORDER BY COUNT(*) DESC
+                        LIMIT 6
+                    """, (relevant_corridors,))
+                    corridor_rows = cur.fetchall()
+                else:
+                    corridor_rows = []
+            else:
+                cur.execute("""
+                    SELECT
+                        corridor_id,
+                        COUNT(*) AS trains_running,
+                        MIN(departure_time) AS first_departure,
+                        MAX(departure_time) AS last_departure
+                    FROM public.trains
+                    GROUP BY corridor_id
+                    ORDER BY COUNT(*) DESC
+                    LIMIT 6
+                """)
+                corridor_rows = cur.fetchall()
 
         corridor_status = []
 
@@ -468,28 +510,53 @@ def get_dashboard_kpis():
 
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
 
-            cur.execute("""
-                SELECT
-                    task_id,
-                    asset_id,
-                    department,
-                    task_type,
-                    description,
-                    overdue_days,
-                    safety_risk,
-                    priority_score,
-                    priority_category,
-                    task_status
-                FROM public.maintenance_tasks
-                WHERE
-                    UPPER(COALESCE(task_status, '')) NOT IN
-                    ('COMPLETED', 'CLOSED', 'DONE')
-                ORDER BY
-                    safety_risk DESC NULLS LAST,
-                    priority_score DESC NULLS LAST,
-                    overdue_days DESC NULLS LAST
-                LIMIT 8
-            """)
+            if user.scope != "network":
+                cur.execute("""
+                    SELECT
+                        task_id,
+                        asset_id,
+                        department,
+                        task_type,
+                        description,
+                        overdue_days,
+                        safety_risk,
+                        priority_score,
+                        priority_category,
+                        task_status
+                    FROM public.maintenance_tasks
+                    WHERE
+                        UPPER(department) = %s
+                        AND UPPER(COALESCE(task_status, '')) NOT IN
+                        ('COMPLETED', 'CLOSED', 'DONE')
+                    ORDER BY
+                        safety_risk DESC NULLS LAST,
+                        priority_score DESC NULLS LAST,
+                        overdue_days DESC NULLS LAST
+                    LIMIT 8
+                """, (user.dept.upper(),))
+            else:
+                cur.execute("""
+                    SELECT
+                        task_id,
+                        asset_id,
+                        department,
+                        task_type,
+                        description,
+                        overdue_days,
+                        safety_risk,
+                        priority_score,
+                        priority_category,
+                        task_status
+                    FROM public.maintenance_tasks
+                    WHERE
+                        UPPER(COALESCE(task_status, '')) NOT IN
+                        ('COMPLETED', 'CLOSED', 'DONE')
+                    ORDER BY
+                        safety_risk DESC NULLS LAST,
+                        priority_score DESC NULLS LAST,
+                        overdue_days DESC NULLS LAST
+                    LIMIT 8
+                """)
 
             task_rows = cur.fetchall()
 
@@ -736,11 +803,57 @@ def get_dashboard_kpis():
 
 
         # ====================================================
+        # 10B. DEPARTMENT KPIS (IF DEPARTMENT SCOPED)
+        # ====================================================
+
+        department_kpis = None
+        if user.scope != "network":
+            clean_dept = user.dept.upper()
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT COUNT(*) AS count
+                    FROM public.maintenance_tasks
+                    WHERE UPPER(department) = %s
+                      AND UPPER(COALESCE(task_status, '')) NOT IN ('COMPLETED', 'CLOSED', 'DONE')
+                """, (clean_dept,))
+                p_row = cur.fetchone()
+                pending_dept_tasks = int(p_row["count"] or 0) if p_row else 0
+
+                cur.execute("""
+                    SELECT COUNT(*) AS count
+                    FROM public.maintenance_tasks
+                    WHERE UPPER(department) = %s
+                      AND UPPER(COALESCE(task_status, '')) NOT IN ('COMPLETED', 'CLOSED', 'DONE')
+                      AND (safety_risk >= 4 OR UPPER(COALESCE(priority_category, '')) = 'CRITICAL' OR priority_score >= 80)
+                """, (clean_dept,))
+                c_row = cur.fetchone()
+                critical_dept_tasks = int(c_row["count"] or 0) if c_row else 0
+
+                cur.execute("""
+                    SELECT COUNT(DISTINCT ob.block_id) AS count
+                    FROM public.optimized_blocks ob
+                    JOIN public.block_tasks bt ON ob.block_id = bt.block_id
+                    JOIN public.maintenance_tasks mt ON bt.task_id = mt.task_id
+                    WHERE UPPER(mt.department) = %s
+                """, (clean_dept,))
+                b_row = cur.fetchone()
+                blocks_this_week = int(b_row["count"] or 0) if b_row else 0
+
+            department_kpis = {
+                "asset_availability_percent": overall_asset_availability,
+                "pending_tasks": pending_dept_tasks,
+                "critical_tasks_or_defects": critical_dept_tasks,
+                "blocks_this_week": blocks_this_week,
+            }
+
+
+        # ====================================================
         # 11. FINAL RESPONSE
         # ====================================================
 
-        return {
+        response_data = {
             "status": "success",
+            "scope": user.scope,
 
             "kpis": {
                 "overall_asset_availability":
@@ -799,6 +912,12 @@ def get_dashboard_kpis():
             "last_updated":
                 datetime.now().isoformat()
         }
+
+        if user.scope != "network":
+            response_data["department"] = user.dept
+            response_data["department_kpis"] = department_kpis
+
+        return response_data
 
 
     except HTTPException:

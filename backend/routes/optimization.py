@@ -1,10 +1,12 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 import importlib
 import sys
 import time
 import psycopg
 import os
 from dotenv import load_dotenv
+
+from auth.security import require_permission
 
 load_dotenv()
 
@@ -129,7 +131,7 @@ def get_saved_blocks():
         conn.close()
 
 
-@router.post("/")
+@router.post("/", dependencies=[Depends(require_permission("optimizer.run"))])
 def run_optimization():
 
     start_time = time.time()

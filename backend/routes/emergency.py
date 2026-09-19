@@ -1,10 +1,14 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 
 import psycopg
 import os
 
 from dotenv import load_dotenv
+
+from auth.security import require_permission, get_current_user, CurrentUser
+from auth.permissions import is_network_scope, can_report_emergency_type, EMERGENCY_TYPE_GROUPS, REPORTABLE_GROUPS
+from auth.audit import record_audit
 
 load_dotenv()
 
@@ -45,8 +49,8 @@ class EmergencyCreate(BaseModel):
 # GET ACTIVE EMERGENCY INCIDENTS
 # ==========================================
 
-@router.get("/")
-def get_emergency_incidents():
+@router.get("/", dependencies=[Depends(require_permission("emergency.view"))])
+def get_emergency_incidents(user: CurrentUser = Depends(get_current_user)):
 
     conn = get_connection()
     cursor = conn.cursor()
@@ -74,19 +78,38 @@ def get_emergency_incidents():
         incidents = []
 
         for row in rows:
+            emg_type = row[1]
+            is_own_domain = is_network_scope(user.role_id) or can_report_emergency_type(user.role_id, emg_type)
 
-            incidents.append({
-                "id": row[0],
-                "type": row[1],
-                "section": row[2],
-                "line": row[3],
-                "severity": row[4],
-                "started_at": row[5].isoformat()
-                    if row[5] else None,
-                "status": row[6],
-                "control_notified": row[7],
-                "traffic_protection_status": row[8]
-            })
+            if is_own_domain:
+                incidents.append({
+                    "id": row[0],
+                    "type": row[1],
+                    "section": row[2],
+                    "line": row[3],
+                    "severity": row[4],
+                    "started_at": row[5].isoformat()
+                        if row[5] else None,
+                    "status": row[6],
+                    "control_notified": row[7],
+                    "traffic_protection_status": row[8],
+                    "is_summary_only": False
+                })
+            else:
+                # Department role out of domain: return summary fields only for safety awareness
+                incidents.append({
+                    "id": row[0],
+                    "type": row[1],
+                    "section": row[2],
+                    "line": None,
+                    "severity": row[4],
+                    "started_at": row[5].isoformat()
+                        if row[5] else None,
+                    "status": row[6],
+                    "control_notified": None,
+                    "traffic_protection_status": None,
+                    "is_summary_only": True
+                })
 
         return {
             "status": "success",
@@ -111,10 +134,26 @@ def get_emergency_incidents():
 # CREATE EMERGENCY INCIDENT
 # ==========================================
 
-@router.post("/")
+@router.post("/", dependencies=[Depends(require_permission("emergency.report"))])
 def create_emergency_incident(
-    request: EmergencyCreate
+    request: EmergencyCreate,
+    user: CurrentUser = Depends(get_current_user)
 ):
+
+    # Validate emergency type
+    if request.emergency_type not in EMERGENCY_TYPE_GROUPS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown emergency type '{request.emergency_type}'. Valid types: {list(EMERGENCY_TYPE_GROUPS.keys())}"
+        )
+
+    # Validate group permission
+    if not can_report_emergency_type(user.role_id, request.emergency_type):
+        group = EMERGENCY_TYPE_GROUPS[request.emergency_type]
+        raise HTTPException(
+            status_code=403,
+            detail=f"Role '{user.role_id}' is not authorized to report '{group}' emergencies ({request.emergency_type})."
+        )
 
     conn = get_connection()
     cursor = conn.cursor()
@@ -169,7 +208,8 @@ def create_emergency_incident(
                 started_at,
                 status,
                 control_notified,
-                traffic_protection_status
+                traffic_protection_status,
+                reported_by
             )
             VALUES
             (
@@ -181,7 +221,8 @@ def create_emergency_incident(
                 CURRENT_TIMESTAMP,
                 'ACTIVE',
                 TRUE,
-                'RECOMMENDED'
+                'RECOMMENDED',
+                %s
             )
             RETURNING
                 incident_id,
@@ -198,7 +239,8 @@ def create_emergency_incident(
             request.emergency_type,
             request.section,
             request.line,
-            request.severity
+            request.severity,
+            user.name or user.role_id
         ))
 
 
@@ -206,6 +248,16 @@ def create_emergency_incident(
 
         conn.commit()
 
+        record_audit(
+            user=user,
+            method="POST",
+            path="/emergency/",
+            action="emergency.report",
+            target_type="emergency",
+            target_id=incident_id,
+            outcome="SUCCESS",
+            detail={"type": request.emergency_type, "severity": request.severity, "section": request.section}
+        )
 
         return {
             "status": "success",
@@ -244,9 +296,10 @@ def create_emergency_incident(
 # RESOLVE EMERGENCY INCIDENT
 # ==========================================
 
-@router.patch("/{incident_id}/resolve")
+@router.patch("/{incident_id}/resolve", dependencies=[Depends(require_permission("emergency.resolve"))])
 def resolve_emergency_incident(
-    incident_id: str
+    incident_id: str,
+    user: CurrentUser = Depends(get_current_user)
 ):
 
     conn = get_connection()
@@ -258,11 +311,12 @@ def resolve_emergency_incident(
             UPDATE emergency_incidents
             SET
                 status = 'RESOLVED',
-                resolved_at = CURRENT_TIMESTAMP
+                resolved_at = CURRENT_TIMESTAMP,
+                resolved_by = %s
             WHERE incident_id = %s
             AND status = 'ACTIVE'
             RETURNING incident_id
-        """, (incident_id,))
+        """, (user.name or user.role_id, incident_id))
 
 
         row = cursor.fetchone()
@@ -278,11 +332,21 @@ def resolve_emergency_incident(
 
         conn.commit()
 
+        record_audit(
+            user=user,
+            method="PATCH",
+            path=f"/emergency/{incident_id}/resolve",
+            action="emergency.resolve",
+            target_type="emergency",
+            target_id=incident_id,
+            outcome="SUCCESS"
+        )
 
         return {
             "status": "success",
             "message": "Emergency incident resolved successfully",
-            "incident_id": incident_id
+            "incident_id": incident_id,
+            "resolved_by": user.name or user.role_id
         }
 
 
@@ -313,9 +377,10 @@ def resolve_emergency_incident(
 # GET SINGLE EMERGENCY INCIDENT
 # ==========================================
 
-@router.get("/{incident_id}")
+@router.get("/{incident_id}", dependencies=[Depends(require_permission("emergency.view"))])
 def get_emergency_incident(
-    incident_id: str
+    incident_id: str,
+    user: CurrentUser = Depends(get_current_user)
 ):
 
     conn = get_connection()
@@ -350,6 +415,32 @@ def get_emergency_incident(
                 detail="Emergency incident not found"
             )
 
+        emg_type = row[1]
+        is_own_domain = is_network_scope(user.role_id) or can_report_emergency_type(user.role_id, emg_type)
+
+        if not is_own_domain:
+            if row[6] != "ACTIVE":
+                raise HTTPException(
+                    status_code=404,
+                    detail="Emergency incident not found"
+                )
+            return {
+                "status": "success",
+                "emergency": {
+                    "id": row[0],
+                    "type": row[1],
+                    "section": row[2],
+                    "line": None,
+                    "severity": row[4],
+                    "started_at": row[5].isoformat()
+                        if row[5] else None,
+                    "status": row[6],
+                    "control_notified": None,
+                    "traffic_protection_status": None,
+                    "resolved_at": None,
+                    "is_summary_only": True
+                }
+            }
 
         return {
             "status": "success",
@@ -365,7 +456,8 @@ def get_emergency_incident(
                 "control_notified": row[7],
                 "traffic_protection_status": row[8],
                 "resolved_at": row[9].isoformat()
-                    if row[9] else None
+                    if row[9] else None,
+                "is_summary_only": False
             }
         }
 
@@ -376,12 +468,15 @@ def get_emergency_incident(
         conn.close()
 
 
-        # ==========================================
+# ==========================================
 # GET IMPACTED TRAINS FOR AN EMERGENCY
 # ==========================================
 
-@router.get("/{incident_id}/impact")
-def get_emergency_impact(incident_id: str):
+@router.get("/{incident_id}/impact", dependencies=[Depends(require_permission("emergency.view"))])
+def get_emergency_impact(
+    incident_id: str,
+    user: CurrentUser = Depends(get_current_user)
+):
 
     conn = get_connection()
     cursor = conn.cursor()
@@ -407,6 +502,14 @@ def get_emergency_impact(incident_id: str):
             raise HTTPException(
                 status_code=404,
                 detail="Emergency incident not found"
+            )
+
+        # Department roles: out-of-domain incidents return 404 for impact
+        emg_type = incident[1]
+        if not is_network_scope(user.role_id) and not can_report_emergency_type(user.role_id, emg_type):
+            raise HTTPException(
+                status_code=404,
+                detail="Impact details not accessible for out-of-domain emergency"
             )
 
         # 2. Map emergency section to railway corridor

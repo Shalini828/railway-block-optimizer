@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import psycopg
@@ -6,7 +6,7 @@ import importlib
 import pkgutil
 
 from db_config import DB_CONFIG
-from auth.security import RBACForbiddenException
+from auth.security import RBACForbiddenException, require_permission, get_current_user, CurrentUser
 
 
 # ============================================================
@@ -128,8 +128,8 @@ register_routers()
 # LEGACY MAINTENANCE TASKS ENDPOINT
 # ============================================================
 
-@app.get("/api/maintenance-tasks")
-def get_maintenance_tasks():
+@app.get("/api/maintenance-tasks", dependencies=[Depends(require_permission("tasks.view"))])
+def get_maintenance_tasks(user: CurrentUser = Depends(get_current_user)):
 
     connection = None
     cursor = None
@@ -139,23 +139,43 @@ def get_maintenance_tasks():
         connection = psycopg.connect(**DB_CONFIG)
         cursor = connection.cursor()
 
-        cursor.execute("""
-            SELECT
-                task_id,
-                asset_id,
-                department,
-                task_type,
-                description,
-                due_date,
-                estimated_duration_min,
-                overdue_days,
-                safety_risk,
-                priority_score,
-                priority_category,
-                task_status
-            FROM maintenance_tasks
-            ORDER BY priority_score DESC NULLS LAST
-        """)
+        if user.scope != "network":
+            cursor.execute("""
+                SELECT
+                    task_id,
+                    asset_id,
+                    department,
+                    task_type,
+                    description,
+                    due_date,
+                    estimated_duration_min,
+                    overdue_days,
+                    safety_risk,
+                    priority_score,
+                    priority_category,
+                    task_status
+                FROM maintenance_tasks
+                WHERE UPPER(department) = %s
+                ORDER BY priority_score DESC NULLS LAST
+            """, (user.dept.upper(),))
+        else:
+            cursor.execute("""
+                SELECT
+                    task_id,
+                    asset_id,
+                    department,
+                    task_type,
+                    description,
+                    due_date,
+                    estimated_duration_min,
+                    overdue_days,
+                    safety_risk,
+                    priority_score,
+                    priority_category,
+                    task_status
+                FROM maintenance_tasks
+                ORDER BY priority_score DESC NULLS LAST
+            """)
 
         rows = cursor.fetchall()
 

@@ -1,9 +1,12 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 import psycopg
 
 from db_config import DB_CONFIG
 
 from ml.predict_service import predict_asset_risk
+from auth.security import require_permission, get_current_user, CurrentUser
+from auth.permissions import is_network_scope, department_of
+from auth.audit import record_audit
 
 
 router = APIRouter(
@@ -20,7 +23,7 @@ def ai_health():
     }
 
 
-@router.post("/test-prediction")
+@router.post("/test-prediction", dependencies=[Depends(require_permission("optimizer.simulate"))])
 def test_prediction():
     asset = {
         "asset_id": "AST-TEST-001",
@@ -62,8 +65,11 @@ def test_prediction():
     )
 
 
-@router.get("/assets/{asset_id}/risk")
-def get_asset_risk(asset_id: str):
+@router.get("/assets/{asset_id}/risk", dependencies=[Depends(require_permission("ai.risk.view"))])
+def get_asset_risk(
+    asset_id: str,
+    user: CurrentUser = Depends(get_current_user)
+):
 
     connection = None
 
@@ -84,7 +90,8 @@ def get_asset_risk(asset_id: str):
                     health_score,
                     failure_risk,
                     installation_date,
-                    last_inspection_date
+                    last_inspection_date,
+                    department
                 FROM assets
                 WHERE asset_id = %s
                 """,
@@ -98,6 +105,14 @@ def get_asset_risk(asset_id: str):
                 status_code=404,
                 detail=f"Asset '{asset_id}' not found"
             )
+
+        if not is_network_scope(user.role_id):
+            dept = department_of(user.role_id)
+            if row[6] != dept:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Asset '{asset_id}' not found"
+                )
 
         asset = {
             "asset_id": row[0],
@@ -181,8 +196,8 @@ def get_asset_risk(asset_id: str):
         if connection:
             connection.close()
 
-@router.get("/assets/risk-ranking")
-def get_asset_risk_ranking():
+@router.get("/assets/risk-ranking", dependencies=[Depends(require_permission("ai.risk.view"))])
+def get_asset_risk_ranking(user: CurrentUser = Depends(get_current_user)):
 
     connection = None
 
@@ -193,21 +208,41 @@ def get_asset_risk_ranking():
         # GET ALL ASSETS
         # =====================================================
 
+        dept = department_of(user.role_id)
+        is_dept = not is_network_scope(user.role_id) and bool(dept)
+
         with connection.cursor() as cursor:
 
-            cursor.execute(
-                """
-                SELECT
-                    asset_id,
-                    criticality,
-                    health_score,
-                    failure_risk,
-                    installation_date,
-                    last_inspection_date
-                FROM assets
-                ORDER BY asset_id
-                """
-            )
+            if is_dept:
+                cursor.execute(
+                    """
+                    SELECT
+                        asset_id,
+                        criticality,
+                        health_score,
+                        failure_risk,
+                        installation_date,
+                        last_inspection_date
+                    FROM assets
+                    WHERE department = %s
+                    ORDER BY asset_id
+                    """,
+                    (dept,)
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT
+                        asset_id,
+                        criticality,
+                        health_score,
+                        failure_risk,
+                        installation_date,
+                        last_inspection_date
+                    FROM assets
+                    ORDER BY asset_id
+                    """
+                )
 
             asset_rows = cursor.fetchall()
 
@@ -328,39 +363,69 @@ def get_asset_risk_ranking():
             connection.close()
 
 
-@router.get("/tasks/priority-ranking")
-def get_task_priority_ranking():
+@router.get("/tasks/priority-ranking", dependencies=[Depends(require_permission("ai.risk.view"))])
+def get_task_priority_ranking(user: CurrentUser = Depends(get_current_user)):
 
     connection = None
 
     try:
         connection = psycopg.connect(**DB_CONFIG)
 
+        dept = department_of(user.role_id)
+        is_dept = not is_network_scope(user.role_id) and bool(dept)
+
         with connection.cursor() as cursor:
 
-            cursor.execute(
-                """
-                SELECT
-                    task_id,
-                    asset_id,
-                    department,
-                    task_type,
-                    description,
-                    due_date,
-                    estimated_duration_min,
-                    overdue_days,
-                    safety_risk,
-                    priority_score,
-                    priority_category,
-                    task_status
-                FROM maintenance_tasks
-                WHERE task_status NOT IN (
-                    'COMPLETED',
-                    'CANCELLED'
+            if is_dept:
+                cursor.execute(
+                    """
+                    SELECT
+                        task_id,
+                        asset_id,
+                        department,
+                        task_type,
+                        description,
+                        due_date,
+                        estimated_duration_min,
+                        overdue_days,
+                        safety_risk,
+                        priority_score,
+                        priority_category,
+                        task_status
+                    FROM maintenance_tasks
+                    WHERE task_status NOT IN (
+                        'COMPLETED',
+                        'CANCELLED'
+                    )
+                    AND department = %s
+                    ORDER BY task_id
+                    """,
+                    (dept,)
                 )
-                ORDER BY task_id
-                """
-            )
+            else:
+                cursor.execute(
+                    """
+                    SELECT
+                        task_id,
+                        asset_id,
+                        department,
+                        task_type,
+                        description,
+                        due_date,
+                        estimated_duration_min,
+                        overdue_days,
+                        safety_risk,
+                        priority_score,
+                        priority_category,
+                        task_status
+                    FROM maintenance_tasks
+                    WHERE task_status NOT IN (
+                        'COMPLETED',
+                        'CANCELLED'
+                    )
+                    ORDER BY task_id
+                    """
+                )
 
             task_rows = cursor.fetchall()
 
@@ -554,8 +619,8 @@ def get_task_priority_ranking():
             connection.close()
 
 
-@router.post("/tasks/apply-priorities")
-def apply_ai_task_priorities():
+@router.post("/tasks/apply-priorities", dependencies=[Depends(require_permission("ai.priorities.apply"))])
+def apply_ai_task_priorities(user: CurrentUser = Depends(get_current_user)):
 
     connection = None
 
@@ -563,7 +628,7 @@ def apply_ai_task_priorities():
         connection = psycopg.connect(**DB_CONFIG)
 
         # Get current AI rankings
-        ranking_response = get_task_priority_ranking()
+        ranking_response = get_task_priority_ranking(user=user)
 
         tasks = ranking_response["tasks"]
 
@@ -591,6 +656,17 @@ def apply_ai_task_priorities():
                 updated += cursor.rowcount
 
         connection.commit()
+
+        record_audit(
+            user=user,
+            method="POST",
+            path="/ai/tasks/apply-priorities",
+            action="ai.priorities.apply",
+            target_type="tasks",
+            target_id="all",
+            outcome="SUCCESS",
+            detail={"tasks_updated": updated}
+        )
 
         return {
             "status": "success",

@@ -1,9 +1,11 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from datetime import datetime, timedelta
 import psycopg
 import os
 from dotenv import load_dotenv
+
+from auth.security import require_permission
 
 load_dotenv()
 
@@ -43,7 +45,7 @@ class WindowRecommendationRequest(BaseModel):
 # RECOMMEND ALTERNATIVE WINDOWS
 # =========================================================
 
-@router.post("/recommend-windows")
+@router.post("/recommend-windows", dependencies=[Depends(require_permission("optimizer.simulate"))])
 def recommend_windows(request: WindowRecommendationRequest):
 
     conn = get_connection()

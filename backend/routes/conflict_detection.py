@@ -1,9 +1,13 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from datetime import datetime
 import psycopg
 import os
 from dotenv import load_dotenv
+
+from auth.security import require_permission, get_current_user, CurrentUser
+from auth.permissions import is_network_scope, department_of
+from auth.audit import record_audit
 
 load_dotenv()
 
@@ -23,8 +27,8 @@ def get_connection():
     )
 
 
-@router.get("/")
-def detect_conflicts():
+@router.get("/", dependencies=[Depends(require_permission("conflicts.view"))])
+def detect_conflicts(user: CurrentUser = Depends(get_current_user)):
 
     conn = get_connection()
     cursor = conn.cursor()
@@ -35,32 +39,63 @@ def detect_conflicts():
         # FIND OVERLAPPING BLOCK REQUESTS
         # ==========================================
 
-        cursor.execute("""
-            SELECT
-                a.request_id AS request_1,
-                b.request_id AS request_2,
-                a.corridor_id,
-                a.requested_date,
-                a.requested_start AS start_1,
-                a.requested_end AS end_1,
-                b.requested_start AS start_2,
-                b.requested_end AS end_2
-            FROM block_requests a
-            JOIN block_requests b
-                ON a.corridor_id = b.corridor_id
-                AND a.requested_date = b.requested_date
-                AND a.request_id < b.request_id
-            WHERE
-                a.requested_start IS NOT NULL
-                AND a.requested_end IS NOT NULL
-                AND b.requested_start IS NOT NULL
-                AND b.requested_end IS NOT NULL
-                AND a.requested_start < b.requested_end
-                AND b.requested_start < a.requested_end
-            ORDER BY
-                a.requested_date,
-                a.corridor_id
-        """)
+        dept_code = department_of(user.role_id)
+        if not is_network_scope(user.role_id) and dept_code:
+            dept_id = f"DEPT-{dept_code}"
+            cursor.execute("""
+                SELECT
+                    a.request_id AS request_1,
+                    b.request_id AS request_2,
+                    a.corridor_id,
+                    a.requested_date,
+                    a.requested_start AS start_1,
+                    a.requested_end AS end_1,
+                    b.requested_start AS start_2,
+                    b.requested_end AS end_2
+                FROM block_requests a
+                JOIN block_requests b
+                    ON a.corridor_id = b.corridor_id
+                    AND a.requested_date = b.requested_date
+                    AND a.request_id < b.request_id
+                WHERE
+                    a.requested_start IS NOT NULL
+                    AND a.requested_end IS NOT NULL
+                    AND b.requested_start IS NOT NULL
+                    AND b.requested_end IS NOT NULL
+                    AND a.requested_start < b.requested_end
+                    AND b.requested_start < a.requested_end
+                    AND (a.department_id = %s OR b.department_id = %s)
+                ORDER BY
+                    a.requested_date,
+                    a.corridor_id
+            """, (dept_id, dept_id))
+        else:
+            cursor.execute("""
+                SELECT
+                    a.request_id AS request_1,
+                    b.request_id AS request_2,
+                    a.corridor_id,
+                    a.requested_date,
+                    a.requested_start AS start_1,
+                    a.requested_end AS end_1,
+                    b.requested_start AS start_2,
+                    b.requested_end AS end_2
+                FROM block_requests a
+                JOIN block_requests b
+                    ON a.corridor_id = b.corridor_id
+                    AND a.requested_date = b.requested_date
+                    AND a.request_id < b.request_id
+                WHERE
+                    a.requested_start IS NOT NULL
+                    AND a.requested_end IS NOT NULL
+                    AND b.requested_start IS NOT NULL
+                    AND b.requested_end IS NOT NULL
+                    AND a.requested_start < b.requested_end
+                    AND b.requested_start < a.requested_end
+                ORDER BY
+                    a.requested_date,
+                    a.corridor_id
+            """)
 
         rows = cursor.fetchall()
 
@@ -245,14 +280,15 @@ def detect_conflicts():
 # ==========================================
 
 class ConflictResolveRequest(BaseModel):
-    resolved_by: str
+    resolved_by: str = ""
     resolution_note: str
 
 
-@router.post("/{conflict_id}/resolve")
+@router.post("/{conflict_id}/resolve", dependencies=[Depends(require_permission("conflicts.resolve"))])
 def resolve_conflict(
     conflict_id: int,
-    request: ConflictResolveRequest
+    request: ConflictResolveRequest,
+    user: CurrentUser = Depends(get_current_user)
 ):
 
     conn = get_connection()
@@ -296,6 +332,8 @@ def resolve_conflict(
         # UPDATE CONFLICT
         # ======================================
 
+        resolver = user.name if user and user.name else (request.resolved_by or "Control Office")
+
         cursor.execute("""
             UPDATE block_conflicts
             SET
@@ -306,7 +344,7 @@ def resolve_conflict(
             WHERE conflict_id = %s
         """, (
             request.resolution_note,
-            request.resolved_by,
+            resolver,
             datetime.now(),
             conflict_id
         ))
@@ -314,6 +352,16 @@ def resolve_conflict(
 
         conn.commit()
 
+        record_audit(
+            user=user,
+            method="POST",
+            path=f"/conflicts/{conflict_id}/resolve",
+            action="conflicts.resolve",
+            target_type="conflict",
+            target_id=str(conflict_id),
+            outcome="SUCCESS",
+            detail={"note": request.resolution_note}
+        )
 
         # ======================================
         # SUCCESS RESPONSE
@@ -324,7 +372,7 @@ def resolve_conflict(
             "message": "Conflict resolved successfully",
             "conflict_id": conflict_id,
             "conflict_status": "RESOLVED",
-            "resolved_by": request.resolved_by,
+            "resolved_by": resolver,
             "resolution_note": request.resolution_note
         }
 
