@@ -38,9 +38,11 @@ import { GovtHeader } from "./GovtHeader";
 import { GovtSidebar } from "./GovtSidebar";
 import { GovtFooter } from "./GovtFooter";
 import { GovtNationalEmblem } from "./GovtNationalEmblem";
+import { AccessDenied } from "./AccessDenied";
+import { ROUTE_ACCESS } from "@/lib/permissions";
 
 export function AppShell({ children }: { children: ReactNode }) {
-  const { role, signedIn, signIn, signOut, authReady } = useAbps();
+  const { role, signedIn, signIn, signOut, authReady, can } = useAbps();
   const { t } = useLanguage();
   const location = useLocation();
 
@@ -203,6 +205,10 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   // 2. AUTHENTICATED WORKSPACE: FULL-WIDTH WITH FLUSH LEFT-DOCKED SIDEBAR
   if (signedIn) {
+    const pathname = location.pathname.replace(/\/+$/, "") || "/";
+    const requiredPerm = ROUTE_ACCESS[pathname];
+    const isAuthorized = !requiredPerm || can(requiredPerm);
+
     return (
       <div className="flex min-h-screen flex-col bg-[#f4f6f9] dark:bg-[#0b1320] text-foreground">
         <GovtTopUtilityBar />
@@ -214,7 +220,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
           {/* Main Operational Workspace */}
           <main id="main-content" className="flex-1 min-w-0 p-4 sm:p-6 lg:p-8 overflow-x-hidden">
-            {children}
+            {isAuthorized ? children : <AccessDenied requiredPerm={requiredPerm} />}
           </main>
         </div>
 

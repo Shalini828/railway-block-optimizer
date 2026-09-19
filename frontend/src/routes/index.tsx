@@ -18,6 +18,7 @@ import { useLanguage } from "@/context/LanguageContext";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { GovtNationalEmblem } from "@/components/GovtNationalEmblem";
+import { ROUTE_ACCESS } from "@/lib/permissions";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -34,7 +35,7 @@ export const Route = createFileRoute("/")({
 });
 
 function LandingPage() {
-  const { signedIn } = useAbps();
+  const { signedIn, can } = useAbps();
   const { t } = useLanguage();
 
   const operationalModules = [
@@ -266,13 +267,15 @@ function LandingPage() {
           {t("Operational Modules & Applications Directory", "परिचालन मॉड्यूल एवं अनुप्रयोग निर्देशिका")}
         </h2>
         <span className="text-[11px] font-semibold text-slate-500">
-          {t("8 Modules Active", "8 मॉड्यूल सक्रिय")}
+          {operationalModules.filter((m) => !signedIn || !ROUTE_ACCESS[m.link] || can(ROUTE_ACCESS[m.link])).length} {t("Modules Active", "मॉड्यूल सक्रिय")}
         </span>
       </div>
 
       {/* Operational Modules Grid */}
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {operationalModules.map((module) => {
+        {operationalModules
+          .filter((module) => !signedIn || !ROUTE_ACCESS[module.link] || can(ROUTE_ACCESS[module.link]))
+          .map((module) => {
           const Icon = module.icon;
           return (
             <Link key={module.code} to={module.link} className="group outline-none">
