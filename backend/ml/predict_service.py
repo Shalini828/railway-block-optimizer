@@ -1,165 +1,218 @@
 import os
-
 import joblib
-
-from .features import (
-    build_asset_features,
-    features_to_dataframe,
-)
+import pandas as pd
 
 
-# ============================================================
-# MODEL PATH
-# ============================================================
+# =========================================================
+# MODEL PATHS
+# =========================================================
 
-BASE_DIR = os.path.dirname(
-    os.path.abspath(__file__)
-)
-
-MODEL_FILE = os.path.join(
-    BASE_DIR,
+MODEL_PATH = os.path.join(
+    os.path.dirname(__file__),
     "railway_risk_model.pkl"
 )
 
+THRESHOLD_PATH = os.path.join(
+    os.path.dirname(__file__),
+    "optimal_threshold.txt"
+)
 
-# ============================================================
+
+# =========================================================
+# FEATURE COLUMNS
+# =========================================================
+
+FEATURE_COLUMNS = [
+    "criticality",
+    "health_score",
+    "failure_risk",
+    "asset_age_years",
+    "days_since_inspection",
+    "defect_count",
+    "urgent_defect_count",
+    "max_safety_impact",
+    "repeat_failure",
+    "maintenance_count",
+    "corrective_maintenance_count",
+    "previous_failure_count"
+]
+
+
+# =========================================================
 # LOAD MODEL
-# ============================================================
+# =========================================================
 
 _model = None
+_threshold = None
 
 
 def get_model():
-    """
-    Load the trained Random Forest model once
-    and reuse it for future predictions.
-    """
-
     global _model
 
     if _model is None:
-        if not os.path.exists(MODEL_FILE):
-            raise FileNotFoundError(
-                f"Trained model not found: {MODEL_FILE}"
-            )
-
-        _model = joblib.load(
-            MODEL_FILE
-        )
+        _model = joblib.load(MODEL_PATH)
 
     return _model
 
 
-# ============================================================
+# =========================================================
+# LOAD OPTIMAL THRESHOLD
+# =========================================================
+
+def get_threshold():
+    global _threshold
+
+    if _threshold is None:
+
+        try:
+            with open(
+                THRESHOLD_PATH,
+                "r"
+            ) as f:
+
+                _threshold = float(
+                    f.read().strip()
+                )
+
+        except (
+            FileNotFoundError,
+            ValueError
+        ):
+
+            # Safe fallback if threshold file
+            # is unavailable.
+            _threshold = 0.5
+
+    return _threshold
+
+
+# =========================================================
 # PRIORITY CATEGORY
-# ============================================================
+# =========================================================
 
 def get_priority_category(
-    risk_percentage
-):
-    """
-    Convert ML risk probability into
-    a priority category.
-    """
+    risk_score: float
+) -> str:
 
-    if risk_percentage >= 80:
+    if risk_score >= 85:
         return "CRITICAL"
 
-    if risk_percentage >= 60:
+    elif risk_score >= 70:
         return "HIGH"
 
-    if risk_percentage >= 40:
+    elif risk_score >= 50:
         return "MEDIUM"
 
-    return "LOW"
+    else:
+        return "LOW"
 
 
-# ============================================================
-# PREDICT ONE ASSET
-# ============================================================
+# =========================================================
+# PREDICT ASSET RISK
+# =========================================================
 
 def predict_asset_risk(
-    asset,
-    defects=None,
-    maintenance_history=None,
+    asset: dict,
+    defects: list,
+    maintenance_history: list
 ):
-    """
-    Predict urgent maintenance risk for one
-    railway asset.
-
-    Returns a dictionary containing:
-
-    - risk_probability
-    - risk_score
-    - priority_category
-    - prediction
-    - features
-    """
-
-    # --------------------------------------------------------
-    # 1. BUILD FEATURES
-    # --------------------------------------------------------
-
-    features = build_asset_features(
-        asset=asset,
-        defects=defects,
-        maintenance_history=maintenance_history,
-    )
-
-    # --------------------------------------------------------
-    # 2. CONVERT TO MODEL INPUT
-    # --------------------------------------------------------
-
-    input_data = features_to_dataframe(
-        features
-    )
-
-    # --------------------------------------------------------
-    # 3. LOAD MODEL
-    # --------------------------------------------------------
 
     model = get_model()
 
-    # --------------------------------------------------------
-    # 4. PREDICT
-    # --------------------------------------------------------
+    threshold = get_threshold()
 
-    prediction = int(
-        model.predict(
-            input_data
-        )[0]
+    # -----------------------------------------------------
+    # Build feature values
+    # -----------------------------------------------------
+
+    from .features import build_asset_features
+
+    features = build_asset_features(
+        asset,
+        defects,
+        maintenance_history
     )
 
-    probability = float(
-        model.predict_proba(
-            input_data
-        )[0][1]
+    # -----------------------------------------------------
+    # Convert to DataFrame
+    # -----------------------------------------------------
+
+    feature_data = {
+        column: [
+            features.get(
+                column,
+                0
+            )
+        ]
+        for column in FEATURE_COLUMNS
+    }
+
+    X = pd.DataFrame(
+        feature_data,
+        columns=FEATURE_COLUMNS
     )
 
-    risk_percentage = round(
-        probability * 100,
+    # -----------------------------------------------------
+    # Probability prediction
+    # -----------------------------------------------------
+
+    probabilities = model.predict_proba(X)
+
+    urgent_probability = float(
+        probabilities[0][1]
+    )
+
+    # -----------------------------------------------------
+    # Apply optimized threshold
+    # -----------------------------------------------------
+
+    urgent_prediction = int(
+        urgent_probability >= threshold
+    )
+
+    # -----------------------------------------------------
+    # Risk score
+    # -----------------------------------------------------
+
+    risk_score = round(
+        urgent_probability * 100,
         2
     )
 
-    # --------------------------------------------------------
-    # 5. PRIORITY
-    # --------------------------------------------------------
-
-    priority = get_priority_category(
-        risk_percentage
+    priority_category = get_priority_category(
+        risk_score
     )
 
-    # --------------------------------------------------------
-    # 6. RETURN RESULT
-    # --------------------------------------------------------
+    # -----------------------------------------------------
+    # Return prediction
+    # -----------------------------------------------------
 
     return {
-        "asset_id": asset.get(
-            "asset_id"
-        ),
-        "risk_probability": probability,
-        "risk_score": risk_percentage,
-        "priority_category": priority,
-        "urgent_maintenance_prediction": prediction,
-        "features": features,
+
+        "asset_id":
+            asset.get("asset_id"),
+
+        "risk_probability":
+            round(
+                urgent_probability,
+                6
+            ),
+
+        "risk_score":
+            risk_score,
+
+        "priority_category":
+            priority_category,
+
+        "urgent_maintenance_prediction":
+            urgent_prediction,
+
+        "decision_threshold":
+            round(
+                threshold,
+                6
+            ),
+
+        "features":
+            features
     }
