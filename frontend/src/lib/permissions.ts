@@ -8,6 +8,7 @@ import {
   Siren,
   Wrench,
   Shield,
+  ShieldCheck,
   type LucideIcon,
 } from "lucide-react";
 import type { RoleId } from "./abps-data";
