@@ -108,7 +108,28 @@ export const TRACTION_NAV: NavSection[] = [
   },
 ];
 
+export const ADMIN_NAV: NavSection[] = [
+  ...ADMIN_CONTROL_NAV,
+  {
+    titleEn: "SYSTEM GOVERNANCE",
+    titleHi: "सिस्टम शासन",
+    items: [
+      {
+        to: "/admin",
+        labelEn: "System Administration",
+        labelHi: "सिस्टम प्रशासन",
+        icon: ShieldCheck,
+        badge: "RBAC",
+        badgeTone: "bg-[#003366] text-white",
+      },
+    ],
+  },
+];
+
 export function getNavSections(roleId: RoleId | string): NavSection[] {
+  if (roleId === "admin") {
+    return ADMIN_NAV;
+  }
   if (roleId === "engineering") {
     return ENGINEERING_NAV;
   }
