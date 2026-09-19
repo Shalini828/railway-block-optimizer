@@ -55,6 +55,114 @@ class BlockRequestCreate(BaseModel):
 
 
 # =========================================================
+# HELPERS
+# =========================================================
+
+def normalize_criticality(value: str) -> str:
+    value = (value or "").strip().lower()
+
+    mapping = {
+        "critical": "Critical",
+        "high": "High",
+        "medium": "Medium",
+        "low": "Low",
+    }
+
+    return mapping.get(value, "Low")
+
+
+def criticality_to_level(value: str) -> int:
+    mapping = {
+        "Critical": 5,
+        "High": 4,
+        "Medium": 3,
+        "Low": 2,
+    }
+
+    return mapping.get(value, 2)
+
+
+def resolve_user_id(cursor, requested_by: str):
+    """
+    Try to resolve the frontend's requestedBy value to an existing
+    users.user_id.
+
+    The frontend may send:
+      - user_id
+      - employee_code
+      - email
+
+    If no matching user exists, return None because requested_by
+    is intentionally nullable for backward compatibility.
+    """
+
+    if not requested_by:
+        return None
+
+    value = requested_by.strip()
+
+    if not value:
+        return None
+
+    cursor.execute(
+        """
+        SELECT user_id
+        FROM users
+        WHERE user_id = %s
+           OR employee_code = %s
+           OR email = %s
+        LIMIT 1
+        """,
+        (value, value, value)
+    )
+
+    row = cursor.fetchone()
+
+    return row[0] if row else None
+
+
+def resolve_section_id(cursor, section: str, corridor_id: str):
+    """
+    Resolve a frontend section value to corridor_sections.section_id.
+
+    We support:
+      - section_id
+      - section_code
+      - section_name
+
+    If the current database has no matching section yet,
+    return None so existing requests continue to work.
+    """
+
+    if not section:
+        return None
+
+    value = section.strip()
+
+    if not value:
+        return None
+
+    cursor.execute(
+        """
+        SELECT section_id
+        FROM corridor_sections
+        WHERE corridor_id = %s
+          AND (
+                section_id = %s
+                OR section_code = %s
+                OR section_name = %s
+              )
+        LIMIT 1
+        """,
+        (corridor_id, value, value, value)
+    )
+
+    row = cursor.fetchone()
+
+    return row[0] if row else None
+
+
+# =========================================================
 # GET ALL BLOCK REQUESTS
 # =========================================================
 
@@ -66,7 +174,8 @@ def get_block_requests():
 
     try:
 
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT
                 request_id,
                 task_id,
@@ -78,12 +187,25 @@ def get_block_requests():
                 requested_duration_min,
                 block_type,
                 request_status,
-                submitted_date
+                submitted_date,
+                requested_by,
+                department_id,
+                section_id,
+                criticality,
+                safety_risk,
+                description,
+                review_status,
+                reviewed_by,
+                reviewed_at,
+                rejection_reason,
+                created_at,
+                updated_at
             FROM block_requests
             ORDER BY
                 requested_date NULLS LAST,
                 requested_start NULLS LAST
-        """)
+            """
+        )
 
         rows = cursor.fetchall()
 
@@ -99,7 +221,33 @@ def get_block_requests():
                 "requested_duration_min": row[7],
                 "block_type": row[8],
                 "request_status": row[9],
-                "submitted_date": str(row[10]) if row[10] else None
+                "submitted_date": str(row[10]) if row[10] else None,
+
+                # New workflow fields
+                "requested_by": row[11],
+                "department_id": row[12],
+                "section_id": row[13],
+                "criticality": row[14],
+                "safety_risk": row[15],
+                "description": row[16],
+                "review_status": row[17],
+                "reviewed_by": row[18],
+                "reviewed_at": (
+                    row[19].isoformat()
+                    if row[19]
+                    else None
+                ),
+                "rejection_reason": row[20],
+                "created_at": (
+                    row[21].isoformat()
+                    if row[21]
+                    else None
+                ),
+                "updated_at": (
+                    row[22].isoformat()
+                    if row[22]
+                    else None
+                ),
             }
             for row in rows
         ]
@@ -130,21 +278,17 @@ def create_block_request(request: BlockRequestCreate):
         asset_input = request.assetId.strip()
         block_type = request.blockType.strip()
 
-        criticality = (
-            request.criticality.strip().title()
+        criticality = normalize_criticality(
+            request.criticality
+        )
+
+        criticality_level = criticality_to_level(
+            criticality
         )
 
 
         # =====================================================
         # 2. DEPARTMENT → REAL DATABASE TEAM ID
-        # =====================================================
-        #
-        # Actual DB:
-        #
-        # TEAM-001
-        # TEAM-002
-        # TEAM-003
-        #
         # =====================================================
 
         team_mapping = {
@@ -156,14 +300,36 @@ def create_block_request(request: BlockRequestCreate):
         team_id = team_mapping.get(department)
 
         if not team_id:
-
             raise HTTPException(
                 status_code=400,
                 detail=f"Invalid department: {request.dept}"
             )
 
 
-        # Verify team exists
+        # =====================================================
+        # 3. DEPARTMENT → DEPARTMENT TABLE
+        # =====================================================
+
+        department_mapping = {
+            "TMS": "DEPT-TMS",
+            "SMMS": "DEPT-SMMS",
+            "TDMS": "DEPT-TDMS"
+        }
+
+        department_id = department_mapping.get(
+            department
+        )
+
+        if not department_id:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No department configuration found for {department}."
+            )
+
+
+        # =====================================================
+        # 4. VERIFY TEAM EXISTS
+        # =====================================================
 
         cursor.execute(
             """
@@ -176,7 +342,6 @@ def create_block_request(request: BlockRequestCreate):
         )
 
         if cursor.fetchone() is None:
-
             raise HTTPException(
                 status_code=500,
                 detail=(
@@ -187,29 +352,21 @@ def create_block_request(request: BlockRequestCreate):
 
 
         # =====================================================
-        # 3. CORRIDOR MAPPING
+        # 5. CORRIDOR MAPPING
         # =====================================================
 
         corridor_mapping = {
             "New Delhi (NDLS) - Ghaziabad (GZB)": "C02",
-
             "Ghaziabad (GZB) - Kanpur (CNB)": "C02",
-
             "Kanpur (CNB) - Prayagraj (PRYJ)": "C03",
-
             "Prayagraj (PRYJ) - Varanasi (BSB)": "C04",
-
             "CNB Outer": "C05",
-
             "NDLS Station Limits": "C06",
 
             # Short names
             "NDLS-GZB": "C01",
-
             "GZB-CNB": "C02",
-
             "CNB-PRYJ": "C03",
-
             "PRYJ-BSB": "C04"
         }
 
@@ -217,7 +374,7 @@ def create_block_request(request: BlockRequestCreate):
 
 
         # =====================================================
-        # 4. ALLOW DIRECT CORRIDOR ID
+        # 6. ALLOW DIRECT CORRIDOR ID
         # =====================================================
 
         if not corridor_id:
@@ -235,12 +392,10 @@ def create_block_request(request: BlockRequestCreate):
             corridor_row = cursor.fetchone()
 
             if corridor_row:
-
                 corridor_id = corridor_row[0]
 
 
         if not corridor_id:
-
             raise HTTPException(
                 status_code=400,
                 detail=(
@@ -251,17 +406,28 @@ def create_block_request(request: BlockRequestCreate):
 
 
         # =====================================================
-        # 5. ASSET ID → REAL DATABASE ASSET ID
+        # 7. RESOLVE SECTION ID
         # =====================================================
-        #
-        # Frontend may send:
-        #
-        # A001
-        #
-        # Database uses:
-        #
-        # AST-0001
-        #
+
+        section_id = resolve_section_id(
+            cursor,
+            section,
+            corridor_id
+        )
+
+
+        # =====================================================
+        # 8. RESOLVE REQUESTING USER
+        # =====================================================
+
+        requested_by_user_id = resolve_user_id(
+            cursor,
+            request.requestedBy
+        )
+
+
+        # =====================================================
+        # 9. ASSET ID → REAL DATABASE ASSET ID
         # =====================================================
 
         asset_mapping = {
@@ -295,7 +461,7 @@ def create_block_request(request: BlockRequestCreate):
 
 
         # =====================================================
-        # 6. VERIFY ASSET EXISTS
+        # 10. VERIFY ASSET EXISTS
         # =====================================================
 
         cursor.execute(
@@ -311,7 +477,6 @@ def create_block_request(request: BlockRequestCreate):
         asset_row = cursor.fetchone()
 
         if not asset_row:
-
             raise HTTPException(
                 status_code=400,
                 detail=(
@@ -323,38 +488,21 @@ def create_block_request(request: BlockRequestCreate):
 
 
         # =====================================================
-        # 7. VALIDATE DURATION
-        # =====================================================
-        #
-        # IMPORTANT:
-        #
-        # The frontend sends duration in MINUTES.
-        #
-        # 60  = 60 minutes
-        # 120 = 120 minutes
-        # 180 = 180 minutes
-        # 240 = maximum 4 hours
-        #
-        # DO NOT multiply by 60.
-        #
+        # 11. VALIDATE DURATION
         # =====================================================
 
+        # Frontend sends duration in minutes.
         duration_minutes = int(
             round(request.duration)
         )
 
         if duration_minutes <= 0:
-
             raise HTTPException(
                 status_code=400,
-                detail=(
-                    "Duration must be greater than "
-                    "0 minutes."
-                )
+                detail="Duration must be greater than 0 minutes."
             )
 
         if duration_minutes > 240:
-
             raise HTTPException(
                 status_code=400,
                 detail=(
@@ -365,7 +513,7 @@ def create_block_request(request: BlockRequestCreate):
 
 
         # =====================================================
-        # 8. DETERMINE PLANNING DATE
+        # 12. DETERMINE PLANNING DATE
         # =====================================================
 
         cursor.execute(
@@ -386,14 +534,7 @@ def create_block_request(request: BlockRequestCreate):
 
 
         # =====================================================
-        # 9. DETERMINE START TIME
-        # =====================================================
-        #
-        # New request is placed after the latest request
-        # on the same corridor with a 30-minute separation.
-        #
-        # If no request exists, start at 09:00.
-        #
+        # 13. DETERMINE START TIME
         # =====================================================
 
         cursor.execute(
@@ -441,7 +582,7 @@ def create_block_request(request: BlockRequestCreate):
 
 
         # =====================================================
-        # 10. CALCULATE END TIME
+        # 14. CALCULATE END TIME
         # =====================================================
 
         requested_end_datetime = (
@@ -453,7 +594,7 @@ def create_block_request(request: BlockRequestCreate):
 
 
         # =====================================================
-        # 11. MIDNIGHT PROTECTION
+        # 15. MIDNIGHT PROTECTION
         # =====================================================
 
         if requested_end_datetime.date() != planning_date:
@@ -481,7 +622,7 @@ def create_block_request(request: BlockRequestCreate):
 
 
         # =====================================================
-        # 12. GENERATE TASK ID
+        # 16. GENERATE TASK ID
         # =====================================================
 
         cursor.execute(
@@ -495,7 +636,6 @@ def create_block_request(request: BlockRequestCreate):
         )
 
         last_task = cursor.fetchone()
-
 
         if last_task:
 
@@ -523,14 +663,13 @@ def create_block_request(request: BlockRequestCreate):
 
             task_number = 1
 
-
         task_id = (
             f"T-AUTO-{task_number:04d}"
         )
 
 
         # =====================================================
-        # 13. GENERATE REQUEST ID
+        # 17. GENERATE REQUEST ID
         # =====================================================
 
         cursor.execute(
@@ -544,7 +683,6 @@ def create_block_request(request: BlockRequestCreate):
         )
 
         last_request = cursor.fetchone()
-
 
         if last_request:
 
@@ -572,14 +710,13 @@ def create_block_request(request: BlockRequestCreate):
 
             request_number = 1
 
-
         request_id = (
             f"BR-AUTO-{request_number:04d}"
         )
 
 
         # =====================================================
-        # 14. PRIORITY SCORE
+        # 18. PRIORITY SCORE
         # =====================================================
 
         if criticality == "Critical":
@@ -599,15 +736,11 @@ def create_block_request(request: BlockRequestCreate):
             criticality_score = 12
 
 
-        # Overdue contribution
-
         overdue_score = min(
             max(request.daysOverdue, 0) * 2.2,
             30
         )
 
-
-        # TSR contribution
 
         tsr_score = (
             18
@@ -615,8 +748,6 @@ def create_block_request(request: BlockRequestCreate):
             else 0
         )
 
-
-        # Block type contribution
 
         if block_type == "Power Block":
 
@@ -630,8 +761,6 @@ def create_block_request(request: BlockRequestCreate):
 
             hazard_score = 6
 
-
-        # Final score
 
         priority_score = (
             criticality_score
@@ -648,7 +777,7 @@ def create_block_request(request: BlockRequestCreate):
 
 
         # =====================================================
-        # 15. PRIORITY CATEGORY
+        # 19. PRIORITY CATEGORY
         # =====================================================
 
         if priority_score >= 85:
@@ -669,7 +798,7 @@ def create_block_request(request: BlockRequestCreate):
 
 
         # =====================================================
-        # 16. TASK TYPE
+        # 20. TASK TYPE
         # =====================================================
 
         if criticality in [
@@ -690,27 +819,18 @@ def create_block_request(request: BlockRequestCreate):
 
 
         # =====================================================
-        # 17. SAFETY RISK
-        # =====================================================
-        #
-        # Database constraint:
-        #
-        # safety_risk >= 1
-        #
-        # Normal maintenance = 1
-        # TSR risk = 3
-        #
+        # 21. SAFETY RISK
         # =====================================================
 
         safety_risk = (
             3
             if request.tsrRisk
-            else 1
+            else max(1, min(5, criticality_level - 1))
         )
 
 
         # =====================================================
-        # 18. DESCRIPTION
+        # 22. DESCRIPTION
         # =====================================================
 
         description = (
@@ -725,7 +845,7 @@ def create_block_request(request: BlockRequestCreate):
 
 
         # =====================================================
-        # 19. INSERT MAINTENANCE TASK
+        # 23. INSERT MAINTENANCE TASK
         # =====================================================
 
         cursor.execute(
@@ -785,7 +905,7 @@ def create_block_request(request: BlockRequestCreate):
 
 
         # =====================================================
-        # 20. INSERT BLOCK REQUEST
+        # 24. INSERT BLOCK REQUEST
         # =====================================================
 
         cursor.execute(
@@ -802,7 +922,17 @@ def create_block_request(request: BlockRequestCreate):
                 requested_duration_min,
                 block_type,
                 request_status,
-                submitted_date
+                submitted_date,
+
+                requested_by,
+                department_id,
+                section_id,
+                criticality,
+                safety_risk,
+                description,
+                review_status,
+                created_at,
+                updated_at
             )
             VALUES
             (
@@ -816,7 +946,17 @@ def create_block_request(request: BlockRequestCreate):
                 %s,
                 %s,
                 %s,
-                %s
+                %s,
+
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                CURRENT_TIMESTAMP,
+                CURRENT_TIMESTAMP
             )
             """,
             (
@@ -829,21 +969,36 @@ def create_block_request(request: BlockRequestCreate):
                 requested_end,
                 duration_minutes,
                 block_type,
+
+                # Keep PENDING because the current
+                # optimizer reads PENDING requests.
                 "PENDING",
-                date.today()
+
+                date.today(),
+
+                requested_by_user_id,
+                department_id,
+                section_id,
+                criticality_level,
+                safety_risk,
+                description,
+
+                # Department review is represented separately
+                # so existing optimizer compatibility is retained.
+                "PENDING"
             )
         )
 
 
         # =====================================================
-        # 21. COMMIT TRANSACTION
+        # 25. COMMIT TRANSACTION
         # =====================================================
 
         conn.commit()
 
 
         # =====================================================
-        # 22. RETURN SUCCESS
+        # 26. RETURN SUCCESS
         # =====================================================
 
         return {
@@ -858,6 +1013,12 @@ def create_block_request(request: BlockRequestCreate):
             "task_id": task_id,
 
             "team_id": team_id,
+
+            "department_id": department_id,
+
+            "requested_by": requested_by_user_id,
+
+            "section_id": section_id,
 
             "corridor_id": corridor_id,
 
@@ -883,7 +1044,11 @@ def create_block_request(request: BlockRequestCreate):
                 priority_category
             ),
 
+            "criticality": criticality_level,
+
             "safety_risk": safety_risk,
+
+            "review_status": "PENDING",
 
             "request_status": "PENDING"
         }
