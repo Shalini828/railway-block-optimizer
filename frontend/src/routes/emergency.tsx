@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import {
   AlertOctagon,
   ShieldAlert,
@@ -48,6 +48,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useLanguage } from "@/context/LanguageContext";
+import { useAbps } from "@/context/AbpsContext";
 
 export const Route = createFileRoute("/emergency")({
   head: () => ({
@@ -126,7 +127,22 @@ const EMERGENCY_TYPES = [
 
 function EmergencyPage() {
   const { t } = useLanguage();
+  const { role, can } = useAbps();
   const [emergencies, setEmergencies] = useState<Emergency[]>([]);
+
+  const allowedEmergencyTypes = useMemo(() => {
+    if (role.id === "engineering") {
+      return EMERGENCY_TYPES.filter((t) =>
+        ["Track", "Engineering", "General"].includes(t.group),
+      );
+    }
+    if (role.id === "traction") {
+      return EMERGENCY_TYPES.filter((t) =>
+        ["Traction", "General"].includes(t.group),
+      );
+    }
+    return EMERGENCY_TYPES;
+  }, [role.id]);
   const [activity, setActivity] = useState<ActivityEvent[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [newSection, setNewSection] = useState("");
@@ -550,12 +566,12 @@ function EmergencyPage() {
                   <SelectValue placeholder="Select emergency type..." />
                 </SelectTrigger>
                 <SelectContent className="rounded-[2px] border-slate-300">
-                  {Array.from(new Set(EMERGENCY_TYPES.map((type) => type.group))).map((group) => (
+                  {Array.from(new Set(allowedEmergencyTypes.map((type) => type.group))).map((group) => (
                     <div key={group}>
                       <div className="px-2 py-1 text-[10px] font-bold text-slate-500 uppercase tracking-wider bg-slate-100">
                         {group}
                       </div>
-                      {EMERGENCY_TYPES.filter((type) => type.group === group).map((type) => (
+                      {allowedEmergencyTypes.filter((type) => type.group === group).map((type) => (
                         <SelectItem key={type.value} value={type.value} className="text-xs">
                           {type.value}
                         </SelectItem>
@@ -701,14 +717,16 @@ function EmergencyPage() {
                       >
                         Docket Details
                       </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="text-[11px] font-bold uppercase rounded-[2px] h-7 border-emerald-400 bg-emerald-50 text-[#137547] hover:bg-emerald-100"
-                        onClick={() => setResolveModal(emergency.id)}
-                      >
-                        Resolve Block
-                      </Button>
+                      {can("emergency.resolve") && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="text-[11px] font-bold uppercase rounded-[2px] h-7 border-emerald-400 bg-emerald-50 text-[#137547] hover:bg-emerald-100"
+                          onClick={() => setResolveModal(emergency.id)}
+                        >
+                          {t("Resolve Block", "ब्लॉक सुलझाएं")}
+                        </Button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -854,10 +872,22 @@ function EmergencyPage() {
               </div>
             </div>
             <p className="text-xs text-slate-700 font-semibold">
-              Has physical track fitness memo been received from the Senior Section Engineer (SSE)?
+              {t(
+                "Has physical track fitness memo been received from the Senior Section Engineer (SSE)?",
+                "क्या वरिष्ठ अनुभाग अभियंता (एसएसई) से भौतिक ट्रैक फिटनेस मेमो प्राप्त हुआ है?",
+              )}
             </p>
+            <div className="bg-emerald-50 border border-emerald-300 p-2.5 rounded-[2px] text-xs font-bold text-[#137547]">
+              {t(
+                "Confirm the section is safe and normal working can resume.",
+                "पुष्टि करें कि अनुभाग सुरक्षित है और सामान्य कार्य फिर से शुरू हो सकता है।",
+              )}
+            </div>
             <p className="text-[11px] text-slate-500">
-              Confirming clearance will restore line availability and notify the Section Controller.
+              {t(
+                "Confirming clearance will restore line availability and notify the Section Controller.",
+                "निकासी की पुष्टि करने से लाइन की उपलब्धता बहाल हो जाएगी और अनुभाग नियंत्रक को सूचित किया जाएगा।",
+              )}
             </p>
           </div>
           <DialogFooter className="bg-slate-100 px-4 py-2.5 border-t border-slate-200 flex justify-end gap-2">
@@ -945,17 +975,19 @@ function EmergencyPage() {
                 </p>
               </div>
 
-              <div className="pt-2">
-                <Button
-                  className="w-full bg-[#137547] hover:bg-[#0f5c37] text-white font-bold text-xs uppercase tracking-wider rounded-[2px] h-9 gap-1.5"
-                  onClick={() => {
-                    setDetailsDrawer(null);
-                    setTimeout(() => setResolveModal(activeDrawerBlock.id), 200);
-                  }}
-                >
-                  <CheckCircle2 className="size-4" /> Certify Block Resolution
-                </Button>
-              </div>
+              {can("emergency.resolve") && (
+                <div className="pt-2">
+                  <Button
+                    className="w-full bg-[#137547] hover:bg-[#0f5c37] text-white font-bold text-xs uppercase tracking-wider rounded-[2px] h-9 gap-1.5"
+                    onClick={() => {
+                      setDetailsDrawer(null);
+                      setTimeout(() => setResolveModal(activeDrawerBlock.id), 200);
+                    }}
+                  >
+                    <CheckCircle2 className="size-4" /> Certify Block Resolution
+                  </Button>
+                </div>
+              )}
             </div>
           )}
         </SheetContent>

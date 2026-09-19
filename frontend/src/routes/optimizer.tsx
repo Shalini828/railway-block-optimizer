@@ -43,6 +43,9 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 
+import { Can } from "@/components/Can";
+import { useLanguage } from "@/context/LanguageContext";
+
 export const Route = createFileRoute("/optimizer")({
   head: () => ({
     meta: [
@@ -96,7 +99,6 @@ interface SavedPlanBlock {
   optimization_score: string | number;
   number_of_tasks?: string | number;
   number_of_departments?: string | number;
-  block_status?: string;
   conflicts?: unknown[];
   tasks?: unknown[];
   train_conflicts?: number;
@@ -167,7 +169,8 @@ async function fetchSavedOptimization(): Promise<OptimizationApiResponse | null>
 }
 
 function OptimizerPage() {
-  const { reqs, plan, conflicts, optimize } = useAbps();
+  const { reqs, plan, conflicts, optimize, scope } = useAbps();
+  const { t } = useLanguage();
 
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -397,25 +400,55 @@ function OptimizerPage() {
             <span className="text-[11px] text-muted-foreground font-mono">
               Status: <strong className="text-emerald-700 dark:text-emerald-400">ENGINE READY</strong>
             </span>
-            <Button
-              onClick={run}
-              disabled={running}
-              size="sm"
-              className="bg-[#003366] hover:bg-[#002244] text-white font-bold h-8 text-xs rounded-[2px]"
-            >
-              {running ? (
-                <>
-                  <RefreshCw className="mr-1.5 size-3.5 animate-spin" /> Optimizing...
-                </>
-              ) : (
-                <>
-                  <BrainCircuit className="mr-1.5 size-3.5 text-[#FF9933]" /> Execute AI Engine
-                </>
+            <Can
+              perm="optimizer.run"
+              fallback="disable"
+              reason={t(
+                "Scheduling is restricted to Control Office and DRM Planning",
+                "शेड्यूलिंग नियंत्रण कार्यालय और डीआरएम योजना तक सीमित है"
               )}
-            </Button>
+            >
+              <Button
+                onClick={run}
+                disabled={running}
+                size="sm"
+                className="bg-[#003366] hover:bg-[#002244] text-white font-bold h-8 text-xs rounded-[2px]"
+              >
+                {running ? (
+                  <>
+                    <RefreshCw className="mr-1.5 size-3.5 animate-spin" /> {t("Optimizing...", "अनुकूलन जारी...")}
+                  </>
+                ) : (
+                  <>
+                    <BrainCircuit className="mr-1.5 size-3.5 text-[#FF9933]" /> {t("Execute AI Engine", "एआई इंजन चलाएं")}
+                  </>
+                )}
+              </Button>
+            </Can>
           </div>
         }
       />
+
+      {/* Department Read-Only Notice Banner */}
+      {scope === "department" && (
+        <div className="mb-5 bg-amber-50 dark:bg-amber-950/40 border-2 border-amber-300 dark:border-amber-800 p-3.5 rounded-[2px] flex items-center gap-3">
+          <Info className="size-5 text-amber-700 dark:text-amber-400 shrink-0" />
+          <div>
+            <h4 className="text-xs font-bold uppercase tracking-wider text-amber-950 dark:text-amber-100">
+              {t(
+                "Read-only — scheduling is run by Control / DRM Planning",
+                "केवल पढ़ने के लिए — शेड्यूलिंग नियंत्रण / डीआरएम योजना द्वारा संचालित है"
+              )}
+            </h4>
+            <p className="text-[11px] text-amber-800 dark:text-amber-300 mt-0.5">
+              {t(
+                "Departmental engineers may review AI schedule recommendations and shadow clusters for their division.",
+                "विभागीय इंजीनियर अपने प्रभाग के लिए एआई शेड्यूल सिफारिशों और शैडो समूहों की समीक्षा कर सकते हैं।"
+              )}
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Optimization Pipeline Step Progress */}
       <Card className="mb-6 border-2 border-[#003366] bg-white dark:bg-slate-900 rounded-[2px] shadow-none">

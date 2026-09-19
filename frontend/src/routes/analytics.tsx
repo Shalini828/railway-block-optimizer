@@ -413,7 +413,7 @@ const departmentDetails = [
 ];
 
 function AnalyticsPage() {
-  const { reqs } = useAbps();
+  const { reqs, role, scope } = useAbps();
   const { t } = useLanguage();
   const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
   const [timeRange, setTimeRange] = useState<"today" | "7d" | "30d">("7d");
@@ -595,7 +595,11 @@ function AnalyticsPage() {
                 </span>
               </div>
               <h1 className="text-lg md:text-xl font-bold font-serif tracking-tight text-white mt-0.5">
-                {t("Sectional Performance & Availability Audit Report", "अनुभागीय प्रदर्शन एवं उपलब्धता ऑडिट रिपोर्ट")}
+                {role.id === "engineering"
+                  ? t("TMS Departmental Performance & Availability Analytics", "टीएमएस विभागीय प्रदर्शन एवं उपलब्धता विश्लेषण")
+                  : role.id === "traction"
+                    ? t("TRD Departmental Performance & Availability Analytics", "टीआरडी विभागीय प्रदर्शन एवं उपलब्धता विश्लेषण")
+                    : t("Sectional Performance & Availability Audit Report", "अनुभागीय प्रदर्शन एवं उपलब्धता ऑडिट रिपोर्ट")}
               </h1>
             </div>
           </div>

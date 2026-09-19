@@ -53,6 +53,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useLanguage } from "@/context/LanguageContext";
+import { useAbps } from "@/context/AbpsContext";
 
 export const Route = createFileRoute("/maintenance-tasks")({
   head: () => ({
@@ -88,6 +89,7 @@ const ITEMS_PER_PAGE = 10;
 
 export default function MaintenanceTasksPage() {
   const { t } = useLanguage();
+  const { role, scope, can } = useAbps();
   const [tasks, setTasks] = useState<MaintenanceTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -95,7 +97,8 @@ export default function MaintenanceTasksPage() {
 
   // Filters
   const [search, setSearch] = useState("");
-  const [deptFilter, setDeptFilter] = useState("All");
+  const initialDept = scope === "department" ? role.dept : "All";
+  const [deptFilter, setDeptFilter] = useState(initialDept);
   const [priorityFilter, setPriorityFilter] = useState("All");
   const [statusFilter, setStatusFilter] = useState("All");
   const [riskFilter, setRiskFilter] = useState("All");
@@ -526,9 +529,10 @@ export default function MaintenanceTasksPage() {
             />
           </div>
           <FilterSelect
-            value={deptFilter}
+            value={scope === "department" ? role.dept : deptFilter}
             onChange={setDeptFilter}
-            options={["All", ...depts]}
+            options={scope === "department" ? [role.dept] : ["All", ...depts]}
+            disabled={scope === "department"}
             w="w-[120px]"
           />
           <FilterSelect
@@ -777,7 +781,7 @@ export default function MaintenanceTasksPage() {
                           >
                             <Eye className="size-3 mr-1" /> View
                           </Button>
-                          {task.task_status !== "COMPLETED" && (
+                          {task.task_status !== "COMPLETED" && can("tasks.update") && (
                             <Button
                               variant="outline"
                               size="sm"
@@ -998,7 +1002,7 @@ export default function MaintenanceTasksPage() {
                     <BrainCircuit className="size-4 text-[#FF9933]" /> Cluster for AI Scheduling
                   </Link>
                 </Button>
-                {viewTask.task_status !== "COMPLETED" && (
+                {viewTask.task_status !== "COMPLETED" && can("tasks.update") && (
                   <Button
                     variant="outline"
                     className="w-full text-xs font-bold text-[#137547] border-emerald-400 bg-emerald-50 hover:bg-emerald-100 rounded-[2px] h-9 gap-1.5"
@@ -1062,10 +1066,10 @@ function WorkloadBar({ title, data, total, color }: any) {
   );
 }
 
-function FilterSelect({ value, onChange, options, w }: any) {
+function FilterSelect({ value, onChange, options, w, disabled }: any) {
   return (
-    <Select value={value} onValueChange={onChange}>
-      <SelectTrigger className={`${w} h-8 text-xs bg-white rounded-[2px] border-slate-300 focus:border-[#003366]`}>
+    <Select value={value} onValueChange={onChange} disabled={disabled}>
+      <SelectTrigger className={`${w} h-8 text-xs bg-white rounded-[2px] border-slate-300 focus:border-[#003366] ${disabled ? "opacity-80 cursor-not-allowed bg-slate-100" : ""}`}>
         <SelectValue />
       </SelectTrigger>
       <SelectContent className="rounded-[2px] border-slate-300">

@@ -17,6 +17,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 
+import { useAbps } from "@/context/AbpsContext";
+import { useLanguage } from "@/context/LanguageContext";
+
 export const Route = createFileRoute("/conflicts")({
   head: () => ({
     meta: [
@@ -77,6 +80,9 @@ function timeToMinutes(timeStr: string) {
 }
 
 function ConflictsPage() {
+  const { role, scope, can } = useAbps();
+  const { t } = useLanguage();
+
   const [blocks, setBlocks] = useState<OptimizedBlock[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -88,6 +94,10 @@ function ConflictsPage() {
   const [selectedItem, setSelectedItem] = useState<ConflictItem | null>(null);
   const [approvalDialog, setApprovalDialog] = useState<ConflictItem | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
+
+  const [changeModalOpen, setChangeModalOpen] = useState(false);
+  const [changeReason, setChangeReason] = useState("");
+  const [changeShift, setChangeShift] = useState("");
 
   const fetchPlan = async () => {
     setLoading(true);
@@ -207,6 +217,54 @@ function ConflictsPage() {
     }
   };
 
+  const handleAcknowledge = async () => {
+    if (!selectedItem) return;
+    setActionLoading(true);
+    try {
+      const res = await apiFetch(`/optimized-plan/${selectedItem.block.block_id}/acknowledge`, {
+        method: "POST",
+      });
+      if (!res.ok) throw new Error("Acknowledgement failed");
+      toast.success(t("Conflict / block schedule acknowledged.", "विवाद / ब्लॉक अनुसूची स्वीकृत।"));
+      setSelectedItem(null);
+      fetchPlan();
+    } catch (e: any) {
+      toast.error(e.message || "Failed to acknowledge");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleRequestAdjustment = async () => {
+    if (!selectedItem) return;
+    if (!changeReason.trim()) {
+      toast.error(t("Please provide a reason for the adjustment request", "कृपया समायोजन अनुरोध का कारण बताएं"));
+      return;
+    }
+    setActionLoading(true);
+    try {
+      const res = await apiFetch(`/optimized-plan/${selectedItem.block.block_id}/request-change`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          reason: changeReason,
+          suggested_shift_min: changeShift ? Number(changeShift) : undefined,
+        }),
+      });
+      if (!res.ok) throw new Error("Request failed");
+      toast.success(t("Adjustment request submitted to Control Office.", "समायोजन अनुरोध नियंत्रण कार्यालय को प्रस्तुत किया गया।"));
+      setChangeModalOpen(false);
+      setChangeReason("");
+      setChangeShift("");
+      setSelectedItem(null);
+      fetchPlan();
+    } catch (e: any) {
+      toast.error(e.message || "Failed to submit request");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   const getSeverityBadge = (sev: string) => {
     if (sev === "CRITICAL") return "bg-red-100 text-red-900 border-red-300 font-bold";
     if (sev === "HIGH") return "bg-amber-100 text-amber-900 border-amber-300 font-bold";
@@ -217,15 +275,32 @@ function ConflictsPage() {
   return (
     <>
       <PageHeader
-        title="Section Controller Conflict Scrutiny & Authorization Desk"
-        subtitle="Human-in-the-loop review of AI-generated maintenance blocks, train movement overlaps, and operational authorization sign-off."
+        title={
+          scope === "department"
+            ? t("My Departmental Conflicts Desk", "मेरा विभागीय विवाद पटल")
+            : t(
+                "Section Controller Conflict Scrutiny & Authorization Desk",
+                "अनुभाग नियंत्रक विवाद संवीक्षा एवं प्राधिकरण पटल",
+              )
+        }
+        subtitle={
+          scope === "department"
+            ? t(
+                "Review operational train conflicts affecting your department's maintenance blocks and submit shift adjustments.",
+                "अपने विभाग के अनुरक्षण ब्लॉकों को प्रभावित करने वाले परिचालन ट्रेन विवादों की समीक्षा करें और समायोजन प्रस्तुत करें।",
+              )
+            : t(
+                "Human-in-the-loop review of AI-generated maintenance blocks, train movement overlaps, and operational authorization sign-off.",
+                "एआई-जनित अनुरक्षण ब्लॉकों, ट्रेन संचलन ओवरलैप और परिचालन प्राधिकरण साइन-ऑफ की मानव-समीक्षा।",
+              )
+        }
         action={
           <div className="flex flex-wrap items-center gap-2">
             <span className="border border-amber-300 bg-amber-100 text-amber-900 px-2.5 py-1 text-xs font-bold rounded-[2px] uppercase">
-              {stats.awaitingApproval} Awaiting Scrutiny
+              {stats.awaitingApproval} {t("Awaiting Scrutiny", "संवीक्षा लंबित")}
             </span>
             <Button variant="outline" size="sm" onClick={fetchPlan} className="h-8 text-xs font-bold border-slate-300 dark:border-slate-700">
-              <RefreshCw className="mr-1.5 size-3.5" /> Refresh Scrutiny Queue
+              <RefreshCw className="mr-1.5 size-3.5" /> {t("Refresh Scrutiny Queue", "संवीक्षा कतार ताज़ा करें")}
             </Button>
           </div>
         }
@@ -475,35 +550,76 @@ function ConflictsPage() {
                 </p>
               </div>
 
-              {/* Controller Action Buttons */}
+              {/* Action Buttons */}
               {selectedItem.block.block_status === "PLANNED" ? (
                 <div className="pt-2 border-t border-border space-y-2">
-                  <p className="text-[10px] font-bold uppercase text-slate-500">Official Decision</p>
-                  <div className="grid grid-cols-2 gap-2">
-                    <Button
-                      onClick={() => handleAction("rework")}
-                      variant="outline"
-                      className="border-amber-400 text-amber-900 dark:text-amber-300 font-bold h-8 text-xs rounded-[2px]"
-                      disabled={actionLoading}
-                    >
-                      Return For Rework
-                    </Button>
-                    <Button
-                      onClick={() => handleAction("reject")}
-                      variant="outline"
-                      className="border-red-400 text-red-900 dark:text-red-300 font-bold h-8 text-xs rounded-[2px]"
-                      disabled={actionLoading}
-                    >
-                      Reject Application
-                    </Button>
-                    <Button
-                      onClick={() => setApprovalDialog(selectedItem)}
-                      className="col-span-2 bg-[#137547] hover:bg-[#0f5c38] text-white font-bold h-8 text-xs rounded-[2px]"
-                      disabled={actionLoading}
-                    >
-                      <CheckCircle2 className="mr-1.5 size-3.5" /> Authorize & Issue Block Order
-                    </Button>
-                  </div>
+                  <p className="text-[10px] font-bold uppercase text-slate-500">{t("Official Action", "आधिकारिक कार्रवाई")}</p>
+                  {scope === "department" ? (
+                    <div className="grid grid-cols-2 gap-2">
+                      <Button
+                        onClick={() => setChangeModalOpen(true)}
+                        variant="outline"
+                        className="border-amber-400 text-amber-900 dark:text-amber-300 font-bold h-8 text-xs rounded-[2px]"
+                        disabled={actionLoading}
+                      >
+                        {t("Request Adjustment", "समायोजन का अनुरोध करें")}
+                      </Button>
+                      <Button
+                        onClick={handleAcknowledge}
+                        className="bg-[#003366] hover:bg-[#002244] text-white font-bold h-8 text-xs rounded-[2px]"
+                        disabled={actionLoading}
+                      >
+                        <CheckCircle2 className="mr-1.5 size-3.5 text-emerald-400" /> {t("Acknowledge", "स्वीकार करें")}
+                      </Button>
+                    </div>
+                  ) : role.id === "control" ? (
+                    <div className="grid grid-cols-2 gap-2">
+                      <Button
+                        onClick={() => handleAction("rework")}
+                        variant="outline"
+                        className="border-amber-400 text-amber-900 dark:text-amber-300 font-bold h-8 text-xs rounded-[2px]"
+                        disabled={actionLoading}
+                      >
+                        {t("Return For Rework", "पुनर्विचार के लिए लौटाएं")}
+                      </Button>
+                      <Button
+                        onClick={() => {
+                          toast.info(t("Conflict marked operationally resolved by controller.", "विवाद नियंत्रक द्वारा परिचालन रूप से सुलझाया गया चिह्नित।"));
+                          setSelectedItem(null);
+                        }}
+                        className="bg-[#003366] hover:bg-[#002244] text-white font-bold h-8 text-xs rounded-[2px]"
+                        disabled={actionLoading}
+                      >
+                        {t("Mark Handled", "सुलझाया गया चिह्नित करें")}
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-2">
+                      <Button
+                        onClick={() => handleAction("rework")}
+                        variant="outline"
+                        className="border-amber-400 text-amber-900 dark:text-amber-300 font-bold h-8 text-xs rounded-[2px]"
+                        disabled={actionLoading}
+                      >
+                        {t("Return For Rework", "पुनर्विचार के लिए लौटाएं")}
+                      </Button>
+                      <Button
+                        onClick={() => handleAction("reject")}
+                        variant="outline"
+                        className="border-red-400 text-red-900 dark:text-red-300 font-bold h-8 text-xs rounded-[2px]"
+                        disabled={actionLoading}
+                      >
+                        {t("Reject Application", "आवेदन अस्वीकार करें")}
+                      </Button>
+                      <Button
+                        onClick={() => setApprovalDialog(selectedItem)}
+                        className="col-span-2 bg-[#137547] hover:bg-[#0f5c38] text-white font-bold h-8 text-xs rounded-[2px]"
+                        disabled={actionLoading}
+                      >
+                        <CheckCircle2 className="mr-1.5 size-3.5" /> {t("Authorize & Issue Block Order", "ब्लॉक आदेश अधिकृत करें")}
+                      </Button>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="border border-border bg-slate-100 dark:bg-slate-800 p-2.5 text-center font-bold text-xs uppercase">
@@ -552,6 +668,69 @@ function ConflictsPage() {
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Department Adjustment Request Dialog */}
+      <Dialog open={changeModalOpen} onOpenChange={setChangeModalOpen}>
+        <DialogContent className="sm:max-w-md border-2 border-amber-500 bg-white dark:bg-slate-950 rounded-[2px]">
+          <DialogHeader>
+            <DialogTitle className="text-slate-900 dark:text-slate-100 flex items-center gap-2 text-sm font-bold uppercase">
+              <RefreshCw className="size-4 text-amber-500" />
+              {t("Request Conflict Adjustment", "विवाद समायोजन का अनुरोध करें")}
+            </DialogTitle>
+            <DialogDescription className="text-xs pt-1">
+              {t(
+                "Submit a recommended shift in block timings to avoid train operational collision.",
+                "ट्रेन परिचालन टकराव से बचने के लिए ब्लॉक समय में अनुशंसित बदलाव जमा करें।",
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2 text-xs">
+            <div>
+              <label className="text-[11px] font-bold uppercase text-slate-600 dark:text-slate-400">
+                {t("Reason for Adjustment", "समायोजन का कारण")} <span className="text-destructive">*</span>
+              </label>
+              <Input
+                className="mt-1 text-xs rounded-[2px]"
+                placeholder={t(
+                  "e.g. Request shift by 30 mins to avoid Express train headway",
+                  "उदा. एक्सप्रेस ट्रेन के हेडवे से बचने के लिए 30 मिनट का बदलाव",
+                )}
+                value={changeReason}
+                onChange={(e) => setChangeReason(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="text-[11px] font-bold uppercase text-slate-600 dark:text-slate-400">
+                {t("Suggested Shift (Minutes, optional)", "सुझाया गया बदलाव (मिनट, वैकल्पिक)")}
+              </label>
+              <Input
+                type="number"
+                className="mt-1 text-xs rounded-[2px]"
+                placeholder="e.g. +30 or -45"
+                value={changeShift}
+                onChange={(e) => setChangeShift(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-xs rounded-[2px]"
+              onClick={() => setChangeModalOpen(false)}
+            >
+              {t("Cancel", "रद्द करें")}
+            </Button>
+            <Button
+              size="sm"
+              className="bg-[#003366] hover:bg-[#002244] text-white font-bold text-xs rounded-[2px]"
+              onClick={() => void handleRequestAdjustment()}
+            >
+              {t("Submit Adjustment", "समायोजन जमा करें")}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </>

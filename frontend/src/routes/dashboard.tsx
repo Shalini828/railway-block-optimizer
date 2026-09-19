@@ -29,6 +29,8 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiFetch } from "@/lib/api";
+import { useAbps } from "@/context/AbpsContext";
+import { useLanguage } from "@/context/LanguageContext";
 
 export const Route = createFileRoute("/dashboard")({
   head: () => ({
@@ -72,6 +74,7 @@ interface UrgentRisk {
   severity: string;
   location: string;
   description: string;
+  dept?: string;
 }
 
 interface TrainForecast {
@@ -100,6 +103,14 @@ interface DashboardAnalytics {
 
 interface DashboardData {
   status: string;
+  scope?: string;
+  department?: string;
+  department_kpis?: {
+    asset_availability_percent: number;
+    pending_tasks: number;
+    critical_tasks_or_defects: number;
+    blocks_this_week: number;
+  };
   kpis: DashboardKPIs;
   corridor_status: CorridorStatus[];
   urgent_risks: UrgentRisk[];
@@ -110,6 +121,9 @@ interface DashboardData {
 }
 
 function DashboardPage() {
+  const { role, scope, dept } = useAbps();
+  const { t } = useLanguage();
+
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -163,6 +177,7 @@ function DashboardPage() {
         severity: "Critical",
         location: "NDLS-CNB Down Main (Km 142/6-8)",
         description: "USFD Class IMR flaw detected. TSR 30 kmph imposed pending emergency block clamp.",
+        dept: "TMS",
       },
       {
         id: "SIG-PNT-119",
@@ -170,6 +185,7 @@ function DashboardPage() {
         severity: "High",
         location: "DDU-BSB Up Main (Point 112A)",
         description: "Intermittent obstruction in reverse detection circuit during train crossover.",
+        dept: "SMMS",
       },
       {
         id: "OHE-MAST-341",
@@ -177,6 +193,7 @@ function DashboardPage() {
         severity: "High",
         location: "NDLS-CNB Down Main (Mast 341/12)",
         description: "Severe soot deposition and pantograph flashover reported by Loco Pilot 12424.",
+        dept: "TDMS",
       },
     ],
     train_forecast: [
@@ -263,48 +280,99 @@ function DashboardPage() {
     return formatted;
   };
 
+  const isDept = scope === "department" && !!dept;
+  const deptKpis = data?.department_kpis;
+
   const kpis = data
-    ? [
-        {
-          label: "Asset Availability Index",
-          value: formatNumber(data.kpis.overall_asset_availability, true),
-          note: "Civil (TMS) + Signal (SMMS) + OHE (TDMS)",
-          status: "Operational / Target Met",
-          icon: Gauge,
-          tone: "text-emerald-700 dark:text-emerald-400",
-        },
-        {
-          label: "Active Megablocks",
-          value: `${data.kpis.scheduled_blocks} / Wk`,
-          note: "Sectional corridor block quota",
-          status: "Under Coordination",
-          icon: Layers,
-          tone: "text-[#003366] dark:text-sky-400",
-        },
-        {
-          label: "Shadow Window Savings",
-          value: formatNumber(data.kpis.shadow_block_savings, false, true),
-          note: "Recovered via AI bundling",
-          status: "CRIS Optimization",
-          icon: Clock,
-          tone: "text-purple-700 dark:text-purple-400",
-        },
-        {
-          label: "Punctuality Impact",
-          value: formatNumber(data.kpis.punctuality_impact_index, false, false, true),
-          note: "Express delay reduction saved",
-          status: "COA Punctuality Positive",
-          icon: TrainFront,
-          tone: "text-emerald-700 dark:text-emerald-400",
-        },
-      ]
+    ? isDept
+      ? [
+          {
+            label: dept === "TMS" ? t("Track Asset Availability", "ट्रैक परिसंपत्ति उपलब्धता") : t("OHE Asset Availability", "ओएचई परिसंपत्ति उपलब्धता"),
+            value: formatNumber(deptKpis?.asset_availability_percent ?? (dept === "TMS" ? 95.8 : 96.4), true),
+            note: dept === "TMS" ? t("P.Way Track, Rails & Turnouts", "पी.वे ट्रैक, रेल एवं टर्नआउट") : t("TRD Masts, Feeders & Transformers", "टीआरडी पोल, फीडर एवं ट्रांसफार्मर"),
+            status: t("Department Certified", "विभाग प्रमाणित"),
+            icon: Gauge,
+            tone: "text-emerald-700 dark:text-emerald-400",
+          },
+          {
+            label: `${t("Pending", "लंबित")} ${dept} ${t("Work", "कार्य")}`,
+            value: `${deptKpis?.pending_tasks ?? (dept === "TMS" ? 4 : 3)} ${t("Tasks", "कार्य")}`,
+            note: t("Awaiting AI Scheduling / Requisition", "एआई शेड्यूलिंग / मांग पत्र की प्रतीक्षा"),
+            status: t("Departmental Backlog", "विभागीय बैकलॉग"),
+            icon: Layers,
+            tone: "text-[#003366] dark:text-sky-400",
+          },
+          {
+            label: `${t("Critical", "गंभीर")} ${dept === "TMS" ? t("Track Defects", "ट्रैक दोष") : t("OHE Defects", "ओएचई दोष")}`,
+            value: `${deptKpis?.critical_tasks_or_defects ?? 2} ${t("Critical", "अति-महत्वपूर्ण")}`,
+            note: t("Immediate Sectional Priority", "तत्काल अनुभागीय प्राथमिकता"),
+            status: t("Priority Red Zone", "प्राथमिकता रेड जोन"),
+            icon: AlertTriangle,
+            tone: "text-red-700 dark:text-red-400",
+          },
+          {
+            label: `${dept} ${t("Blocks This Week", "ब्लॉक इस सप्ताह")}`,
+            value: `${deptKpis?.blocks_this_week ?? (dept === "TMS" ? 3 : 2)} / ${t("Wk", "सप्ताह")}`,
+            note: t("Approved & Executing in Section", "अनुभाग में स्वीकृत एवं निष्पादित"),
+            status: t("Operational Execution", "परिचालन निष्पादन"),
+            icon: TrainFront,
+            tone: "text-emerald-700 dark:text-emerald-400",
+          },
+        ]
+      : [
+          {
+            label: "Asset Availability Index",
+            value: formatNumber(data.kpis.overall_asset_availability, true),
+            note: "Civil (TMS) + Signal (SMMS) + OHE (TDMS)",
+            status: "Operational / Target Met",
+            icon: Gauge,
+            tone: "text-emerald-700 dark:text-emerald-400",
+          },
+          {
+            label: "Active Megablocks",
+            value: `${data.kpis.scheduled_blocks} / Wk`,
+            note: "Sectional corridor block quota",
+            status: "Under Coordination",
+            icon: Layers,
+            tone: "text-[#003366] dark:text-sky-400",
+          },
+          {
+            label: "Shadow Window Savings",
+            value: formatNumber(data.kpis.shadow_block_savings, false, true),
+            note: "Recovered via AI bundling",
+            status: "CRIS Optimization",
+            icon: Clock,
+            tone: "text-purple-700 dark:text-purple-400",
+          },
+          {
+            label: "Punctuality Impact",
+            value: formatNumber(data.kpis.punctuality_impact_index, false, false, true),
+            note: "Express delay reduction saved",
+            status: "COA Punctuality Positive",
+            icon: TrainFront,
+            tone: "text-emerald-700 dark:text-emerald-400",
+          },
+        ]
     : [];
 
   return (
     <>
       <PageHeader
-        title="Central Executive Operations Desk"
-        subtitle="National Corridor Monitoring & Automatic Block Planning Console (NCR Section: New Delhi – Kanpur – Prayagraj – Varanasi)"
+        title={
+          isDept
+            ? dept === "TMS"
+              ? t("Engineering (TMS) Operational Desk", "इंजीनियरिंग (टीएमएस) परिचालन डेस्क")
+              : t("Traction (TDMS) Operational Desk", "विद्युत कर्षण (टीडीएमएस) परिचालन डेस्क")
+            : t("Central Executive Operations Desk", "केंद्रीय कार्यकारी परिचालन डेस्क")
+        }
+        subtitle={
+          isDept
+            ? `${role.title} · ${role.name} · ${t("Departmental Infrastructure Scrutiny", "विभागीय अवसंरचना संवीक्षा")} (${dept} · ${t("Division: PRYJ / NR", "मंडल: पीआरवाईजे / उ.रे.")})`
+            : t(
+                "National Corridor Monitoring & Automatic Block Planning Console (NCR Section: New Delhi – Kanpur – Prayagraj – Varanasi)",
+                "राष्ट्रीय कॉरिडोर निगरानी एवं स्वचालित ब्लॉक नियोजन कंसोल (एनसीआर अनुभाग: नई दिल्ली – कानपुर – प्रयागराज – वाराणसी)"
+              )
+        }
         action={
           <div className="flex items-center gap-2">
             <span className="text-[11px] text-muted-foreground flex items-center gap-1 font-mono">
@@ -573,6 +641,7 @@ function DashboardPage() {
             ) : (
               <div className="divide-y divide-border">
                 {data?.urgent_risks
+                  .filter((r) => !isDept || r.dept === dept || (dept === "TMS" ? r.id.startsWith("TRK") : r.id.startsWith("OHE")))
                   .sort((a, b) => {
                     const order: Record<string, number> = { Critical: 1, High: 2, Medium: 3, Low: 4 };
                     return (order[a.severity] || 5) - (order[b.severity] || 5);
