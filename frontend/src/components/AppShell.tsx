@@ -140,8 +140,8 @@ export function AppShell({ children }: { children: ReactNode }) {
                       <SelectValue placeholder="Select official designation..." />
                     </SelectTrigger>
                     <SelectContent className="rounded-[2px] border-slate-300 dark:border-slate-700">
-                      {Object.entries(ROLES).map(([id, r]) => (
-                        <SelectItem key={id} value={id} className="text-xs">
+                      {ROLES.map((r) => (
+                        <SelectItem key={r.id} value={r.id} className="text-xs">
                           <div className="flex flex-col py-0.5">
                             <span className="font-bold text-slate-900 dark:text-slate-100">{r.title}</span>
                             <span className="text-[10px] text-muted-foreground">{r.name} · {r.system}</span>

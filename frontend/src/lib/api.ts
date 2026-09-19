@@ -45,7 +45,7 @@ export async function apiFetch(path: string, init?: RequestInit): Promise<Respon
   try {
     const response = await fetch(url, config);
 
-    if (response.status === 401) {
+    if (response.status === 401 && cleanPath !== "/auth/login") {
       toast.error("Session expired — please sign in again", {
         description: "सत्र समाप्त हो गया है — कृपया पुनः साइन इन करें",
       });
