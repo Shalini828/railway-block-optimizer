@@ -6,7 +6,7 @@ import joblib
 # LOAD TRAINED MODEL
 # ==========================================
 
-MODEL_FILE = "backend/ml/railway_risk_model.pkl"
+MODEL_FILE = "ml/railway_risk_model.pkl"
 
 model = joblib.load(MODEL_FILE)
 

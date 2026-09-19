@@ -6,7 +6,7 @@ import pandas as pd
 # SETTINGS
 # ==========================================
 
-NUM_RECORDS = 5000
+NUM_RECORDS = 100000
 RANDOM_SEED = 42
 
 np.random.seed(RANDOM_SEED)
@@ -308,7 +308,7 @@ dataset = pd.DataFrame(records)
 # ==========================================
 
 output_file = (
-    "backend/ml/ml_training_data.csv"
+    "ml/ml_training_data.csv"
 )
 
 dataset.to_csv(

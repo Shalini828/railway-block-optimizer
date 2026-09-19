@@ -14,7 +14,7 @@ import joblib
 # 1. LOAD DATA
 # ==========================================
 
-DATA_FILE = "backend/ml/ml_training_data.csv"
+DATA_FILE = "ml/ml_training_data.csv"
 
 df = pd.read_csv(DATA_FILE)
 
@@ -165,7 +165,7 @@ print(importance.to_string(index=False))
 # 9. SAVE MODEL
 # ==========================================
 
-MODEL_FILE = "backend/ml/railway_risk_model.pkl"
+MODEL_FILE = "ml/railway_risk_model.pkl"
 
 joblib.dump(
     model,
