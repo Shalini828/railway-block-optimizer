@@ -1,10 +1,12 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 import psycopg
 import importlib
 import pkgutil
 
 from db_config import DB_CONFIG
+from auth.security import RBACForbiddenException
 
 
 # ============================================================
@@ -16,6 +18,19 @@ app = FastAPI(
     version="1.0.0",
     description="AI-powered railway maintenance block planning and optimization API",
 )
+
+
+@app.exception_handler(RBACForbiddenException)
+async def rbac_forbidden_handler(request, exc: RBACForbiddenException):
+    return JSONResponse(
+        status_code=403,
+        content={
+            "detail": exc.detail,
+            "code": "FORBIDDEN",
+            "required": exc.required,
+            "role": exc.role,
+        },
+    )
 
 
 # ============================================================
