@@ -1334,56 +1334,14 @@ def get_block_intelligence(block_id: str):
             number_of_departments,
         ) = block
 
-
         # ==========================================
         # AI EXPLANATION
         # ==========================================
 
+        # This is populated after the overlapping-train classification below.
+        # It is returned to the frontend as the explanation for why the block
+        # was selected.
         why_selected = []
-
-        if train_impact_score == 0:
-            why_selected.append(
-                "No train conflicts in the selected window"
-            )
-        else:
-            why_selected.append(
-                f"Train impact considered ({train_impact_score:.2f})"
-            )
-
-        if utilization_percent >= 90:
-            why_selected.append(
-                f"High block utilization ({utilization_percent:.2f}%)"
-            )
-        elif utilization_percent >= 70:
-            why_selected.append(
-                f"Good block utilization ({utilization_percent:.2f}%)"
-            )
-        else:
-            why_selected.append(
-                f"Block utilization ({utilization_percent:.2f}%)"
-            )
-
-        why_selected.append(
-            f"Traffic impact considered ({train_impact_score:.2f})"
-        )
-
-        if number_of_tasks > 1:
-            why_selected.append(
-                f"{number_of_tasks} maintenance tasks consolidated"
-            )
-        else:
-            why_selected.append(
-                "Maintenance task scheduled within the optimized window"
-            )
-
-        if number_of_departments > 1:
-            why_selected.append(
-                f"{number_of_departments} departments coordinated"
-            )
-
-        why_selected.append(
-            f"Optimization score: {optimization_score:.2f}"
-        )
 
         # Get tasks/assets associated with this block
         cur.execute("""
@@ -1523,6 +1481,109 @@ def get_block_intelligence(block_id: str):
         regular_passenger_trains = sum(
             1 for t in trains
             if str(t[1]).upper() == "PASSENGER"
+        )
+
+        # ==========================================
+        # BUILD AI EXPLANATION AFTER TRAFFIC COUNTS
+        # ==========================================
+
+        total_trains = (
+            passenger_trains
+            + goods_trains
+            + special_trains
+            + express_trains
+        )
+
+        if total_trains == 0:
+            why_selected.append(
+                "No passenger, goods, special or express trains overlap the selected window"
+            )
+        else:
+            traffic_parts = []
+
+            if passenger_trains > 0:
+                traffic_parts.append(
+                    f"{passenger_trains} passenger"
+                )
+
+            if goods_trains > 0:
+                traffic_parts.append(
+                    f"{goods_trains} goods"
+                )
+
+            if special_trains > 0:
+                traffic_parts.append(
+                    f"{special_trains} special"
+                )
+
+            if express_trains > 0:
+                traffic_parts.append(
+                    f"{express_trains} express"
+                )
+
+            why_selected.append(
+                "Traffic considered in selected window: "
+                + ", ".join(traffic_parts)
+            )
+
+        # --------------------------------------------------
+        # Train impact
+        # --------------------------------------------------
+
+        if train_impact_score == 0:
+            why_selected.append(
+                "Zero predicted train-impact score"
+            )
+        else:
+            why_selected.append(
+                f"Train impact score considered ({train_impact_score:.2f})"
+            )
+
+        # --------------------------------------------------
+        # Utilization
+        # --------------------------------------------------
+
+        if utilization_percent >= 90:
+            why_selected.append(
+                f"High block utilization ({utilization_percent:.2f}%)"
+            )
+        elif utilization_percent >= 70:
+            why_selected.append(
+                f"Good block utilization ({utilization_percent:.2f}%)"
+            )
+        else:
+            why_selected.append(
+                f"Block utilization ({utilization_percent:.2f}%)"
+            )
+
+        # --------------------------------------------------
+        # Maintenance consolidation
+        # --------------------------------------------------
+
+        if number_of_tasks > 1:
+            why_selected.append(
+                f"{number_of_tasks} maintenance tasks consolidated"
+            )
+        else:
+            why_selected.append(
+                "Maintenance task scheduled within the optimized window"
+            )
+
+        # --------------------------------------------------
+        # Department coordination
+        # --------------------------------------------------
+
+        if number_of_departments > 1:
+            why_selected.append(
+                f"{number_of_departments} departments coordinated"
+            )
+
+        # --------------------------------------------------
+        # Final optimization score
+        # --------------------------------------------------
+
+        why_selected.append(
+            f"Optimization score: {optimization_score:.2f}"
         )
 
         # Corridor traffic level

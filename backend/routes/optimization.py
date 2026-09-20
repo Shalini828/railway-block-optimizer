@@ -5,6 +5,7 @@ import time
 import psycopg
 import os
 from dotenv import load_dotenv
+import logic.block_optimizer as block_optimizer
 
 from auth.security import require_permission
 
@@ -247,6 +248,12 @@ def run_optimization():
             []
         ) or []
 
+        shadow_block_opportunities = getattr(
+            optimizer,
+            "shadow_block_opportunities",
+            []
+        ) or []
+
 
         # --------------------------------------------------
         # STEP 5
@@ -318,7 +325,9 @@ def run_optimization():
             ),
             "train_impact": train_impact,
             "conflicts_avoided": conflicts_avoided,
-            "blocks": blocks
+            "blocks": blocks,
+            "shadow_block_opportunities": shadow_block_opportunities,
+
         }
 
 

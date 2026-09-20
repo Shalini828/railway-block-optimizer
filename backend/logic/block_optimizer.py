@@ -1,5 +1,6 @@
 import sys
 import os
+from datetime import datetime, timedelta
 
 sys.path.append(
     os.path.dirname(
@@ -389,6 +390,514 @@ def calculate_goods_impact(
     )
 
 
+
+# ==========================================
+# AI 7-DAY PLANNING INTELLIGENCE
+# ==========================================
+
+def generate_7_day_planning(
+    corridor_id,
+    start_date,
+):
+    """
+    Generate AI planning intelligence for the next 7 days.
+
+    This is decision-support only.
+    It does not modify optimized blocks.
+    """
+
+    planning_days = []
+
+    for day_offset in range(7):
+
+        planning_date = (
+            start_date
+            + timedelta(days=day_offset)
+        )
+
+        # --------------------------------------
+        # Goods demand
+        # --------------------------------------
+
+        try:
+
+            goods_impact = calculate_goods_impact(
+                corridor_id=corridor_id,
+                block_date=planning_date,
+                start_hour=12,
+            )
+
+        except Exception as exc:
+
+            print(
+                "7-DAY GOODS FORECAST ERROR:",
+                corridor_id,
+                planning_date,
+                exc
+            )
+
+            goods_impact = 0.0
+
+        # --------------------------------------
+        # Corridor traffic pressure
+        # --------------------------------------
+
+        cursor.execute("""
+            SELECT traffic_level
+            FROM corridors
+            WHERE corridor_id = %s
+        """, (corridor_id,))
+
+        traffic_row = cursor.fetchone()
+
+        traffic_level = (
+            str(traffic_row[0]).upper()
+            if traffic_row and traffic_row[0]
+            else "MEDIUM"
+        )
+
+        traffic_pressure_map = {
+            "LOW": 25,
+            "MEDIUM": 50,
+            "HIGH": 75,
+            "VERY HIGH": 90,
+            "CRITICAL": 100,
+        }
+
+        traffic_pressure = traffic_pressure_map.get(
+            traffic_level,
+            50
+        )
+
+        # --------------------------------------
+        # Maintenance demand
+        # --------------------------------------
+
+        cursor.execute("""
+            SELECT
+                COUNT(*)
+            FROM block_requests
+            WHERE corridor_id = %s
+            AND requested_date = %s
+            AND request_status = 'PENDING'
+        """, (
+            corridor_id,
+            planning_date,
+        ))
+
+        maintenance_row = cursor.fetchone()
+
+        maintenance_count = (
+            int(maintenance_row[0])
+            if maintenance_row
+            else 0
+        )
+
+        maintenance_pressure = min(
+            100,
+            maintenance_count * 20
+        )
+
+        # --------------------------------------
+        # Planning pressure
+        # --------------------------------------
+
+        planning_pressure = round(
+            (
+                traffic_pressure * 0.40
+                +
+                goods_impact * 0.30
+                +
+                maintenance_pressure * 0.30
+            ),
+            2
+        )
+
+        # Lower pressure = more suitable
+        # for scheduling maintenance.
+
+        if planning_pressure >= 75:
+
+            planning_level = "HIGH"
+
+        elif planning_pressure >= 50:
+
+            planning_level = "MEDIUM"
+
+        else:
+
+            planning_level = "LOW"
+
+        planning_days.append(
+            {
+                "date": str(planning_date),
+                "day_of_week": planning_date.strftime(
+                    "%A"
+                ),
+                "corridor": corridor_id,
+                "traffic_pressure": round(
+                    traffic_pressure,
+                    2
+                ),
+                "goods_impact": round(
+                    goods_impact,
+                    2
+                ),
+                "maintenance_count": (
+                    maintenance_count
+                ),
+                "maintenance_pressure": round(
+                    maintenance_pressure,
+                    2
+                ),
+                "planning_pressure": (
+                    planning_pressure
+                ),
+                "planning_level": (
+                    planning_level
+                ),
+            }
+        )
+
+    # --------------------------------------
+    # Rank days
+    # --------------------------------------
+
+    planning_days.sort(
+        key=lambda item: (
+            item["planning_pressure"],
+            item["goods_impact"],
+            item["traffic_pressure"],
+        )
+    )
+
+    return {
+        "corridor": corridor_id,
+        "start_date": str(start_date),
+        "days": planning_days,
+        "recommended_day": (
+            planning_days[0]
+            if planning_days
+            else None
+        ),
+    }
+
+
+# ==========================================
+# AI 30-DAY MAINTENANCE INTELLIGENCE
+# ==========================================
+
+def generate_30_day_maintenance_intelligence(
+    start_date,
+    corridor_id=None
+):
+    """
+    Rank pending maintenance tasks over a 30-day planning horizon.
+
+    Uses existing:
+    - Asset Risk ML
+    - Traffic pressure
+    - Goods demand
+    - Maintenance priority
+
+    This is planning intelligence.
+    It does not modify the optimization schedule.
+    """
+
+    end_date = (
+        start_date
+        + timedelta(days=29)
+    )
+
+    # --------------------------------------
+    # Get pending maintenance requests
+    # --------------------------------------
+
+    if corridor_id:
+
+        cursor.execute("""
+            SELECT
+                br.request_id,
+                br.task_id,
+                br.corridor_id,
+                br.requested_date,
+                COALESCE(
+                    mt.priority_score,
+                    0
+                )
+            FROM block_requests br
+            LEFT JOIN maintenance_tasks mt
+                ON br.task_id = mt.task_id
+            WHERE br.request_status IN ('PENDING', 'OPTIMIZED')
+                AND br.requested_date
+                    BETWEEN %s AND %s
+              AND br.corridor_id = %s
+            ORDER BY
+                mt.priority_score DESC,
+                br.requested_date
+        """, (
+            start_date,
+            end_date,
+            corridor_id,
+        ))
+
+    else:
+
+        cursor.execute("""
+            SELECT
+                br.request_id,
+                br.task_id,
+                br.corridor_id,
+                br.requested_date,
+                COALESCE(
+                    mt.priority_score,
+                    0
+                )
+            FROM block_requests br
+            LEFT JOIN maintenance_tasks mt
+                ON br.task_id = mt.task_id
+            WHERE br.request_status IN ('PENDING', 'OPTIMIZED')
+              AND br.requested_date
+                  BETWEEN %s AND %s
+            ORDER BY
+                mt.priority_score DESC,
+                br.requested_date
+        """, (
+            start_date,
+            end_date,
+        ))
+
+    rows = cursor.fetchall()
+
+    task_intelligence = []
+
+    # --------------------------------------
+    # Analyze every maintenance request
+    # --------------------------------------
+
+    for row in rows:
+
+        request_id = row[0]
+        task_id = row[1]
+        corridor = row[2]
+        requested_date = row[3]
+        maintenance_priority = safe_float(
+            row[4],
+            0.0
+        )
+
+        # ----------------------------------
+        # Asset Risk ML
+        # ----------------------------------
+
+        try:
+
+            asset_risk = calculate_asset_risk_for_task(
+                task_id
+            )
+
+        except Exception as exc:
+
+            print(
+                "30-DAY ASSET RISK ERROR:",
+                task_id,
+                exc
+            )
+
+            asset_risk = 0.0
+
+        # ----------------------------------
+        # Traffic pressure
+        # ----------------------------------
+
+        cursor.execute("""
+            SELECT traffic_level
+            FROM corridors
+            WHERE corridor_id = %s
+        """, (corridor,))
+
+        traffic_row = cursor.fetchone()
+
+        traffic_level = (
+            str(
+                traffic_row[0]
+            ).upper()
+            if traffic_row
+            and traffic_row[0]
+            else "MEDIUM"
+        )
+
+        traffic_pressure_map = {
+            "LOW": 25,
+            "MEDIUM": 50,
+            "HIGH": 75,
+            "VERY HIGH": 90,
+            "CRITICAL": 100,
+        }
+
+        traffic_pressure = (
+            traffic_pressure_map.get(
+                traffic_level,
+                50
+            )
+        )
+
+        # ----------------------------------
+        # Goods demand
+        # ----------------------------------
+
+        try:
+
+            goods_impact = calculate_goods_impact(
+                corridor_id=corridor,
+                block_date=requested_date,
+                start_hour=12,
+            )
+
+        except Exception as exc:
+
+            print(
+                "30-DAY GOODS ERROR:",
+                corridor,
+                requested_date,
+                exc
+            )
+
+            goods_impact = 0.0
+
+        # ----------------------------------
+        # Maintenance urgency
+        # ----------------------------------
+
+        urgency_score = min(
+            100.0,
+            (
+                asset_risk * 0.40
+                +
+                maintenance_priority * 0.30
+                +
+                goods_impact * 0.15
+                +
+                traffic_pressure * 0.15
+            )
+        )
+
+        urgency_score = round(
+            urgency_score,
+            2
+        )
+
+        # ----------------------------------
+        # Maintenance level
+        # ----------------------------------
+
+        if urgency_score >= 75:
+
+            urgency_level = "CRITICAL"
+
+        elif urgency_score >= 60:
+
+            urgency_level = "HIGH"
+
+        elif urgency_score >= 35:
+
+            urgency_level = "MEDIUM"
+
+        else:
+
+            urgency_level = "LOW"
+
+        task_intelligence.append(
+            {
+                "request_id": request_id,
+                "task_id": task_id,
+                "corridor": corridor,
+                "requested_date": str(
+                    requested_date
+                ),
+
+                "asset_risk": round(
+                    asset_risk,
+                    2
+                ),
+
+                "maintenance_priority": round(
+                    maintenance_priority,
+                    2
+                ),
+
+                "traffic_pressure": round(
+                    traffic_pressure,
+                    2
+                ),
+
+                "goods_impact": round(
+                    goods_impact,
+                    2
+                ),
+
+                "maintenance_urgency": (
+                    urgency_score
+                ),
+
+                "urgency_level": (
+                    urgency_level
+                ),
+            }
+        )
+
+    # --------------------------------------
+    # Rank highest urgency first
+    # --------------------------------------
+
+    task_intelligence.sort(
+        key=lambda item: (
+            item["maintenance_urgency"],
+            item["asset_risk"],
+            item["maintenance_priority"],
+        ),
+        reverse=True
+    )
+
+    # --------------------------------------
+    # Summary
+    # --------------------------------------
+
+    critical_count = sum(
+        1
+        for item in task_intelligence
+        if item["urgency_level"]
+        == "CRITICAL"
+    )
+
+    high_count = sum(
+        1
+        for item in task_intelligence
+        if item["urgency_level"]
+        == "HIGH"
+    )
+
+    return {
+        "start_date": str(start_date),
+        "end_date": str(end_date),
+        "corridor": corridor_id,
+
+        "total_tasks": len(
+            task_intelligence
+        ),
+
+        "critical_tasks": critical_count,
+        "high_priority_tasks": high_count,
+
+        "tasks": task_intelligence,
+
+        "highest_priority_task": (
+            task_intelligence[0]
+            if task_intelligence
+            else None
+        ),
+    }
+
 def calculate_traffic_impact(
     duration,
     start_hour,
@@ -563,6 +1072,307 @@ def generate_candidate_windows(
         current_start += step_minutes
 
     return candidates
+
+# ==========================================
+# AI WHAT-IF WINDOW SIMULATION
+# ==========================================
+
+def simulate_what_if_windows(
+    corridor,
+    block_date,
+    group,
+    maintenance_priority,
+    alternative_offsets=None
+):
+    """
+    Simulate alternative maintenance windows for an
+    existing maintenance group.
+
+    This is decision-support only.
+    It does NOT modify the optimized schedule.
+    """
+
+    if alternative_offsets is None:
+        alternative_offsets = [
+            -120,
+            -60,
+            60,
+            120
+        ]
+
+    original_start = time_to_minutes(
+        group["start"]
+    )
+
+    original_end = time_to_minutes(
+        group["end"]
+    )
+
+    duration = (
+        original_end
+        - original_start
+    )
+
+    if duration <= 0:
+        return {
+            "corridor": corridor,
+            "date": str(block_date),
+            "current_window": None,
+            "alternatives": [],
+            "best_alternative": None
+        }
+
+    # --------------------------------------
+    # Current window
+    # --------------------------------------
+
+    current_candidate = {
+        "start": group["start"],
+        "end": group["end"],
+        "duration": duration
+    }
+
+    try:
+
+        current_utilization = 100.0
+
+        current_result = score_candidate_window(
+            corridor=corridor,
+            block_date=block_date,
+            candidate=current_candidate,
+            group=group,
+            maintenance_priority=maintenance_priority,
+            utilization=current_utilization
+        )
+
+    except Exception as exc:
+
+        print(
+            "WHAT-IF CURRENT WINDOW ERROR:",
+            exc
+        )
+
+        current_result = None
+
+    alternatives = []
+
+    # --------------------------------------
+    # Generate alternative windows
+    # --------------------------------------
+
+    for offset in alternative_offsets:
+
+        alternative_start = (
+            original_start
+            + offset
+        )
+
+        # Keep the window inside one day
+        if alternative_start < 0:
+            continue
+
+        if alternative_start + duration > 1440:
+            continue
+
+        alternative_end = (
+            alternative_start
+            + duration
+        )
+
+        start_hour = (
+            alternative_start // 60
+        )
+
+        start_minute = (
+            alternative_start % 60
+        )
+
+        end_hour = (
+            alternative_end // 60
+        )
+
+        end_minute = (
+            alternative_end % 60
+        )
+
+        candidate_start = (
+            f"{start_hour:02d}:"
+            f"{start_minute:02d}:00"
+        )
+
+        candidate_end = (
+            f"{end_hour:02d}:"
+            f"{end_minute:02d}:00"
+        )
+
+        candidate = {
+            "start": candidate_start,
+            "end": candidate_end,
+            "duration": duration
+        }
+
+        # ----------------------------------
+        # Score alternative
+        # ----------------------------------
+
+        try:
+
+            result = score_candidate_window(
+                corridor=corridor,
+                block_date=block_date,
+                candidate=candidate,
+                group=group,
+                maintenance_priority=maintenance_priority,
+                utilization=100.0
+            )
+
+        except Exception as exc:
+
+            print(
+                "WHAT-IF CANDIDATE ERROR:",
+                candidate_start,
+                candidate_end,
+                exc
+            )
+
+            continue
+
+        # Don't duplicate current window
+        if (
+            current_result
+            and
+            result["start"] == current_result["start"]
+        ):
+            continue
+
+        alternatives.append(
+            {
+                "start": str(
+                    result["start"]
+                )[:8],
+
+                "end": str(
+                    result["end"]
+                )[:8],
+
+                "duration": result["duration"],
+
+                "score": result["score"],
+
+                "asset_risk": result[
+                    "asset_risk"
+                ],
+
+                "traffic_impact": result[
+                    "traffic_impact"
+                ],
+
+                "goods_impact": result[
+                    "goods_impact"
+                ],
+
+                "conflict_count": result[
+                    "conflict_count"
+                ],
+
+                "utilization": result[
+                    "utilization"
+                ]
+            }
+        )
+
+    # --------------------------------------
+    # Rank alternatives
+    # --------------------------------------
+
+    alternatives.sort(
+        key=lambda item: (
+            item["score"],
+            -item["conflict_count"]
+        ),
+        reverse=True
+    )
+
+    best_alternative = (
+        alternatives[0]
+        if alternatives
+        else None
+    )
+
+    # --------------------------------------
+    # Build response
+    # --------------------------------------
+
+    current_window = None
+
+    if current_result:
+
+        current_window = {
+            "start": str(
+                current_result["start"]
+            )[:8],
+
+            "end": str(
+                current_result["end"]
+            )[:8],
+
+            "duration": current_result[
+                "duration"
+            ],
+
+            "score": current_result[
+                "score"
+            ],
+
+            "asset_risk": current_result[
+                "asset_risk"
+            ],
+
+            "traffic_impact": current_result[
+                "traffic_impact"
+            ],
+
+            "goods_impact": current_result[
+                "goods_impact"
+            ],
+
+            "conflict_count": current_result[
+                "conflict_count"
+            ],
+
+            "utilization": current_result[
+                "utilization"
+            ]
+        }
+
+    score_difference = 0
+
+    if (
+        current_window
+        and best_alternative
+    ):
+        score_difference = round(
+            best_alternative["score"]
+            - current_window["score"],
+            2
+        )
+
+    return {
+        "corridor": corridor,
+        "date": str(block_date),
+
+        "current_window":
+            current_window,
+
+        "alternatives":
+            alternatives,
+
+        "best_alternative":
+            best_alternative,
+
+        "best_score_difference":
+            score_difference
+    }
 
 
 # ==========================================
@@ -998,6 +1808,160 @@ for request in requests:
 
 print("GROUPS CREATED:", len(groups))
 
+
+# ==========================================
+# SHADOW BLOCK OPPORTUNITIES
+# ==========================================
+
+def find_shadow_block_opportunities(groups):
+    """
+    Find near-miss maintenance consolidation opportunities.
+
+    Shadow blocks are advisory only. They do NOT modify the
+    optimized schedule or the existing grouping logic.
+
+    A pair is reported when:
+    - both groups use the same corridor and date
+    - their task sets are different
+    - they do not already overlap
+    - their gap is slightly larger than the normal consolidation
+      limit but still within a reasonable coordination window
+    - the combined window is within the shadow duration limit
+
+    Group requests are database tuples, so request[0] is the
+    request_id and request[5]/request[6] are start/end times.
+    """
+
+    opportunities = []
+    seen = set()
+
+    # Normal grouping allows a 15-minute gap.
+    # Shadow blocks intentionally look a little farther ahead.
+    shadow_max_gap = MAX_CONSOLIDATION_GAP * 2
+    shadow_max_duration = MAX_BLOCK_DURATION + 60
+
+    for i in range(len(groups)):
+
+        for j in range(i + 1, len(groups)):
+
+            first = groups[i]
+            second = groups[j]
+
+            if first["corridor"] != second["corridor"]:
+                continue
+
+            if first["date"] != second["date"]:
+                continue
+
+            # Requests are database tuples.
+            first_task_ids = [
+                request[0]
+                for request in first["requests"]
+            ]
+
+            second_task_ids = [
+                request[0]
+                for request in second["requests"]
+            ]
+
+            if set(first_task_ids) & set(second_task_ids):
+                continue
+
+            first_start = time_to_minutes(first["start"])
+            first_end = time_to_minutes(first["end"])
+            second_start = time_to_minutes(second["start"])
+            second_end = time_to_minutes(second["end"])
+
+            # Ignore overlapping groups.
+            if not (first_end <= second_start or second_end <= first_start):
+                continue
+
+            if first_end <= second_start:
+                earlier = first
+                later = second
+                gap_minutes = second_start - first_end
+            else:
+                earlier = second
+                later = first
+                gap_minutes = first_start - second_end
+
+            # Normal optimizer already handles gaps up to this limit.
+            if gap_minutes <= MAX_CONSOLIDATION_GAP:
+                continue
+
+            # Shadow only looks one extra consolidation window ahead.
+            if gap_minutes > shadow_max_gap:
+                continue
+
+            combined_start = min(
+                time_to_minutes(earlier["start"]),
+                time_to_minutes(later["start"])
+            )
+
+            combined_end = max(
+                time_to_minutes(earlier["end"]),
+                time_to_minutes(later["end"])
+            )
+
+            combined_duration = combined_end - combined_start
+
+            if combined_duration > shadow_max_duration:
+                continue
+
+            task_pair = tuple(sorted(
+                first_task_ids + second_task_ids
+            ))
+
+            key = (
+                str(first["corridor"]),
+                str(first["date"]),
+                task_pair,
+            )
+
+            if key in seen:
+                continue
+
+            seen.add(key)
+
+            opportunities.append(
+                {
+                    "corridor": first["corridor"],
+                    "date": first["date"],
+                    "base_tasks": first_task_ids,
+                    "candidate_tasks": second_task_ids,
+                    "base_window": {
+                        "start": str(first["start"]),
+                        "end": str(first["end"]),
+                    },
+                    "candidate_window": {
+                        "start": str(second["start"]),
+                        "end": str(second["end"]),
+                    },
+                    "gap_minutes": round(
+                        gap_minutes,
+                        2
+                    ),
+                    "combined_duration_minutes": round(
+                        combined_duration,
+                        2
+                    ),
+                    "reason": (
+                        "Nearby maintenance blocks are outside the normal "
+                        "consolidation gap but could be coordinated as a "
+                        "shadow maintenance opportunity."
+                    ),
+                }
+            )
+
+    return opportunities
+
+
+shadow_block_opportunities = find_shadow_block_opportunities(groups)
+
+print(
+    "SHADOW BLOCK OPPORTUNITIES:",
+    len(shadow_block_opportunities)
+)
 
 
 # ==========================================
@@ -1531,7 +2495,7 @@ for group in groups:
     print("--------------------------------------")
 
     for reason in ai_explanation["reasons"]:
-        print("✓", reason)
+        print("[OK]", reason)
 
     print(
         "Candidates evaluated:",
@@ -2112,7 +3076,7 @@ for block in optimized_blocks:
 
 
     # ======================================
-    # BLOCK ↔ TASK
+    # BLOCK <-> TASK
     # ======================================
 
     for request in block["tasks"]:
@@ -2151,7 +3115,7 @@ for block in optimized_blocks:
 
 
     # ======================================
-    # BLOCK ↔ TRAIN
+    # BLOCK <-> TRAIN
     # ======================================
 
     for train in block["train_conflicts"]:
@@ -2275,7 +3239,7 @@ for block in optimized_blocks:
         "reasons",
         []
     ):
-        print("  ✓", reason)
+        print("  [OK]", reason)
 
     alternatives = explanation.get(
         "alternatives",
@@ -2297,6 +3261,73 @@ print()
 print("==============================================================")
 print("              OPTIMIZATION COMPLETE")
 print("==============================================================")
+
+
+
+# ==========================================
+# TEST 30-DAY MAINTENANCE INTELLIGENCE
+# ==========================================
+
+print()
+print("==========================================")
+print("30-DAY MAINTENANCE INTELLIGENCE TEST")
+print("==========================================")
+
+maintenance_30_result = generate_30_day_maintenance_intelligence(
+    start_date=datetime(2026, 9, 1).date(),
+    corridor_id="C02",
+)
+
+print(
+    "CORRIDOR:",
+    maintenance_30_result["corridor"]
+)
+
+print(
+    "START DATE:",
+    maintenance_30_result["start_date"]
+)
+
+print(
+    "END DATE:",
+    maintenance_30_result["end_date"]
+)
+
+print(
+    "TOTAL TASKS:",
+    maintenance_30_result["total_tasks"]
+)
+
+print(
+    "CRITICAL TASKS:",
+    maintenance_30_result["critical_tasks"]
+)
+
+print(
+    "HIGH PRIORITY TASKS:",
+    maintenance_30_result["high_priority_tasks"]
+)
+
+for task in maintenance_30_result["tasks"]:
+
+    print(
+        f"{task['task_id']} | "
+        f"{task['corridor']} | "
+        f"{task['requested_date']} | "
+        f"asset_risk={task['asset_risk']} | "
+        f"maintenance_priority={task['maintenance_priority']} | "
+        f"traffic={task['traffic_pressure']} | "
+        f"goods={task['goods_impact']} | "
+        f"urgency={task['maintenance_urgency']} | "
+        f"level={task['urgency_level']}"
+    )
+
+print(
+    "HIGHEST PRIORITY TASK:",
+    maintenance_30_result["highest_priority_task"]
+)
+
+print("==========================================")
 
 cursor.close()
 connection.close()
