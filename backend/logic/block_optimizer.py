@@ -1375,6 +1375,315 @@ def simulate_what_if_windows(
     }
 
 
+# ============================================================
+# AI EMERGENCY / URGENT BLOCK OPTIMIZATION
+# ============================================================
+
+def optimize_emergency_block(
+    task_id,
+    corridor_id,
+    block_date,
+    requested_start,
+    requested_end,
+):
+    """
+    Find the safest available maintenance window for an
+    emergency / urgent maintenance task.
+
+    Uses:
+        - Asset risk
+        - Maintenance priority
+        - Traffic impact
+        - Goods demand
+        - Train conflicts
+    """
+
+    # --------------------------------------------------------
+    # Get task priority / asset risk
+    # --------------------------------------------------------
+
+    try:
+        asset_risk = calculate_asset_risk_for_task(task_id)
+    except Exception as exc:
+        print("EMERGENCY ASSET RISK ERROR:", exc)
+        asset_risk = 0.0
+
+    cursor.execute(
+        """
+        SELECT COALESCE(priority_score, 0)
+        FROM maintenance_tasks
+        WHERE task_id = %s
+        """,
+        (task_id,)
+    )
+
+    priority_row = cursor.fetchone()
+
+    maintenance_priority = (
+        safe_float(priority_row[0], 0.0)
+        if priority_row
+        else 0.0
+    )
+
+    # Emergency tasks receive urgency emphasis.
+    emergency_priority = max(
+        maintenance_priority,
+        asset_risk
+    )
+
+    # --------------------------------------------------------
+    # Convert requested window to minutes
+    # --------------------------------------------------------
+
+    requested_start_min = time_to_minutes(requested_start)
+    requested_end_min = time_to_minutes(requested_end)
+
+    duration = max(
+        1,
+        requested_end_min - requested_start_min
+    )
+
+    # --------------------------------------------------------
+    # Generate candidate windows
+    # --------------------------------------------------------
+
+    candidates = []
+
+    candidate_starts = set()
+
+    # Requested start
+    candidate_starts.add(requested_start_min)
+
+    # Search around requested window
+    for offset in range(
+        -180,
+        181,
+        30
+    ):
+        candidate_start = requested_start_min + offset
+
+        if candidate_start < 0:
+            continue
+
+        if candidate_start + duration > 24 * 60:
+            continue
+
+        candidate_starts.add(candidate_start)
+
+    # --------------------------------------------------------
+    # Evaluate every candidate
+    # --------------------------------------------------------
+
+    for candidate_start_min in sorted(candidate_starts):
+
+        candidate_end_min = (
+            candidate_start_min + duration
+        )
+
+        candidate_start = minutes_to_time(
+            candidate_start_min
+        )
+
+        candidate_end = minutes_to_time(
+            candidate_end_min
+        )
+
+        conflicts = get_train_conflicts(
+            corridor_id,
+            block_date,
+            candidate_start,
+            candidate_end
+        )
+
+        conflict_count = len(conflicts)
+
+        # ----------------------------------------------------
+        # Traffic ML
+        # ----------------------------------------------------
+
+        passenger_trains = 0
+        goods_trains = 0
+        special_trains = 0
+        express_trains = 0
+
+        for train in conflicts:
+
+            train_type = str(
+                train.get("train_type", "")
+            ).upper()
+
+            if train_type == "EXPRESS":
+                express_trains += 1
+                passenger_trains += 1
+
+            elif train_type in (
+                "PASSENGER",
+                "MAIL",
+                "SUPERFAST"
+            ):
+                passenger_trains += 1
+
+            elif train_type in (
+                "FREIGHT",
+                "GOODS"
+            ):
+                goods_trains += 1
+
+            elif train_type in (
+                "SPECIAL",
+                "FESTIVAL"
+            ):
+                special_trains += 1
+
+            else:
+                passenger_trains += 1
+
+        try:
+            traffic_prediction = predict_traffic_impact(
+                block_duration_min=int(duration),
+                start_hour=int(
+                    candidate_start_min // 60
+                ),
+                passenger_trains=passenger_trains,
+                goods_trains=goods_trains,
+                special_trains=special_trains,
+                express_trains=express_trains,
+                corridor_congestion=50,
+                criticality=3,
+                maintenance_priority=float(
+                    maintenance_priority
+                )
+            )
+
+            traffic_impact = safe_float(
+                traffic_prediction.get(
+                    "traffic_impact_score",
+                    traffic_prediction.get(
+                        "impact_score",
+                        0
+                    )
+                ),
+                0
+            )
+
+        except Exception as exc:
+
+            print(
+                "EMERGENCY TRAFFIC ML ERROR:",
+                exc
+            )
+
+            traffic_impact = 0.0
+
+        # ----------------------------------------------------
+        # Goods ML
+        # ----------------------------------------------------
+
+        try:
+
+            goods_impact = calculate_goods_impact(
+                corridor_id=corridor_id,
+                block_date=block_date,
+                start_hour=int(
+                    candidate_start_min // 60
+                )
+            )
+
+        except Exception as exc:
+
+            print(
+                "EMERGENCY GOODS ML ERROR:",
+                exc
+            )
+
+            goods_impact = 0.0
+
+        # ----------------------------------------------------
+        # Emergency score
+        # ----------------------------------------------------
+
+        conflict_penalty = min(
+            100,
+            conflict_count * 25
+        )
+
+        emergency_score = (
+            emergency_priority * 0.40
+            +
+            asset_risk * 0.25
+            +
+            (100 - traffic_impact) * 0.20
+            +
+            (100 - goods_impact) * 0.15
+            -
+            conflict_penalty
+        )
+
+        candidates.append(
+            {
+                "start": str(candidate_start),
+                "end": str(candidate_end),
+                "duration": duration,
+                "emergency_score": round(
+                    emergency_score,
+                    2
+                ),
+                "asset_risk": round(
+                    asset_risk,
+                    2
+                ),
+                "maintenance_priority": round(
+                    maintenance_priority,
+                    2
+                ),
+                "traffic_impact": round(
+                    traffic_impact,
+                    2
+                ),
+                "goods_impact": round(
+                    goods_impact,
+                    2
+                ),
+                "conflict_count": conflict_count,
+                "passenger_trains": passenger_trains,
+                "goods_trains": goods_trains,
+                "special_trains": special_trains,
+                "express_trains": express_trains,
+            }
+        )
+
+    # --------------------------------------------------------
+    # Select best emergency window
+    # --------------------------------------------------------
+
+    candidates.sort(
+        key=lambda x: x["emergency_score"],
+        reverse=True
+    )
+
+    best_window = (
+        candidates[0]
+        if candidates
+        else None
+    )
+
+    return {
+        "task_id": task_id,
+        "corridor_id": corridor_id,
+        "block_date": str(block_date),
+        "emergency": True,
+        "requested_window": {
+            "start": str(requested_start),
+            "end": str(requested_end),
+            "duration": duration,
+        },
+        "best_window": best_window,
+        "alternatives": candidates[1:4],
+        "candidates_evaluated": len(
+            candidates
+        ),
+    }
+
 # ==========================================
 # AI CANDIDATE WINDOW SCORING
 # ==========================================
@@ -1979,6 +2288,7 @@ def build_window_explanation(
     utilization,
     traffic_impact_score,
     goods_impact_score,
+    ai_decision_confidence,
 ):
     """
     Build a human-readable explanation for why the AI
@@ -2018,6 +2328,17 @@ def build_window_explanation(
     )
 
     reasons = []
+
+    # ==========================================
+    # AI DECISION CONFIDENCE
+    # ==========================================
+
+    reasons.append(
+        f"AI decision confidence: "
+        f"{ai_decision_confidence['level']} "
+        f"(score gap: "
+        f"{ai_decision_confidence['score_gap']:.2f})"
+    )
 
     if best_candidate["conflict_count"] == 0:
         reasons.append(
@@ -2405,6 +2726,75 @@ for group in groups:
         key=candidate_sort_key
     )
 
+
+    # ==========================================
+    # AI DECISION CONFIDENCE
+    # ==========================================
+
+    sorted_candidates = sorted(
+        candidate_results,
+        key=candidate_sort_key,
+        reverse=True
+    )
+
+    best_candidate = sorted_candidates[0]
+
+    if len(sorted_candidates) > 1:
+        second_best_candidate = sorted_candidates[1]
+
+        best_score = safe_float(
+            best_candidate.get("score"),
+            0.0
+        )
+
+        second_best_score = safe_float(
+            second_best_candidate.get("score"),
+            0.0
+        )
+
+        score_gap = round(
+            best_score - second_best_score,
+            2
+        )
+    else:
+        second_best_candidate = None
+        score_gap = 0.0
+
+    if score_gap >= 10:
+        confidence_level = "HIGH"
+    elif score_gap >= 3:
+        confidence_level = "MODERATE"
+    else:
+        confidence_level = "LOW"
+
+    ai_decision_confidence = {
+        "level": confidence_level,
+        "score_gap": score_gap,
+        "candidates_evaluated": len(
+            sorted_candidates
+        ),
+        "best_score": round(
+            safe_float(
+                best_candidate.get("score"),
+                0.0
+            ),
+            2
+        ),
+        "second_best_score": (
+            round(
+                safe_float(
+                    second_best_candidate.get("score"),
+                    0.0
+                ),
+                2
+            )
+            if second_best_candidate
+            else None
+        )
+    }
+
+
+
     # ======================================
     # APPLY AI RECOMMENDATION
     # ======================================
@@ -2460,6 +2850,9 @@ for group in groups:
             "goods_impact",
             0
         ),
+
+        ai_decision_confidence=ai_decision_confidence,
+
     )
 
     print()
@@ -3328,6 +3721,41 @@ print(
 )
 
 print("==========================================")
+
+print("\n" + "=" * 60)
+print("EMERGENCY BLOCK OPTIMIZATION TEST")
+print("=" * 60)
+
+emergency_result = optimize_emergency_block(
+    task_id="T-AUTO-0001",
+    corridor_id="C02",
+    block_date=datetime(2026, 9, 1).date(),
+    requested_start="10:00:00",
+    requested_end="13:00:00",
+)
+
+print("TASK:", emergency_result["task_id"])
+print("CORRIDOR:", emergency_result["corridor_id"])
+print(
+    "REQUESTED WINDOW:",
+    emergency_result["requested_window"]
+)
+
+print(
+    "CANDIDATES EVALUATED:",
+    emergency_result["candidates_evaluated"]
+)
+
+print(
+    "BEST EMERGENCY WINDOW:",
+    emergency_result["best_window"]
+)
+
+print("\nALTERNATIVES:")
+
+for alternative in emergency_result["alternatives"]:
+    print(alternative)
+
 
 cursor.close()
 connection.close()
