@@ -1,8 +1,10 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 import psycopg
 import os
 from dotenv import load_dotenv
+
+from auth.security import require_permission
 
 load_dotenv()
 
@@ -498,7 +500,7 @@ def calculate_risk(
 # WHAT-IF SIMULATION
 # ============================================================
 
-@router.post("/simulate")
+@router.post("/simulate", dependencies=[Depends(require_permission("optimizer.simulate"))])
 def simulate_optimization(
     request: SimulationRequest
 ):

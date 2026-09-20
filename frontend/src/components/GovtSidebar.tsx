@@ -22,34 +22,16 @@ import { useAbps } from "@/context/AbpsContext";
 import { useLanguage } from "@/context/LanguageContext";
 import { Button } from "@/components/ui/button";
 import { GovtNationalEmblem } from "./GovtNationalEmblem";
+import { NAV_SECTIONS as DEFAULT_NAV_SECTIONS, getNavSections } from "@/lib/permissions";
 
-export const NAV_SECTIONS = [
-  {
-    titleEn: "CORRIDOR OPERATIONS",
-    titleHi: "कॉरिडोर परिचालन",
-    items: [
-      { to: "/dashboard", labelEn: "Control Dashboard", labelHi: "नियंत्रण डैशबोर्ड", icon: LayoutDashboard, badge: "Live", badgeTone: "bg-[#137547] text-white" },
-      { to: "/requests", labelEn: "Requisition Portal", labelHi: "मांग पत्र पोर्टल", icon: ClipboardList, badge: null, badgeTone: "" },
-      { to: "/optimizer", labelEn: "IR-ABPS Brain", labelHi: "एआई अनुकूलन इंजन", icon: BrainCircuit, badge: "AI", badgeTone: "bg-[#003366] text-white" },
-      { to: "/planner", labelEn: "Gantt Planner", labelHi: "गैंट योजनाकार", icon: CalendarRange, badge: null, badgeTone: "" },
-    ],
-  },
-  {
-    titleEn: "SAFETY & ASSET SCRUTINY",
-    titleHi: "सुरक्षा एवं परिसंपत्ति संवीक्षा",
-    items: [
-      { to: "/conflicts", labelEn: "Conflicts & Approvals", labelHi: "विवाद एवं अनुमोदन", icon: ShieldAlert, badge: null, badgeTone: "" },
-      { to: "/maintenance-tasks", labelEn: "Maintenance Tasks", labelHi: "अनुरक्षण कार्य", icon: Wrench, badge: null, badgeTone: "" },
-      { to: "/analytics", labelEn: "Impact Analytics", labelHi: "प्रभाव विश्लेषण", icon: BarChart3, badge: null, badgeTone: "" },
-      { to: "/emergency", labelEn: "Emergency Blocking", labelHi: "आपातकालीन ब्लॉक", icon: Siren, badge: "SOS", badgeTone: "bg-[#800000] text-white animate-pulse" },
-    ],
-  },
-] as const;
+export const NAV_SECTIONS = DEFAULT_NAV_SECTIONS;
 
 export function GovtSidebar() {
   const location = useLocation();
-  const { role, signOut } = useAbps();
+  const { role, scope, dept, signOut } = useAbps();
   const { lang, t } = useLanguage();
+
+  const sections = getNavSections(role.id);
 
   return (
     <aside className="w-full lg:w-80 xl:w-88 shrink-0 bg-white dark:bg-slate-900 border-r-2 border-slate-300 dark:border-slate-800 select-none min-h-full flex flex-col justify-between shadow-xs">
@@ -61,14 +43,22 @@ export function GovtSidebar() {
               <UserCheck className="size-4 text-[#FF9933]" />
               {t("OFFICER CONSOLE", "अधिकारी कंसोल")}
             </span>
-            <span className="bg-[#FF9933] text-slate-950 px-2 py-0.5 rounded-[2px] text-[10px] font-mono font-extrabold uppercase shadow-2xs">
-              {role.system}
-            </span>
+            <div className="flex items-center gap-1.5">
+              <span className="bg-[#FF9933] text-slate-950 px-2 py-0.5 rounded-[2px] text-[10px] font-mono font-extrabold uppercase shadow-2xs">
+                {role.system}
+              </span>
+            </div>
           </div>
 
           <h2 className="text-base font-extrabold text-white tracking-tight leading-snug">
             {role.title}
           </h2>
+
+          <div className="mt-1.5 flex items-center gap-2">
+            <span className="text-[10px] font-mono font-bold uppercase px-1.5 py-0.5 rounded-[2px] bg-white/20 text-sky-200 border border-white/20">
+              {scope === "network" ? "SCOPE: NETWORK-WIDE" : `SCOPE: DEPT-${dept || role.dept}`}
+            </span>
+          </div>
 
           <div className="flex items-center justify-between text-xs text-slate-200 mt-2.5 font-mono border-t border-white/20 pt-2">
             <span className="font-semibold text-slate-100">{role.name}</span>
@@ -90,7 +80,7 @@ export function GovtSidebar() {
 
         {/* Navigation Sections */}
         <div className="py-3">
-          {NAV_SECTIONS.map((section, sIdx) => (
+          {sections.map((section, sIdx) => (
             <div key={sIdx} className="mb-3 last:mb-0">
               <div className="px-4.5 py-1.5 text-[10px] font-extrabold uppercase tracking-widest text-slate-500 dark:text-slate-400">
                 {lang === "hi" ? section.titleHi : section.titleEn}

@@ -109,11 +109,10 @@ def resolve_user_id(cursor, requested_by: str):
         SELECT user_id
         FROM users
         WHERE user_id = %s
-           OR employee_code = %s
-           OR email = %s
+          OR email = %s
         LIMIT 1
         """,
-        (value, value, value)
+        (value, value)
     )
 
     row = cursor.fetchone()
@@ -143,19 +142,18 @@ def resolve_section_id(cursor, section: str, corridor_id: str):
         return None
 
     cursor.execute(
-        """
-        SELECT section_id
-        FROM corridor_sections
-        WHERE corridor_id = %s
-          AND (
-                section_id = %s
-                OR section_code = %s
-                OR section_name = %s
-              )
-        LIMIT 1
-        """,
-        (corridor_id, value, value, value)
-    )
+    """
+    SELECT section_id
+    FROM corridor_sections
+    WHERE corridor_id = %s
+      AND (
+            section_id = %s
+            OR section_name = %s
+          )
+    LIMIT 1
+    """,
+    (corridor_id, value, value)
+)
 
     row = cursor.fetchone()
 
@@ -173,7 +171,6 @@ def get_block_requests():
     cursor = conn.cursor()
 
     try:
-
         cursor.execute(
             """
             SELECT
@@ -188,18 +185,11 @@ def get_block_requests():
                 block_type,
                 request_status,
                 submitted_date,
-                requested_by,
-                department_id,
-                section_id,
-                criticality,
-                safety_risk,
-                description,
-                review_status,
+                created_by,
                 reviewed_by,
                 reviewed_at,
-                rejection_reason,
-                created_at,
-                updated_at
+                priority,
+                review_notes
             FROM block_requests
             ORDER BY
                 requested_date NULLS LAST,
@@ -222,32 +212,15 @@ def get_block_requests():
                 "block_type": row[8],
                 "request_status": row[9],
                 "submitted_date": str(row[10]) if row[10] else None,
-
-                # New workflow fields
-                "requested_by": row[11],
-                "department_id": row[12],
-                "section_id": row[13],
-                "criticality": row[14],
-                "safety_risk": row[15],
-                "description": row[16],
-                "review_status": row[17],
-                "reviewed_by": row[18],
+                "created_by": row[11],
+                "reviewed_by": row[12],
                 "reviewed_at": (
-                    row[19].isoformat()
-                    if row[19]
+                    row[13].isoformat()
+                    if row[13]
                     else None
                 ),
-                "rejection_reason": row[20],
-                "created_at": (
-                    row[21].isoformat()
-                    if row[21]
-                    else None
-                ),
-                "updated_at": (
-                    row[22].isoformat()
-                    if row[22]
-                    else None
-                ),
+                "priority": row[14],
+                "review_notes": row[15],
             }
             for row in rows
         ]
@@ -255,7 +228,6 @@ def get_block_requests():
     finally:
         cursor.close()
         conn.close()
-
 
 # =========================================================
 # CREATE BLOCK REQUEST
@@ -292,9 +264,9 @@ def create_block_request(request: BlockRequestCreate):
         # =====================================================
 
         team_mapping = {
-            "TMS": "TEAM-001",
-            "SMMS": "TEAM-002",
-            "TDMS": "TEAM-003"
+           "TMS": "ENG-01",
+           "SMMS": "SNT-01",
+           "TDMS": "TRD-01",
         }
 
         team_id = team_mapping.get(department)
@@ -374,7 +346,28 @@ def create_block_request(request: BlockRequestCreate):
 
 
         # =====================================================
-        # 6. ALLOW DIRECT CORRIDOR ID
+        # 6. ALLOW DIRECT SECTION ID
+        # =====================================================
+
+        if not corridor_id:
+            cursor.execute(
+                """
+                SELECT corridor_id
+                FROM corridor_sections
+                WHERE section_id = %s
+                LIMIT 1
+                """,
+                (section,)
+            )
+
+            section_row = cursor.fetchone()
+
+            if section_row:
+                corridor_id = section_row[0]
+
+
+        # =====================================================
+        # 7. ALLOW DIRECT CORRIDOR ID
         # =====================================================
 
         if not corridor_id:
@@ -403,7 +396,6 @@ def create_block_request(request: BlockRequestCreate):
                     f"{request.section}"
                 )
             )
-
 
         # =====================================================
         # 7. RESOLVE SECTION ID
@@ -909,85 +901,53 @@ def create_block_request(request: BlockRequestCreate):
         # =====================================================
 
         cursor.execute(
-            """
-            INSERT INTO block_requests
-            (
-                request_id,
-                task_id,
-                team_id,
-                corridor_id,
-                requested_date,
-                requested_start,
-                requested_end,
-                requested_duration_min,
-                block_type,
-                request_status,
-                submitted_date,
-
-                requested_by,
-                department_id,
-                section_id,
-                criticality,
-                safety_risk,
-                description,
-                review_status,
-                created_at,
-                updated_at
-            )
-            VALUES
-            (
-                %s,
-                %s,
-                %s,
-                %s,
-                %s,
-                %s,
-                %s,
-                %s,
-                %s,
-                %s,
-                %s,
-
-                %s,
-                %s,
-                %s,
-                %s,
-                %s,
-                %s,
-                %s,
-                CURRENT_TIMESTAMP,
-                CURRENT_TIMESTAMP
-            )
-            """,
-            (
-                request_id,
-                task_id,
-                team_id,
-                corridor_id,
-                planning_date,
-                requested_start,
-                requested_end,
-                duration_minutes,
-                block_type,
-
-                # Keep PENDING because the current
-                # optimizer reads PENDING requests.
-                "PENDING",
-
-                date.today(),
-
-                requested_by_user_id,
-                department_id,
-                section_id,
-                criticality_level,
-                safety_risk,
-                description,
-
-                # Department review is represented separately
-                # so existing optimizer compatibility is retained.
-                "PENDING"
-            )
-        )
+    """
+    INSERT INTO block_requests
+    (
+        request_id,
+        task_id,
+        team_id,
+        corridor_id,
+        requested_date,
+        requested_start,
+        requested_end,
+        requested_duration_min,
+        block_type,
+        request_status,
+        submitted_date,
+        created_by
+    )
+    VALUES
+    (
+        %s,
+        %s,
+        %s,
+        %s,
+        %s,
+        %s,
+        %s,
+        %s,
+        %s,
+        %s,
+        %s,
+        %s
+    )
+    """,
+    (
+        request_id,
+        task_id,
+        team_id,
+        corridor_id,
+        planning_date,
+        requested_start,
+        requested_end,
+        duration_minutes,
+        block_type,
+        "PENDING",
+        date.today(),
+        requested_by_user_id
+    )
+)
 
 
         # =====================================================

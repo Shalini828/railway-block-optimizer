@@ -49,10 +49,17 @@ export const DEPT_LABEL: Record<Dept, string> = {
 };
 
 export type Status =
-  "Pending AI Scheduling" | "Clustered / Shadowed" | "Approved" | "Active" | "Completed";
+  | "Pending AI Scheduling"
+  | "Clustered / Shadowed"
+  | "Approved"
+  | "Active"
+  | "Completed"
+  | "Cancelled"
+  | "Rejected";
 
 export type Requisition = {
   id: string;
+  backendId?: string;
   dept: Dept;
   assetId: string;
   work: string;
@@ -70,6 +77,9 @@ export type Requisition = {
   slot?: { day: number; start: number; end: number }; // day 0..6, hours
   clusterId?: string;
   requestedBy: string;
+  scheduledWindow?: string;
+  approvedWindow?: string;
+  rejectionReason?: string;
 };
 
 export type Corridor = {

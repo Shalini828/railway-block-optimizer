@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { toast } from "sonner";
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { apiFetch } from "@/lib/api";
 import {
   ArrowRight,
   Filter,
@@ -52,6 +53,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useLanguage } from "@/context/LanguageContext";
+import { useAbps } from "@/context/AbpsContext";
 
 export const Route = createFileRoute("/maintenance-tasks")({
   head: () => ({
@@ -87,6 +89,7 @@ const ITEMS_PER_PAGE = 10;
 
 export default function MaintenanceTasksPage() {
   const { t } = useLanguage();
+  const { role, scope, can } = useAbps();
   const [tasks, setTasks] = useState<MaintenanceTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -94,7 +97,8 @@ export default function MaintenanceTasksPage() {
 
   // Filters
   const [search, setSearch] = useState("");
-  const [deptFilter, setDeptFilter] = useState("All");
+  const initialDept = scope === "department" ? role.dept : "All";
+  const [deptFilter, setDeptFilter] = useState(initialDept);
   const [priorityFilter, setPriorityFilter] = useState("All");
   const [statusFilter, setStatusFilter] = useState("All");
   const [riskFilter, setRiskFilter] = useState("All");
@@ -111,7 +115,7 @@ export default function MaintenanceTasksPage() {
   const fetchTasks = () => {
     setLoading(true);
     setError(false);
-    fetch("http://127.0.0.1:8000/maintenance-tasks/")
+    apiFetch("/maintenance-tasks/")
       .then((res) => {
         if (!res.ok) throw new Error("Failed to fetch");
         return res.json();
@@ -254,7 +258,7 @@ export default function MaintenanceTasksPage() {
     setCompleteConfirm(null);
 
     try {
-      const res = await fetch(`http://127.0.0.1:8000/maintenance-tasks/${taskId}/status`, {
+      const res = await apiFetch(`/maintenance-tasks/${taskId}/status`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ task_status: "COMPLETED" }),
@@ -525,9 +529,10 @@ export default function MaintenanceTasksPage() {
             />
           </div>
           <FilterSelect
-            value={deptFilter}
+            value={scope === "department" ? role.dept : deptFilter}
             onChange={setDeptFilter}
-            options={["All", ...depts]}
+            options={scope === "department" ? [role.dept] : ["All", ...depts]}
+            disabled={scope === "department"}
             w="w-[120px]"
           />
           <FilterSelect
@@ -776,7 +781,7 @@ export default function MaintenanceTasksPage() {
                           >
                             <Eye className="size-3 mr-1" /> View
                           </Button>
-                          {task.task_status !== "COMPLETED" && (
+                          {task.task_status !== "COMPLETED" && can("tasks.update") && (
                             <Button
                               variant="outline"
                               size="sm"
@@ -997,7 +1002,7 @@ export default function MaintenanceTasksPage() {
                     <BrainCircuit className="size-4 text-[#FF9933]" /> Cluster for AI Scheduling
                   </Link>
                 </Button>
-                {viewTask.task_status !== "COMPLETED" && (
+                {viewTask.task_status !== "COMPLETED" && can("tasks.update") && (
                   <Button
                     variant="outline"
                     className="w-full text-xs font-bold text-[#137547] border-emerald-400 bg-emerald-50 hover:bg-emerald-100 rounded-[2px] h-9 gap-1.5"
@@ -1061,10 +1066,10 @@ function WorkloadBar({ title, data, total, color }: any) {
   );
 }
 
-function FilterSelect({ value, onChange, options, w }: any) {
+function FilterSelect({ value, onChange, options, w, disabled }: any) {
   return (
-    <Select value={value} onValueChange={onChange}>
-      <SelectTrigger className={`${w} h-8 text-xs bg-white rounded-[2px] border-slate-300 focus:border-[#003366]`}>
+    <Select value={value} onValueChange={onChange} disabled={disabled}>
+      <SelectTrigger className={`${w} h-8 text-xs bg-white rounded-[2px] border-slate-300 focus:border-[#003366] ${disabled ? "opacity-80 cursor-not-allowed bg-slate-100" : ""}`}>
         <SelectValue />
       </SelectTrigger>
       <SelectContent className="rounded-[2px] border-slate-300">

@@ -15,6 +15,7 @@ import {
   Zap,
 } from "lucide-react";
 import { toast } from "sonner";
+import { apiFetch } from "@/lib/api";
 
 import {
   classifyTrainConflictSeverity,
@@ -45,6 +46,24 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+
+import { useAbps } from "@/context/AbpsContext";
+import { useLanguage } from "@/context/LanguageContext";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
 
 export const Route = createFileRoute("/planner")({
   head: () => ({
@@ -78,6 +97,11 @@ type OptimizedBlock = {
   block_status: string;
   number_of_tasks: string;
   number_of_departments: string;
+  review?: {
+    controller_decision?: string;
+    controller_note?: string;
+    change_requests?: Array<{ reason: string; suggested_shift_min?: number; actor_dept: string }>;
+  };
 };
 
 type Train = {
@@ -122,6 +146,9 @@ function statusClass(status?: string) {
 }
 
 function PlannerPage() {
+  const { role, scope, can } = useAbps();
+  const { t } = useLanguage();
+
   const [corridors, setCorridors] = useState<Corridor[]>([]);
   const [blocks, setBlocks] = useState<OptimizedBlock[]>([]);
   const [trains, setTrains] = useState<Train[]>([]);
@@ -132,15 +159,34 @@ function PlannerPage() {
   const [selectedBlock, setSelectedBlock] =
     useState<OptimizedBlock | null>(null);
 
+  const [softGateOpen, setSoftGateOpen] = useState(false);
+  const [changeReqOpen, setChangeReqOpen] = useState(false);
+  const [changeReason, setChangeReason] = useState("");
+  const [shiftMin, setShiftMin] = useState("");
+  const [recommendRejectOpen, setRecommendRejectOpen] = useState(false);
+  const [recommendRejectNote, setRecommendRejectNote] = useState("");
+  const [reviewHistory, setReviewHistory] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (selectedBlock) {
+      apiFetch(`/optimized-plan/${selectedBlock.block_id}/history`)
+        .then((res) => (res.ok ? res.json() : []))
+        .then((data) => setReviewHistory(Array.isArray(data) ? data : []))
+        .catch(() => setReviewHistory([]));
+    } else {
+      setReviewHistory([]);
+    }
+  }, [selectedBlock]);
+
   const fetchData = async () => {
     setLoading(true);
 
     try {
       const [corridorResponse, blockResponse, trainResponse] =
         await Promise.all([
-          fetch("http://127.0.0.1:8000/corridors/"),
-          fetch("http://127.0.0.1:8000/optimized-plan/"),
-          fetch("http://127.0.0.1:8000/trains/"),
+          apiFetch("/corridors/"),
+          apiFetch("/optimized-plan/"),
+          apiFetch("/trains/"),
         ]);
 
       if (
@@ -335,18 +381,11 @@ function PlannerPage() {
             ? "reject"
             : "rework";
 
-      const response = await fetch(
-        `http://127.0.0.1:8000/optimized-plan/${selectedBlock.block_id}/${actionPath}`,
+      const response = await apiFetch(
+        `/optimized-plan/${selectedBlock.block_id}/${actionPath}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          ...(action === "approve"
-            ? {
-                body: JSON.stringify({
-                  approved_by: "Senior Officer",
-                }),
-              }
-            : {}),
         },
       );
 
@@ -359,9 +398,9 @@ function PlannerPage() {
       }
 
       const messages = {
-        approve: "Block authorization recorded.",
-        reject: "Block rejected and returned to the controller queue.",
-        rework: "Block sent back for window adjustment.",
+        approve: t("Block authorization recorded.", "ब्लॉक प्राधिकरण दर्ज किया गया।"),
+        reject: t("Block rejected and returned to queue.", "ब्लॉक अस्वीकृत और कतार में वापस।"),
+        rework: t("Block sent back for window adjustment.", "ब्लॉक समय समायोजन हेतु वापस भेजा गया।"),
       };
 
       toast.success(messages[action]);
@@ -374,6 +413,140 @@ function PlannerPage() {
           ? error.message
           : "Unable to update block status.",
       );
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleApprove = async (confirmedOverride = false) => {
+    if (!selectedBlock) return;
+    const hasEndorsement =
+      selectedBlock.review?.controller_decision === "CONTROLLER_ENDORSED" ||
+      reviewHistory.some((h) => h.action === "CONTROLLER_ENDORSED");
+    if (!hasEndorsement && !confirmedOverride) {
+      setSoftGateOpen(true);
+      return;
+    }
+    setSoftGateOpen(false);
+    await updateBlockStatus("approve");
+  };
+
+  const handleEndorse = async () => {
+    if (!selectedBlock) return;
+    setActionLoading(true);
+    try {
+      const res = await apiFetch(`/optimized-plan/${selectedBlock.block_id}/review`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          decision: "ENDORSE",
+          note: "Endorsed by Chief Controller for authorization",
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "Failed to record endorsement");
+      }
+      toast.success(
+        t(
+          "Controller endorsement recorded for DRM authorization.",
+          "डीआरएम प्राधिकरण के लिए नियंत्रक का समर्थन दर्ज किया गया।",
+        ),
+      );
+      await fetchData();
+      setSelectedBlock(null);
+    } catch (e: any) {
+      toast.error(e.message || "Failed to record endorsement");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleRecommendReject = async () => {
+    if (!selectedBlock) return;
+    if (!recommendRejectNote.trim()) {
+      toast.error(t("Please provide a note for recommendation", "कृपया सिफारिश के लिए एक नोट प्रदान करें"));
+      return;
+    }
+    setActionLoading(true);
+    try {
+      const res = await apiFetch(`/optimized-plan/${selectedBlock.block_id}/review`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ decision: "RECOMMEND_REJECT", note: recommendRejectNote }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "Failed to record recommendation");
+      }
+      toast.success(t("Recommendation to reject recorded.", "अस्वीकार करने की सिफारिश दर्ज की गई।"));
+      setRecommendRejectOpen(false);
+      setRecommendRejectNote("");
+      await fetchData();
+      setSelectedBlock(null);
+    } catch (e: any) {
+      toast.error(e.message || "Failed to record recommendation");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleRequestChange = async () => {
+    if (!selectedBlock) return;
+    if (!changeReason.trim()) {
+      toast.error(t("Please enter a reason for the rework request", "कृपया पुनर्विचार अनुरोध का कारण दर्ज करें"));
+      return;
+    }
+    setActionLoading(true);
+    try {
+      const res = await apiFetch(`/optimized-plan/${selectedBlock.block_id}/request-change`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          reason: changeReason,
+          suggested_shift_min: shiftMin ? Number(shiftMin) : undefined,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "Failed to submit change request");
+      }
+      toast.success(
+        t(
+          "Rework request submitted to Control & DRM Planning.",
+          "पुनर्विचार अनुरोध नियंत्रण और डीआरएम योजना को प्रस्तुत किया गया।",
+        ),
+      );
+      setChangeReqOpen(false);
+      setChangeReason("");
+      setShiftMin("");
+      await fetchData();
+      setSelectedBlock(null);
+    } catch (e: any) {
+      toast.error(e.message || "Failed to submit change request");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleAcknowledge = async () => {
+    if (!selectedBlock) return;
+    setActionLoading(true);
+    try {
+      const res = await apiFetch(`/optimized-plan/${selectedBlock.block_id}/acknowledge`, {
+        method: "POST",
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "Failed to acknowledge");
+      }
+      toast.success(
+        t("Department schedule acknowledgement recorded.", "विभागीय अनुसूची स्वीकृति दर्ज की गई।"),
+      );
+      await fetchData();
+      setSelectedBlock(null);
+    } catch (e: any) {
+      toast.error(e.message || "Failed to acknowledge");
     } finally {
       setActionLoading(false);
     }
@@ -1029,43 +1202,154 @@ function PlannerPage() {
                     </div>
                   </div>
 
+                  {/* Review Timeline */}
+                  {reviewHistory.length > 0 && (
+                    <div className="rounded-[2px] border border-border p-3 space-y-2">
+                      <p className="text-[10px] font-bold uppercase text-[#003366] dark:text-sky-400">
+                        {t("Review & Decision Timeline", "समीक्षा एवं निर्णय समयरेखा")}
+                      </p>
+                      <div className="space-y-1.5 font-mono text-[11px]">
+                        {reviewHistory.map((ev, idx) => (
+                          <div key={idx} className="border-l-2 border-[#003366] pl-2 py-0.5">
+                            <div className="flex justify-between items-center text-slate-700 dark:text-slate-300">
+                              <span className="font-bold">{ev.action}</span>
+                              <span className="text-[9px] text-slate-400">
+                                {new Date(ev.created_at).toLocaleTimeString([], {
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                })}
+                              </span>
+                            </div>
+                            <p className="text-[10px] text-slate-500">
+                              {ev.actor_name} ({ev.actor_role})
+                            </p>
+                            {ev.note && (
+                              <p className="text-[10px] text-slate-600 dark:text-slate-400 italic">
+                                "{ev.note}"
+                              </p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   <div className="border-t border-border pt-4">
                     <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                      Human Approval Workflow
+                      {role.id === "admin"
+                        ? t("DRM Authorization Desk", "डीआरएम प्राधिकरण पटल")
+                        : role.id === "control"
+                          ? t("Chief Controller Review Desk", "मुख्य नियंत्रक समीक्षा पटल")
+                          : t("Departmental Block Response Desk", "विभागीय ब्लॉक प्रतिक्रिया पटल")}
                     </p>
 
                     <div className="grid gap-2">
-                      <Button
-                        onClick={() => void updateBlockStatus("approve")}
-                        disabled={
-                          actionLoading ||
-                          selectedBlock.block_status === "APPROVED"
-                        }
-                        className="h-8 w-full rounded-[2px] bg-[#137547] text-xs font-bold text-white hover:bg-[#0f5c38]"
-                      >
-                        <CheckCircle2 className="mr-1.5 size-3.5" />
-                        Approve Block
-                      </Button>
+                      {role.id === "admin" ? (
+                        <>
+                          <Button
+                            onClick={() => void handleApprove(false)}
+                            disabled={actionLoading || selectedBlock.block_status === "APPROVED"}
+                            className="h-8 w-full rounded-[2px] bg-[#137547] text-xs font-bold text-white hover:bg-[#0f5c38]"
+                          >
+                            <CheckCircle2 className="mr-1.5 size-3.5" />
+                            {t("Approve Block (DRM Final)", "ब्लॉक स्वीकृत करें (डीआरएम अंतिम)")}
+                          </Button>
 
-                      <Button
-                        onClick={() => void updateBlockStatus("rework")}
-                        disabled={actionLoading}
-                        variant="outline"
-                        className="h-8 w-full rounded-[2px] border-amber-400 text-xs font-bold text-amber-900 hover:bg-amber-50 dark:text-amber-300"
-                      >
-                        <RotateCcw className="mr-1.5 size-3.5" />
-                        Send Back For Adjustment
-                      </Button>
+                          <Button
+                            onClick={() => void updateBlockStatus("rework")}
+                            disabled={actionLoading}
+                            variant="outline"
+                            className="h-8 w-full rounded-[2px] border-amber-400 text-xs font-bold text-amber-900 hover:bg-amber-50 dark:text-amber-300"
+                          >
+                            <RotateCcw className="mr-1.5 size-3.5" />
+                            {t("Send Back For Adjustment", "समायोजन के लिए वापस भेजें")}
+                          </Button>
 
-                      <Button
-                        onClick={() => void updateBlockStatus("reject")}
-                        disabled={actionLoading}
-                        variant="outline"
-                        className="h-8 w-full rounded-[2px] border-red-400 text-xs font-bold text-red-900 hover:bg-red-50 dark:text-red-300"
-                      >
-                        <XCircle className="mr-1.5 size-3.5" />
-                        Reject Block
-                      </Button>
+                          <Button
+                            onClick={() => void updateBlockStatus("reject")}
+                            disabled={actionLoading}
+                            variant="outline"
+                            className="h-8 w-full rounded-[2px] border-red-400 text-xs font-bold text-red-900 hover:bg-red-50 dark:text-red-300"
+                          >
+                            <XCircle className="mr-1.5 size-3.5" />
+                            {t("Reject Block (Final)", "ब्लॉक अस्वीकार करें (अंतिम)")}
+                          </Button>
+                        </>
+                      ) : role.id === "control" ? (
+                        <>
+                          <Button
+                            onClick={() => void handleEndorse()}
+                            disabled={actionLoading || selectedBlock.block_status === "APPROVED"}
+                            className="h-8 w-full rounded-[2px] bg-[#003366] text-xs font-bold text-white hover:bg-[#002244]"
+                          >
+                            <CheckCircle2 className="mr-1.5 size-3.5 text-emerald-400" />
+                            {t("Endorse for Authorization", "प्राधिकरण के लिए समर्थन करें")}
+                          </Button>
+
+                          <Button
+                            onClick={() => void updateBlockStatus("rework")}
+                            disabled={actionLoading}
+                            variant="outline"
+                            className="h-8 w-full rounded-[2px] border-amber-400 text-xs font-bold text-amber-900 hover:bg-amber-50 dark:text-amber-300"
+                          >
+                            <RotateCcw className="mr-1.5 size-3.5" />
+                            {t("Send for Rework", "पुनर्विचार के लिए भेजें")}
+                          </Button>
+
+                          <Button
+                            onClick={() => setRecommendRejectOpen(true)}
+                            disabled={actionLoading}
+                            variant="outline"
+                            className="h-8 w-full rounded-[2px] border-red-400 text-xs font-bold text-red-900 hover:bg-red-50 dark:text-red-300"
+                          >
+                            <TriangleAlert className="mr-1.5 size-3.5 text-red-600" />
+                            {t("Recommend Reject", "अस्वीकार करने की सिफारिश करें")}
+                          </Button>
+
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className="w-full">
+                                  <Button
+                                    disabled
+                                    className="h-8 w-full rounded-[2px] bg-slate-200 dark:bg-slate-800 text-xs font-bold text-slate-400 cursor-not-allowed opacity-60"
+                                  >
+                                    <CheckCircle2 className="mr-1.5 size-3.5" />
+                                    {t("Approve Block", "ब्लॉक स्वीकृत करें")}
+                                  </Button>
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent className="text-xs bg-slate-900 text-white p-2">
+                                {t(
+                                  "Final authorization rests with Admin / DRM Planning.",
+                                  "अंतिम प्राधिकरण व्यवस्थापक / डीआरएम योजना के पास है।",
+                                )}
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                        </>
+                      ) : (
+                        <>
+                          <Button
+                            onClick={() => setChangeReqOpen(true)}
+                            disabled={actionLoading}
+                            variant="outline"
+                            className="h-8 w-full rounded-[2px] border-amber-500 text-xs font-bold text-amber-900 hover:bg-amber-50 dark:text-amber-300"
+                          >
+                            <RotateCcw className="mr-1.5 size-3.5" />
+                            {t("Request Rework / Adjustment", "पुनर्विचार / समायोजन का अनुरोध करें")}
+                          </Button>
+
+                          <Button
+                            onClick={() => void handleAcknowledge()}
+                            disabled={actionLoading}
+                            className="h-8 w-full rounded-[2px] bg-[#003366] text-xs font-bold text-white hover:bg-[#002244]"
+                          >
+                            <CheckCircle2 className="mr-1.5 size-3.5 text-emerald-400" />
+                            {t("Acknowledge Schedule", "समय सारणी स्वीकार करें")}
+                          </Button>
+                        </>
+                      )}
                     </div>
 
                     <p className="mt-3 text-[10px] leading-relaxed text-muted-foreground">
@@ -1080,6 +1364,150 @@ function PlannerPage() {
           ) : null}
         </SheetContent>
       </Sheet>
+
+      {/* Admin Soft Gate Confirmation Dialog */}
+      <Dialog open={softGateOpen} onOpenChange={setSoftGateOpen}>
+        <DialogContent className="sm:max-w-md border-2 border-amber-500 bg-white dark:bg-slate-950 rounded-[2px]">
+          <DialogHeader>
+            <DialogTitle className="text-amber-600 dark:text-amber-400 flex items-center gap-2">
+              <TriangleAlert className="size-5" />
+              {t("Controller Endorsement Missing", "नियंत्रक का समर्थन अनुपलब्ध")}
+            </DialogTitle>
+            <DialogDescription className="text-xs pt-2">
+              {t(
+                "This mega block has not yet been endorsed by the Chief Controller. Authorize anyway with administrative override?",
+                "इस मेगा ब्लॉक को अभी तक मुख्य नियंत्रक द्वारा समर्थन नहीं दिया गया है। क्या आप प्रशासनिक ओवरराइड के साथ प्राधिकरण करना चाहते हैं?",
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-xs rounded-[2px]"
+              onClick={() => setSoftGateOpen(false)}
+            >
+              {t("Cancel", "रद्द करें")}
+            </Button>
+            <Button
+              size="sm"
+              className="bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs rounded-[2px]"
+              onClick={() => void handleApprove(true)}
+            >
+              {t("Authorize Anyway", "फिर भी अधिकृत करें")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Control Office Recommend Reject Dialog */}
+      <Dialog open={recommendRejectOpen} onOpenChange={setRecommendRejectOpen}>
+        <DialogContent className="sm:max-w-md border-2 border-red-500 bg-white dark:bg-slate-950 rounded-[2px]">
+          <DialogHeader>
+            <DialogTitle className="text-red-600 dark:text-red-400 flex items-center gap-2">
+              <TriangleAlert className="size-5" />
+              {t("Recommend Block Rejection", "ब्लॉक अस्वीकृति की सिफारिश करें")}
+            </DialogTitle>
+            <DialogDescription className="text-xs pt-1">
+              {t(
+                "Record an operational recommendation for DRM Planning to reject this block schedule.",
+                "डीआरएम योजना के लिए इस ब्लॉक शेड्यूल को अस्वीकार करने हेतु एक परिचालन सिफारिश दर्ज करें।",
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-2">
+            <Textarea
+              className="text-xs rounded-[2px]"
+              placeholder={t(
+                "e.g. Unacceptable conflict with Rajdhani Express headway",
+                "उदा. राजधानी एक्सप्रेस के हेडवे के साथ अस्वीकार्य टकराव",
+              )}
+              value={recommendRejectNote}
+              onChange={(e) => setRecommendRejectNote(e.target.value)}
+            />
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-xs rounded-[2px]"
+              onClick={() => setRecommendRejectOpen(false)}
+            >
+              {t("Cancel", "रद्द करें")}
+            </Button>
+            <Button
+              size="sm"
+              className="bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-[2px]"
+              onClick={() => void handleRecommendReject()}
+            >
+              {t("Submit Recommendation", "सिफारिश जमा करें")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Department Rework Request Dialog */}
+      <Dialog open={changeReqOpen} onOpenChange={setChangeReqOpen}>
+        <DialogContent className="sm:max-w-md border-2 border-amber-500 bg-white dark:bg-slate-950 rounded-[2px]">
+          <DialogHeader>
+            <DialogTitle className="text-slate-900 dark:text-slate-100 flex items-center gap-2">
+              <RotateCcw className="size-5 text-amber-500" />
+              {t("Request Block Rework / Shift", "ब्लॉक पुनर्विचार / बदलाव का अनुरोध")}
+            </DialogTitle>
+            <DialogDescription className="text-xs pt-1">
+              {t(
+                "Submit a formal departmental request to adjust the scheduled maintenance window.",
+                "निर्धारित अनुरक्षण विंडो को समायोजित करने के लिए औपचारिक विभागीय अनुरोध जमा करें।",
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2 text-xs">
+            <div>
+              <label className="text-[11px] font-bold uppercase text-slate-600 dark:text-slate-400">
+                {t("Reason for Rework", "पुनर्विचार का कारण")} <span className="text-destructive">*</span>
+              </label>
+              <Textarea
+                className="mt-1 text-xs rounded-[2px]"
+                placeholder={t(
+                  "e.g. Machine crew mobilization delay / Material arrival shift",
+                  "उदा. मशीन चालक दल जुटाने में देरी / सामग्री आगमन में बदलाव",
+                )}
+                value={changeReason}
+                onChange={(e) => setChangeReason(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="text-[11px] font-bold uppercase text-slate-600 dark:text-slate-400">
+                {t("Suggested Shift (Minutes, optional)", "सुझाया गया बदलाव (मिनट, वैकल्पिक)")}
+              </label>
+              <Input
+                type="number"
+                className="mt-1 text-xs rounded-[2px]"
+                placeholder="e.g. +30 or -60"
+                value={shiftMin}
+                onChange={(e) => setShiftMin(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-xs rounded-[2px]"
+              onClick={() => setChangeReqOpen(false)}
+            >
+              {t("Cancel", "रद्द करें")}
+            </Button>
+            <Button
+              size="sm"
+              className="bg-[#003366] hover:bg-[#002244] text-white font-bold text-xs rounded-[2px]"
+              onClick={() => void handleRequestChange()}
+            >
+              {t("Submit Request", "अनुरोध जमा करें")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

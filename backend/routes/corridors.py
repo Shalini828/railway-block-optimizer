@@ -1,7 +1,10 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 import psycopg
 import os
 from dotenv import load_dotenv
+
+from auth.security import get_current_user, require_permission, CurrentUser
+from auth.scoping import get_relevant_corridor_ids
 
 load_dotenv()
 
@@ -21,26 +24,55 @@ def get_connection():
     )
 
 
-@router.get("/")
-def get_corridors():
+@router.get("/", dependencies=[Depends(require_permission("corridors.view"))])
+def get_corridors(user: CurrentUser = Depends(get_current_user)):
 
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute("""
-        SELECT
-            corridor_id,
-            division_id,
-            corridor_name,
-            source_station,
-            destination_station,
-            distance_km,
-            traffic_level,
-            electrified,
-            max_block_duration_min
-        FROM corridors
-        ORDER BY corridor_id
-    """)
+    if user.scope != "network":
+        relevant_corridors = get_relevant_corridor_ids(cursor, user.dept)
+        if not relevant_corridors:
+            cursor.close()
+            conn.close()
+            return {
+                "status": "success",
+                "corridor_count": 0,
+                "corridors": [],
+                "scope": user.scope,
+                "department": user.dept,
+            }
+
+        cursor.execute("""
+            SELECT
+                corridor_id,
+                division_id,
+                corridor_name,
+                source_station,
+                destination_station,
+                distance_km,
+                traffic_level,
+                electrified,
+                max_block_duration_min
+            FROM corridors
+            WHERE corridor_id = ANY(%s)
+            ORDER BY corridor_id
+        """, (relevant_corridors,))
+    else:
+        cursor.execute("""
+            SELECT
+                corridor_id,
+                division_id,
+                corridor_name,
+                source_station,
+                destination_station,
+                distance_km,
+                traffic_level,
+                electrified,
+                max_block_duration_min
+            FROM corridors
+            ORDER BY corridor_id
+        """)
 
     rows = cursor.fetchall()
 

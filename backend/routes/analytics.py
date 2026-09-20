@@ -1,7 +1,10 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 import psycopg
 import os
 from dotenv import load_dotenv
+
+from auth.security import require_permission, get_current_user, CurrentUser
+from auth.permissions import is_network_scope, department_of
 
 load_dotenv()
 
@@ -21,26 +24,39 @@ def get_connection():
     )
 
 
-@router.get("/")
-def get_analytics():
+@router.get("/", dependencies=[Depends(require_permission("analytics.view"))])
+def get_analytics(user: CurrentUser = Depends(get_current_user)):
 
     conn = get_connection()
     cursor = conn.cursor()
 
     try:
+        dept = department_of(user.role_id)
+        is_dept = not is_network_scope(user.role_id) and bool(dept)
 
         # ==========================================
         # ASSET AVAILABILITY
         # ==========================================
 
-        cursor.execute("""
-            SELECT
-                COUNT(*) AS total_assets,
-                COUNT(*) FILTER (
-                    WHERE operational_status = 'OPERATIONAL'
-                ) AS operational_assets
-            FROM assets
-        """)
+        if is_dept:
+            cursor.execute("""
+                SELECT
+                    COUNT(*) AS total_assets,
+                    COUNT(*) FILTER (
+                        WHERE operational_status = 'OPERATIONAL'
+                    ) AS operational_assets
+                FROM assets
+                WHERE department = %s
+            """, (dept,))
+        else:
+            cursor.execute("""
+                SELECT
+                    COUNT(*) AS total_assets,
+                    COUNT(*) FILTER (
+                        WHERE operational_status = 'OPERATIONAL'
+                    ) AS operational_assets
+                FROM assets
+            """)
 
         asset_data = cursor.fetchone()
 
@@ -58,23 +74,36 @@ def get_analytics():
         # OPTIMIZED BLOCKS
         # ==========================================
 
-        cursor.execute("""
-            SELECT
-                COUNT(*) AS total_blocks,
-                COALESCE(
-                    SUM(duration_min),
-                    0
-                ) AS total_block_minutes,
-                COALESCE(
-                    SUM(train_impact_score),
-                    0
-                ) AS total_train_impact,
-                COALESCE(
-                    AVG(optimization_score),
-                    0
-                ) AS average_optimization_score
-            FROM optimized_blocks
-        """)
+        if is_dept:
+            cursor.execute("""
+                SELECT
+                    COUNT(DISTINCT ob.block_id) AS total_blocks,
+                    COALESCE(SUM(ob.duration_min), 0) AS total_block_minutes,
+                    COALESCE(SUM(ob.train_impact_score), 0) AS total_train_impact,
+                    COALESCE(AVG(ob.optimization_score), 0) AS average_optimization_score
+                FROM optimized_blocks ob
+                JOIN block_tasks bt ON ob.block_id = bt.block_id
+                JOIN maintenance_tasks mt ON bt.task_id = mt.task_id
+                WHERE mt.department = %s
+            """, (dept,))
+        else:
+            cursor.execute("""
+                SELECT
+                    COUNT(*) AS total_blocks,
+                    COALESCE(
+                        SUM(duration_min),
+                        0
+                    ) AS total_block_minutes,
+                    COALESCE(
+                        SUM(train_impact_score),
+                        0
+                    ) AS total_train_impact,
+                    COALESCE(
+                        AVG(optimization_score),
+                        0
+                    ) AS average_optimization_score
+                FROM optimized_blocks
+            """)
 
         block_data = cursor.fetchone()
 
@@ -96,14 +125,30 @@ def get_analytics():
         # TRAIN DELAY IMPACT
         # ==========================================
 
-        cursor.execute("""
-            SELECT
-                COALESCE(
-                    SUM(estimated_delay_min),
-                    0
+        if is_dept:
+            cursor.execute("""
+                SELECT
+                    COALESCE(
+                        SUM(bti.estimated_delay_min),
+                        0
+                    )
+                FROM block_train_impact bti
+                WHERE bti.block_id IN (
+                    SELECT bt.block_id
+                    FROM block_tasks bt
+                    JOIN maintenance_tasks mt ON bt.task_id = mt.task_id
+                    WHERE mt.department = %s
                 )
-            FROM block_train_impact
-        """)
+            """, (dept,))
+        else:
+            cursor.execute("""
+                SELECT
+                    COALESCE(
+                        SUM(estimated_delay_min),
+                        0
+                    )
+                FROM block_train_impact
+            """)
 
         train_delay = cursor.fetchone()[0] or 0
 
@@ -114,28 +159,58 @@ def get_analytics():
         # SINGLE VS COORDINATED BLOCKS
         # ==========================================
 
-        cursor.execute("""
-            SELECT
-                COUNT(*) FILTER (
-                    WHERE department_count = 1
-                ) AS single_department_blocks,
-
-                COUNT(*) FILTER (
-                    WHERE department_count > 1
-                ) AS coordinated_blocks
-
-            FROM (
+        if is_dept:
+            cursor.execute("""
                 SELECT
-                    bt.block_id,
-                    COUNT(
-                        DISTINCT mt.department
-                    ) AS department_count
-                FROM block_tasks bt
-                JOIN maintenance_tasks mt
-                    ON bt.task_id = mt.task_id
-                GROUP BY bt.block_id
-            ) AS block_departments
-        """)
+                    COUNT(*) FILTER (
+                        WHERE department_count = 1
+                    ) AS single_department_blocks,
+
+                    COUNT(*) FILTER (
+                        WHERE department_count > 1
+                    ) AS coordinated_blocks
+
+                FROM (
+                    SELECT
+                        bt.block_id,
+                        COUNT(
+                            DISTINCT mt.department
+                        ) AS department_count
+                    FROM block_tasks bt
+                    JOIN maintenance_tasks mt
+                        ON bt.task_id = mt.task_id
+                    WHERE bt.block_id IN (
+                        SELECT bt2.block_id
+                        FROM block_tasks bt2
+                        JOIN maintenance_tasks mt2 ON bt2.task_id = mt2.task_id
+                        WHERE mt2.department = %s
+                    )
+                    GROUP BY bt.block_id
+                ) AS block_departments
+            """, (dept,))
+        else:
+            cursor.execute("""
+                SELECT
+                    COUNT(*) FILTER (
+                        WHERE department_count = 1
+                    ) AS single_department_blocks,
+
+                    COUNT(*) FILTER (
+                        WHERE department_count > 1
+                    ) AS coordinated_blocks
+
+                FROM (
+                    SELECT
+                        bt.block_id,
+                        COUNT(
+                            DISTINCT mt.department
+                        ) AS department_count
+                    FROM block_tasks bt
+                    JOIN maintenance_tasks mt
+                        ON bt.task_id = mt.task_id
+                    GROUP BY bt.block_id
+                ) AS block_departments
+            """)
 
         mix_data = cursor.fetchone()
 
@@ -147,23 +222,43 @@ def get_analytics():
         # MAINTENANCE TASK SUMMARY
         # ==========================================
 
-        cursor.execute("""
-            SELECT
-                COUNT(*) AS total_tasks,
+        if is_dept:
+            cursor.execute("""
+                SELECT
+                    COUNT(*) AS total_tasks,
 
-                COUNT(*) FILTER (
-                    WHERE task_status = 'PENDING'
-                ) AS pending_tasks,
+                    COUNT(*) FILTER (
+                        WHERE task_status = 'PENDING'
+                    ) AS pending_tasks,
 
-                COUNT(*) FILTER (
-                    WHERE task_status = 'COMPLETED'
-                ) AS completed_tasks,
+                    COUNT(*) FILTER (
+                        WHERE task_status = 'COMPLETED'
+                    ) AS completed_tasks,
 
-                COUNT(*) FILTER (
-                    WHERE priority_category = 'CRITICAL'
-                ) AS critical_tasks
-            FROM maintenance_tasks
-        """)
+                    COUNT(*) FILTER (
+                        WHERE priority_category = 'CRITICAL'
+                    ) AS critical_tasks
+                FROM maintenance_tasks
+                WHERE department = %s
+            """, (dept,))
+        else:
+            cursor.execute("""
+                SELECT
+                    COUNT(*) AS total_tasks,
+
+                    COUNT(*) FILTER (
+                        WHERE task_status = 'PENDING'
+                    ) AS pending_tasks,
+
+                    COUNT(*) FILTER (
+                        WHERE task_status = 'COMPLETED'
+                    ) AS completed_tasks,
+
+                    COUNT(*) FILTER (
+                        WHERE priority_category = 'CRITICAL'
+                    ) AS critical_tasks
+                FROM maintenance_tasks
+            """)
 
         task_data = cursor.fetchone()
 
@@ -177,17 +272,31 @@ def get_analytics():
         # DEPARTMENT ASSET AVAILABILITY
         # ==========================================
 
-        cursor.execute("""
-            SELECT
-                department,
-                COUNT(*) AS total_assets,
-                COUNT(*) FILTER (
-                    WHERE operational_status = 'OPERATIONAL'
-                ) AS operational_assets
-            FROM assets
-            GROUP BY department
-            ORDER BY department
-        """)
+        if is_dept:
+            cursor.execute("""
+                SELECT
+                    department,
+                    COUNT(*) AS total_assets,
+                    COUNT(*) FILTER (
+                        WHERE operational_status = 'OPERATIONAL'
+                    ) AS operational_assets
+                FROM assets
+                WHERE department = %s
+                GROUP BY department
+                ORDER BY department
+            """, (dept,))
+        else:
+            cursor.execute("""
+                SELECT
+                    department,
+                    COUNT(*) AS total_assets,
+                    COUNT(*) FILTER (
+                        WHERE operational_status = 'OPERATIONAL'
+                    ) AS operational_assets
+                FROM assets
+                GROUP BY department
+                ORDER BY department
+            """)
 
         department_rows = cursor.fetchall()
 
@@ -218,46 +327,94 @@ def get_analytics():
         # POST-BLOCK REPORT
         # ==========================================
 
-        cursor.execute("""
-            SELECT
-                ob.block_id,
-                c.corridor_name,
-                c.source_station,
-                c.destination_station,
-                ob.block_date,
-                ob.start_time,
-                ob.end_time,
-                ob.duration_min,
-                ob.train_impact_score,
-                ob.optimization_score,
-                ob.block_status,
-                STRING_AGG(
-                    DISTINCT mt.department,
-                    ', '
-                ) AS departments
-            FROM optimized_blocks ob
-            JOIN corridors c
-                ON ob.corridor_id = c.corridor_id
-            LEFT JOIN block_tasks bt
-                ON ob.block_id = bt.block_id
-            LEFT JOIN maintenance_tasks mt
-                ON bt.task_id = mt.task_id
-            GROUP BY
-                ob.block_id,
-                c.corridor_name,
-                c.source_station,
-                c.destination_station,
-                ob.block_date,
-                ob.start_time,
-                ob.end_time,
-                ob.duration_min,
-                ob.train_impact_score,
-                ob.optimization_score,
-                ob.block_status
-            ORDER BY
-                ob.block_date,
-                ob.start_time
-        """)
+        if is_dept:
+            cursor.execute("""
+                SELECT
+                    ob.block_id,
+                    c.corridor_name,
+                    c.source_station,
+                    c.destination_station,
+                    ob.block_date,
+                    ob.start_time,
+                    ob.end_time,
+                    ob.duration_min,
+                    ob.train_impact_score,
+                    ob.optimization_score,
+                    ob.block_status,
+                    STRING_AGG(
+                        DISTINCT mt.department,
+                        ', '
+                    ) AS departments
+                FROM optimized_blocks ob
+                JOIN corridors c
+                    ON ob.corridor_id = c.corridor_id
+                JOIN block_tasks bt
+                    ON ob.block_id = bt.block_id
+                JOIN maintenance_tasks mt
+                    ON bt.task_id = mt.task_id
+                WHERE ob.block_id IN (
+                    SELECT bt2.block_id
+                    FROM block_tasks bt2
+                    JOIN maintenance_tasks mt2 ON bt2.task_id = mt2.task_id
+                    WHERE mt2.department = %s
+                )
+                GROUP BY
+                    ob.block_id,
+                    c.corridor_name,
+                    c.source_station,
+                    c.destination_station,
+                    ob.block_date,
+                    ob.start_time,
+                    ob.end_time,
+                    ob.duration_min,
+                    ob.train_impact_score,
+                    ob.optimization_score,
+                    ob.block_status
+                ORDER BY
+                    ob.block_date,
+                    ob.start_time
+            """, (dept,))
+        else:
+            cursor.execute("""
+                SELECT
+                    ob.block_id,
+                    c.corridor_name,
+                    c.source_station,
+                    c.destination_station,
+                    ob.block_date,
+                    ob.start_time,
+                    ob.end_time,
+                    ob.duration_min,
+                    ob.train_impact_score,
+                    ob.optimization_score,
+                    ob.block_status,
+                    STRING_AGG(
+                        DISTINCT mt.department,
+                        ', '
+                    ) AS departments
+                FROM optimized_blocks ob
+                JOIN corridors c
+                    ON ob.corridor_id = c.corridor_id
+                LEFT JOIN block_tasks bt
+                    ON ob.block_id = bt.block_id
+                LEFT JOIN maintenance_tasks mt
+                    ON bt.task_id = mt.task_id
+                GROUP BY
+                    ob.block_id,
+                    c.corridor_name,
+                    c.source_station,
+                    c.destination_station,
+                    ob.block_date,
+                    ob.start_time,
+                    ob.end_time,
+                    ob.duration_min,
+                    ob.train_impact_score,
+                    ob.optimization_score,
+                    ob.block_status
+                ORDER BY
+                    ob.block_date,
+                    ob.start_time
+            """)
 
         report_rows = cursor.fetchall()
 
@@ -283,28 +440,29 @@ def get_analytics():
         # ==========================================
 
         return {
-    "status": "success",
+            "status": "success",
+            "scope": user.scope,
+            "department": dept if is_dept else None,
+            "asset_availability_percent": asset_availability,
+            "total_assets": total_assets,
+            "operational_assets": operational_assets,
 
-    "asset_availability_percent": asset_availability,
-    "total_assets": total_assets,
-    "operational_assets": operational_assets,
+            "scheduled_blocks": total_blocks,
+            "total_block_hours": total_block_hours,
 
-    "scheduled_blocks": total_blocks,
-    "total_block_hours": total_block_hours,
+            "train_delay_impact_minutes": train_delay,
+            "average_optimization_score": average_optimization_score,
 
-    "train_delay_impact_minutes": train_delay,
-    "average_optimization_score": average_optimization_score,
+            "single_department_blocks": single_department_blocks,
+            "coordinated_blocks": coordinated_blocks,
 
-    "single_department_blocks": single_department_blocks,
-    "coordinated_blocks": coordinated_blocks,
-
-    "total_maintenance_tasks": total_tasks,
-    "pending_maintenance_tasks": pending_tasks,
-    "completed_maintenance_tasks": completed_tasks,
-    "critical_maintenance_tasks": critical_tasks,
-    "department_availability": department_availability,
-    "post_block_report": post_block_report
-}
+            "total_maintenance_tasks": total_tasks,
+            "pending_maintenance_tasks": pending_tasks,
+            "completed_maintenance_tasks": completed_tasks,
+            "critical_maintenance_tasks": critical_tasks,
+            "department_availability": department_availability,
+            "post_block_report": post_block_report
+        }
 
     except Exception as e:
 

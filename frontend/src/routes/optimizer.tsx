@@ -34,6 +34,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
+import { apiFetch } from "@/lib/api";
 import {
   Sheet,
   SheetContent,
@@ -41,6 +42,9 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+
+import { Can } from "@/components/Can";
+import { useLanguage } from "@/context/LanguageContext";
 
 export const Route = createFileRoute("/optimizer")({
   head: () => ({
@@ -95,15 +99,64 @@ interface SavedPlanBlock {
   optimization_score: string | number;
   number_of_tasks?: string | number;
   number_of_departments?: string | number;
-  block_status?: string;
   conflicts?: unknown[];
   tasks?: unknown[];
   train_conflicts?: number;
   task_count?: number;
 }
 
+interface BlockIntelligence {
+  success: boolean;
+  block_id: string;
+  corridor_id: string;
+  block_date: string;
+  start_time: string;
+  end_time: string;
+  tasks_analyzed: number;
+  trains_in_window: number;
+  intelligence: {
+    asset_risk: {
+      risk_score: number;
+      priority_category: string;
+      risk_probability?: number;
+    };
+    traffic_impact: {
+      traffic_impact_score: number;
+      disruption_level: string;
+    };
+    goods_demand: {
+      predicted_goods_train_demand: number;
+      demand_level: string;
+    };
+    overall_assessment: {
+      pressure_score: number;
+      overall_level: string;
+      asset_level: string;
+      traffic_level: string;
+      goods_level: string;
+    };
+  };
+  traffic_summary: {
+    passenger_trains: number;
+    goods_trains: number;
+    special_trains: number;
+    express_trains: number;
+  };
+  ai_explanation: {
+    score: number;
+    why_selected: string[];
+    metrics: {
+      duration_min: number;
+      utilization_percent: number;
+      train_impact_score: number;
+      number_of_tasks: number;
+      number_of_departments: number;
+    };
+  };
+}
+
 async function fetchSavedOptimization(): Promise<OptimizationApiResponse | null> {
-  const response = await fetch("http://127.0.0.1:8000/optimized-plan/");
+  const response = await apiFetch("/optimized-plan/");
 
   if (!response.ok) {
     throw new Error("Unable to load saved optimized plan");
@@ -125,12 +178,9 @@ async function fetchSavedOptimization(): Promise<OptimizationApiResponse | null>
     duration: Number(block.duration_min) || 0,
     utilization: Number(block.utilization_percent) || 0,
     train_impact: Number(block.train_impact_score) || 0,
-    number_of_tasks: Number(
-      block.number_of_tasks ?? block.task_count ?? block.tasks?.length ?? 0,
-    ) || 0,
-    train_conflicts: Number(
-      block.train_conflicts ?? block.conflicts?.length ?? 0,
-    ) || 0,
+    number_of_tasks:
+      Number(block.number_of_tasks ?? block.task_count ?? block.tasks?.length ?? 0) || 0,
+    train_conflicts: Number(block.train_conflicts ?? block.conflicts?.length ?? 0) || 0,
   }));
 
   const totalMinutes = blocks.reduce((sum, block) => sum + block.duration, 0);
@@ -140,10 +190,8 @@ async function fetchSavedOptimization(): Promise<OptimizationApiResponse | null>
       : 0;
   const averageScore =
     savedBlocks.length > 0
-      ? savedBlocks.reduce(
-          (sum, block) => sum + (Number(block.optimization_score) || 0),
-          0,
-        ) / savedBlocks.length
+      ? savedBlocks.reduce((sum, block) => sum + (Number(block.optimization_score) || 0), 0) /
+        savedBlocks.length
       : 0;
   const totalTrainImpact = blocks.reduce((sum, block) => sum + block.train_impact, 0);
   const totalConflicts = blocks.reduce((sum, block) => sum + block.train_conflicts, 0);
@@ -166,7 +214,8 @@ async function fetchSavedOptimization(): Promise<OptimizationApiResponse | null>
 }
 
 function OptimizerPage() {
-  const { reqs, plan, conflicts, optimize } = useAbps();
+  const { reqs, plan, conflicts, optimize, scope } = useAbps();
+  const { t } = useLanguage();
 
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -177,6 +226,7 @@ function OptimizerPage() {
   const [apiError, setApiError] = useState(false);
   const [lastExecution, setLastExecution] = useState<Date | null>(null);
   const [executionDuration, setExecutionDuration] = useState<number | null>(null);
+  const [blockIntelligence, setBlockIntelligence] = useState<Record<string, BlockIntelligence>>({});
 
   const pending = reqs.filter((r) => r.status === "Pending AI Scheduling");
 
@@ -202,6 +252,48 @@ function OptimizerPage() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!apiData?.blocks?.length) {
+      setBlockIntelligence({});
+      return;
+    }
+
+    const blocks = apiData.blocks;
+    let cancelled = false;
+
+    const loadBlockIntelligence = async () => {
+      const results: Record<string, BlockIntelligence> = {};
+
+      await Promise.all(
+        blocks.map(async (block) => {
+          try {
+            const response = await apiFetch(`/ai/blocks/${block.block_id}/intelligence`);
+
+            if (!response.ok) {
+              console.error(`AI intelligence failed for ${block.block_id}`);
+              return;
+            }
+
+            const data: BlockIntelligence = await response.json();
+            results[block.block_id] = data;
+          } catch (error) {
+            console.error(`Failed to load AI intelligence for ${block.block_id}:`, error);
+          }
+        }),
+      );
+
+      if (!cancelled) {
+        setBlockIntelligence(results);
+      }
+    };
+
+    void loadBlockIntelligence();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [apiData]);
 
   const run = async () => {
     if (!running && pending.length === 0) {
@@ -254,7 +346,7 @@ function OptimizerPage() {
     }, 550);
 
     try {
-      const response = await fetch("http://127.0.0.1:8000/optimization/", {
+      const response = await apiFetch("/optimization/", {
         method: "POST",
       });
 
@@ -266,10 +358,14 @@ function OptimizerPage() {
 
       if (!data.blocks || data.blocks.length === 0) {
         try {
-          const savedResponse = await fetch("http://127.0.0.1:8000/optimized-plan/");
+          const savedResponse = await apiFetch("/optimized-plan/");
           if (savedResponse.ok) {
             const saved = await savedResponse.json();
-            if (saved.status === "success" && Array.isArray(saved.blocks) && saved.blocks.length > 0) {
+            if (
+              saved.status === "success" &&
+              Array.isArray(saved.blocks) &&
+              saved.blocks.length > 0
+            ) {
               const blocks = saved.blocks.map((block: any) => ({
                 block_id: String(block.block_id ?? ""),
                 corridor: String(block.corridor ?? block.corridor_id ?? ""),
@@ -294,8 +390,14 @@ function OptimizerPage() {
                   average_utilization:
                     blocks.reduce((sum: number, b: any) => sum + b.utilization, 0) / blocks.length,
                   average_optimization_score: 0,
-                  total_train_impact: blocks.reduce((sum: number, b: any) => sum + b.train_impact, 0),
-                  total_train_conflicts: blocks.reduce((sum: number, b: any) => sum + b.train_conflicts, 0),
+                  total_train_impact: blocks.reduce(
+                    (sum: number, b: any) => sum + b.train_impact,
+                    0,
+                  ),
+                  total_train_conflicts: blocks.reduce(
+                    (sum: number, b: any) => sum + b.train_conflicts,
+                    0,
+                  ),
                 },
               };
             }
@@ -325,7 +427,9 @@ function OptimizerPage() {
 
       setApiData(displayData);
       setLastExecution(new Date());
-      setExecutionDuration((Date.now() - startTime) / 1000);
+      const duration = (Date.now() - startTime) / 1000;
+      setExecutionDuration(duration);
+      localStorage.setItem("optimizer_execution_duration", String(duration));
 
       toast.success(
         <div className="flex flex-col gap-1">
@@ -333,7 +437,8 @@ function OptimizerPage() {
             <CheckCircle2 className="size-4" /> Optimization Execution Successful
           </span>
           <span className="text-xs">
-            {displayData.blocks_generated ?? 0} megablocks computed · {displayData.run_metrics?.total_block_minutes ?? 0} min total window
+            {displayData.blocks_generated ?? 0} megablocks computed ·{" "}
+            {displayData.run_metrics?.total_block_minutes ?? 0} min total window
           </span>
         </div>,
       );
@@ -379,11 +484,41 @@ function OptimizerPage() {
   };
 
   const pipelineStages = [
-    { id: 1, name: "BDMS INGESTION", desc: `${reqs.length} Demands`, icon: FileText, done: progress >= 20 || !!apiData },
-    { id: 2, name: "CRITICALITY INDEX", desc: "USFD Scoring", icon: Target, done: progress >= 40 || !!apiData },
-    { id: 3, name: "SHADOW CLUSTERING", desc: "Cross-Dept Overlap", icon: Layers, done: progress >= 60 || !!apiData },
-    { id: 4, name: "CORRIDOR MATCHING", desc: "COA Window Clearance", icon: Map, done: progress >= 80 || !!apiData },
-    { id: 5, name: "MEGABLOCK OUTPUT", desc: "Optimized Schedule", icon: Sparkles, done: progress === 100 || !!apiData },
+    {
+      id: 1,
+      name: "BDMS INGESTION",
+      desc: `${reqs.length} Demands`,
+      icon: FileText,
+      done: progress >= 20 || !!apiData,
+    },
+    {
+      id: 2,
+      name: "CRITICALITY INDEX",
+      desc: "USFD Scoring",
+      icon: Target,
+      done: progress >= 40 || !!apiData,
+    },
+    {
+      id: 3,
+      name: "SHADOW CLUSTERING",
+      desc: "Cross-Dept Overlap",
+      icon: Layers,
+      done: progress >= 60 || !!apiData,
+    },
+    {
+      id: 4,
+      name: "CORRIDOR MATCHING",
+      desc: "COA Window Clearance",
+      icon: Map,
+      done: progress >= 80 || !!apiData,
+    },
+    {
+      id: 5,
+      name: "MEGABLOCK OUTPUT",
+      desc: "Optimized Schedule",
+      icon: Sparkles,
+      done: progress === 100 || !!apiData,
+    },
   ];
 
   return (
@@ -394,27 +529,60 @@ function OptimizerPage() {
         action={
           <div className="flex items-center gap-2">
             <span className="text-[11px] text-muted-foreground font-mono">
-              Status: <strong className="text-emerald-700 dark:text-emerald-400">ENGINE READY</strong>
+              Status:{" "}
+              <strong className="text-emerald-700 dark:text-emerald-400">ENGINE READY</strong>
             </span>
-            <Button
-              onClick={run}
-              disabled={running}
-              size="sm"
-              className="bg-[#003366] hover:bg-[#002244] text-white font-bold h-8 text-xs rounded-[2px]"
-            >
-              {running ? (
-                <>
-                  <RefreshCw className="mr-1.5 size-3.5 animate-spin" /> Optimizing...
-                </>
-              ) : (
-                <>
-                  <BrainCircuit className="mr-1.5 size-3.5 text-[#FF9933]" /> Execute AI Engine
-                </>
+            <Can
+              perm="optimizer.run"
+              fallback="disable"
+              reason={t(
+                "Scheduling is restricted to Control Office and DRM Planning",
+                "शेड्यूलिंग नियंत्रण कार्यालय और डीआरएम योजना तक सीमित है",
               )}
-            </Button>
+            >
+              <Button
+                onClick={run}
+                disabled={running}
+                size="sm"
+                className="bg-[#003366] hover:bg-[#002244] text-white font-bold h-8 text-xs rounded-[2px]"
+              >
+                {running ? (
+                  <>
+                    <RefreshCw className="mr-1.5 size-3.5 animate-spin" />{" "}
+                    {t("Optimizing...", "अनुकूलन जारी...")}
+                  </>
+                ) : (
+                  <>
+                    <BrainCircuit className="mr-1.5 size-3.5 text-[#FF9933]" />{" "}
+                    {t("Execute AI Engine", "एआई इंजन चलाएं")}
+                  </>
+                )}
+              </Button>
+            </Can>
           </div>
         }
       />
+
+      {/* Department Read-Only Notice Banner */}
+      {scope === "department" && (
+        <div className="mb-5 bg-amber-50 dark:bg-amber-950/40 border-2 border-amber-300 dark:border-amber-800 p-3.5 rounded-[2px] flex items-center gap-3">
+          <Info className="size-5 text-amber-700 dark:text-amber-400 shrink-0" />
+          <div>
+            <h4 className="text-xs font-bold uppercase tracking-wider text-amber-950 dark:text-amber-100">
+              {t(
+                "Read-only — scheduling is run by Control / DRM Planning",
+                "केवल पढ़ने के लिए — शेड्यूलिंग नियंत्रण / डीआरएम योजना द्वारा संचालित है",
+              )}
+            </h4>
+            <p className="text-[11px] text-amber-800 dark:text-amber-300 mt-0.5">
+              {t(
+                "Departmental engineers may review AI schedule recommendations and shadow clusters for their division.",
+                "विभागीय इंजीनियर अपने प्रभाग के लिए एआई शेड्यूल सिफारिशों और शैडो समूहों की समीक्षा कर सकते हैं।",
+              )}
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Optimization Pipeline Step Progress */}
       <Card className="mb-6 border-2 border-[#003366] bg-white dark:bg-slate-900 rounded-[2px] shadow-none">
@@ -426,7 +594,10 @@ function OptimizerPage() {
             </h2>
           </div>
           <span className="text-[10px] font-mono text-slate-300">
-            Last Executed: {lastExecution ? lastExecution.toLocaleTimeString("en-IN") + " IST" : "Awaiting Trigger"}
+            Last Executed:{" "}
+            {lastExecution
+              ? lastExecution.toLocaleTimeString("en-IN") + " IST"
+              : "Awaiting Trigger"}
           </span>
         </div>
 
@@ -469,30 +640,46 @@ function OptimizerPage() {
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-6">
         <div className="border border-border bg-white dark:bg-slate-900 p-3 rounded-[2px]">
           <p className="text-[10px] font-bold uppercase text-slate-500">Pending Requests</p>
-          <p className="text-xl font-bold font-mono text-slate-900 dark:text-slate-100 mt-0.5">{pending.length}</p>
+          <p className="text-xl font-bold font-mono text-slate-900 dark:text-slate-100 mt-0.5">
+            {pending.length}
+          </p>
           <p className="text-[10px] text-slate-500 mt-0.5">In BDMS Queue</p>
         </div>
         <div className="border border-border bg-white dark:bg-slate-900 p-3 rounded-[2px]">
-          <p className="text-[10px] font-bold uppercase text-[#003366] dark:text-sky-400">Megablocks Output</p>
-          <p className="text-xl font-bold font-mono text-[#003366] dark:text-sky-400 mt-0.5">{apiData?.blocks_generated ?? "-"}</p>
+          <p className="text-[10px] font-bold uppercase text-[#003366] dark:text-sky-400">
+            Megablocks Output
+          </p>
+          <p className="text-xl font-bold font-mono text-[#003366] dark:text-sky-400 mt-0.5">
+            {apiData?.blocks_generated ?? "-"}
+          </p>
           <p className="text-[10px] text-slate-500 mt-0.5">Optimized Windows</p>
         </div>
         <div className="border border-border bg-white dark:bg-slate-900 p-3 rounded-[2px]">
-          <p className="text-[10px] font-bold uppercase text-emerald-700 dark:text-emerald-400">Downtime Saved</p>
+          <p className="text-[10px] font-bold uppercase text-emerald-700 dark:text-emerald-400">
+            Downtime Saved
+          </p>
           <p className="text-xl font-bold font-mono text-emerald-700 dark:text-emerald-400 mt-0.5">
-            {apiData?.run_metrics?.total_block_minutes ? `${apiData.run_metrics.total_block_minutes}m` : "-"}
+            {apiData?.run_metrics?.total_block_minutes
+              ? `${apiData.run_metrics.total_block_minutes}m`
+              : "-"}
           </p>
           <p className="text-[10px] text-slate-500 mt-0.5">Recovered Line Time</p>
         </div>
         <div className="border border-border bg-white dark:bg-slate-900 p-3 rounded-[2px]">
-          <p className="text-[10px] font-bold uppercase text-amber-700 dark:text-amber-400">Train Delays</p>
+          <p className="text-[10px] font-bold uppercase text-amber-700 dark:text-amber-400">
+            Train Delays
+          </p>
           <p className="text-xl font-bold font-mono text-amber-700 dark:text-amber-400 mt-0.5">
-            {apiData?.run_metrics?.total_train_impact ?? "0"}
+            {apiData?.run_metrics?.total_train_impact != null
+              ? Number(apiData.run_metrics.total_train_impact).toFixed(2)
+              : "0.00"}
           </p>
           <p className="text-[10px] text-slate-500 mt-0.5">COA Estimated Impact</p>
         </div>
         <div className="border border-border bg-white dark:bg-slate-900 p-3 rounded-[2px] col-span-2 sm:col-span-1">
-          <p className="text-[10px] font-bold uppercase text-blue-700 dark:text-blue-400">Path Conflicts</p>
+          <p className="text-[10px] font-bold uppercase text-blue-700 dark:text-blue-400">
+            Path Conflicts
+          </p>
           <p className="text-xl font-bold font-mono text-blue-700 dark:text-blue-400 mt-0.5">
             {apiData?.run_metrics?.total_train_conflicts ?? "0"}
           </p>
@@ -520,7 +707,10 @@ function OptimizerPage() {
                 <span className="text-slate-800 dark:text-slate-200">{stage}</span>
                 <span className="font-mono">{Math.round(progress)}%</span>
               </div>
-              <Progress value={progress} className="h-2 rounded-[2px] bg-slate-200 dark:bg-slate-800" />
+              <Progress
+                value={progress}
+                className="h-2 rounded-[2px] bg-slate-200 dark:bg-slate-800"
+              />
             </div>
 
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -545,7 +735,9 @@ function OptimizerPage() {
               <div className="border border-border bg-slate-50 dark:bg-slate-800 p-2.5 rounded-[2px]">
                 <p className="text-[10px] font-bold uppercase text-slate-500">Avg Utilization</p>
                 <p className="font-mono text-lg font-bold text-emerald-700 dark:text-emerald-400 mt-0.5">
-                  {apiData?.run_metrics?.average_utilization ? `${apiData.run_metrics.average_utilization}%` : "-"}
+                  {apiData?.run_metrics?.average_utilization
+                    ? `${apiData.run_metrics.average_utilization}%`
+                    : "-"}
                 </p>
               </div>
             </div>
@@ -560,7 +752,12 @@ function OptimizerPage() {
                     Gantt Planner and Conflicts & Approvals desks have been automatically refreshed.
                   </p>
                 </div>
-                <Button asChild size="sm" variant="outline" className="h-7 text-xs font-bold border-slate-300 dark:border-slate-700">
+                <Button
+                  asChild
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs font-bold border-slate-300 dark:border-slate-700"
+                >
                   <Link to="/planner">
                     View in Gantt <ArrowRight className="ml-1 size-3" />
                   </Link>
@@ -592,7 +789,8 @@ function OptimizerPage() {
                 <Layers className="size-3.5" /> 2. Cross-Department Clustering
               </div>
               <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-1">
-                Clusters TMS track, SMMS point, and TDMS OHE works on same section to eliminate redundant line blocks.
+                Clusters TMS track, SMMS point, and TDMS OHE works on same section to eliminate
+                redundant line blocks.
               </p>
             </div>
 
@@ -601,7 +799,8 @@ function OptimizerPage() {
                 <GitBranch className="size-3.5" /> 3. COA Window Clearance
               </div>
               <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-1">
-                Validates headway and express paths (Vande Bharat, Rajdhani) for zero corridor disruption.
+                Validates headway and express paths (Vande Bharat, Rajdhani) for zero corridor
+                disruption.
               </p>
             </div>
           </CardContent>
@@ -623,14 +822,20 @@ function OptimizerPage() {
         <div className="mb-6">
           <div className="border-b-2 border-[#003366] pb-1.5 mb-3 flex items-center justify-between">
             <h2 className="text-xs font-bold uppercase tracking-wider text-[#003366] dark:text-sky-400 flex items-center gap-2">
-              <CalendarCheck className="size-4" /> Generated Mega Block Schedule ({apiData.blocks.length} Blocks)
+              <CalendarCheck className="size-4" /> Generated Mega Block Schedule (
+              {apiData.blocks.length} Blocks)
             </h2>
-            <span className="text-[11px] font-mono text-slate-500">Synchronized with Gantt Timeline</span>
+            <span className="text-[11px] font-mono text-slate-500">
+              Synchronized with Gantt Timeline
+            </span>
           </div>
 
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {apiData.blocks.map((b) => (
-              <Card key={b.block_id} className="border border-border bg-white dark:bg-slate-900 rounded-[2px] shadow-none">
+              <Card
+                key={b.block_id}
+                className="border border-border bg-white dark:bg-slate-900 rounded-[2px] shadow-none"
+              >
                 <CardHeader className="bg-slate-100 dark:bg-slate-800/80 p-3 border-b border-border">
                   <div className="flex justify-between items-center">
                     <div>
@@ -647,28 +852,198 @@ function OptimizerPage() {
                 <CardContent className="p-3.5 space-y-3 text-xs">
                   <div className="flex justify-between items-center bg-slate-50 dark:bg-slate-800 p-2 rounded-[2px] font-mono border border-border">
                     <span className="text-slate-600 dark:text-slate-400">{b.date}</span>
-                    <span className="font-bold text-slate-900 dark:text-slate-100">{b.start} – {b.end}</span>
+                    <span className="font-bold text-slate-900 dark:text-slate-100">
+                      {b.start} – {b.end}
+                    </span>
                     <span className="text-primary font-bold">{b.duration} min</span>
                   </div>
 
                   <div className="grid grid-cols-4 gap-1.5 text-center divide-x divide-border">
                     <div>
-                      <span className="text-[9px] uppercase text-slate-500 font-bold block">Util</span>
+                      <span className="text-[9px] uppercase text-slate-500 font-bold block">
+                        Util
+                      </span>
                       <span className="font-mono font-bold text-xs">{b.utilization}%</span>
                     </div>
                     <div className="pl-1">
-                      <span className="text-[9px] uppercase text-slate-500 font-bold block">Tasks</span>
+                      <span className="text-[9px] uppercase text-slate-500 font-bold block">
+                        Tasks
+                      </span>
                       <span className="font-mono font-bold text-xs">{b.number_of_tasks}</span>
                     </div>
                     <div className="pl-1">
-                      <span className="text-[9px] uppercase text-slate-500 font-bold block">Impact</span>
-                      <span className="font-mono font-bold text-xs text-amber-700 dark:text-amber-400">{b.train_impact}</span>
+                      <span className="text-[9px] uppercase text-slate-500 font-bold block">
+                        Impact
+                      </span>
+                      <span className="font-mono font-bold text-xs text-amber-700 dark:text-amber-400">
+                        {b.train_impact}
+                      </span>
                     </div>
                     <div className="pl-1">
-                      <span className="text-[9px] uppercase text-slate-500 font-bold block">Clashes</span>
-                      <span className="font-mono font-bold text-xs text-emerald-700 dark:text-emerald-400">{b.train_conflicts}</span>
+                      <span className="text-[9px] uppercase text-slate-500 font-bold block">
+                        Clashes
+                      </span>
+                      <span className="font-mono font-bold text-xs text-emerald-700 dark:text-emerald-400">
+                        {b.train_conflicts}
+                      </span>
                     </div>
                   </div>
+
+                  {/* UNIFIED AI INTELLIGENCE */}
+                  {blockIntelligence[b.block_id] && (
+                    <div className="border-2 border-[#003366] dark:border-sky-700 bg-slate-50 dark:bg-slate-800/60 p-3 rounded-[2px]">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-1.5">
+                          <BrainCircuit className="size-3.5 text-[#003366] dark:text-sky-400" />
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-[#003366] dark:text-sky-400">
+                            Unified AI Intelligence
+                          </span>
+                        </div>
+
+                        <Badge variant="outline" className="text-[9px] font-bold">
+                          {
+                            blockIntelligence[b.block_id]!.intelligence.overall_assessment
+                              .overall_level
+                          }
+                        </Badge>
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-2">
+                        <div className="bg-white dark:bg-slate-900 border border-border p-2 rounded-[2px] text-center">
+                          <p className="text-[8px] uppercase font-bold text-slate-500">
+                            Asset Risk
+                          </p>
+                          <p className="font-mono font-bold text-sm">
+                            {blockIntelligence[
+                              b.block_id
+                            ]!.intelligence.asset_risk.risk_score.toFixed(1)}
+                          </p>
+                          <p className="text-[9px] font-bold">
+                            {
+                              blockIntelligence[b.block_id]!.intelligence.asset_risk
+                                .priority_category
+                            }
+                          </p>
+                        </div>
+
+                        <div className="bg-white dark:bg-slate-900 border border-border p-2 rounded-[2px] text-center">
+                          <p className="text-[8px] uppercase font-bold text-slate-500">Traffic</p>
+                          <p className="font-mono font-bold text-sm">
+                            {blockIntelligence[
+                              b.block_id
+                            ]!.intelligence.traffic_impact.traffic_impact_score.toFixed(1)}
+                          </p>
+                          <p className="text-[9px] font-bold">
+                            {
+                              blockIntelligence[b.block_id]!.intelligence.traffic_impact
+                                .disruption_level
+                            }
+                          </p>
+                        </div>
+
+                        <div className="bg-white dark:bg-slate-900 border border-border p-2 rounded-[2px] text-center">
+                          <p className="text-[8px] uppercase font-bold text-slate-500">
+                            Goods Demand
+                          </p>
+                          <p className="font-mono font-bold text-sm">
+                            {blockIntelligence[
+                              b.block_id
+                            ]!.intelligence.goods_demand.predicted_goods_train_demand.toFixed(1)}
+                          </p>
+                          <p className="text-[9px] font-bold">
+                            {blockIntelligence[b.block_id]!.intelligence.goods_demand.demand_level}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 border border-slate-200 dark:border-slate-700 rounded-[2px] p-3">
+                        <p className="text-[8px] uppercase font-bold tracking-wider text-slate-500 dark:text-slate-400 mb-2">
+                          Traffic in Window
+                        </p>
+
+                        <div className="grid grid-cols-4 gap-2">
+                          <div className="text-center">
+                            <p className="text-[8px] uppercase font-bold text-slate-500">
+                              Passenger
+                            </p>
+                            <p className="font-mono font-bold text-sm">
+                              {blockIntelligence[b.block_id]?.traffic_summary?.passenger_trains ??
+                                0}
+                            </p>
+                          </div>
+
+                          <div className="text-center">
+                            <p className="text-[8px] uppercase font-bold text-slate-500">Goods</p>
+                            <p className="font-mono font-bold text-sm">
+                              {blockIntelligence[b.block_id]?.traffic_summary?.goods_trains ?? 0}
+                            </p>
+                          </div>
+
+                          <div className="text-center">
+                            <p className="text-[8px] uppercase font-bold text-slate-500">Special</p>
+                            <p className="font-mono font-bold text-sm">
+                              {blockIntelligence[b.block_id]?.traffic_summary?.special_trains ?? 0}
+                            </p>
+                          </div>
+
+                          <div className="text-center">
+                            <p className="text-[8px] uppercase font-bold text-slate-500">Express</p>
+                            <p className="font-mono font-bold text-sm">
+                              {blockIntelligence[b.block_id]?.traffic_summary?.express_trains ?? 0}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="mt-2 pt-2 border-t border-border flex items-center justify-between">
+                        <span className="text-[9px] uppercase font-bold text-slate-500">
+                          Overall Pressure
+                        </span>
+                        <span className="font-mono font-bold text-sm text-[#003366] dark:text-sky-400">
+                          {Number(
+                            blockIntelligence[b.block_id]?.intelligence?.overall_assessment
+                              ?.pressure_score ?? 0,
+                          ).toFixed(1)}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* WHY AI SELECTED THIS BLOCK */}
+                  {blockIntelligence[b.block_id]?.ai_explanation && (
+                    <div className="border border-emerald-300 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/20 p-3 rounded-[2px]">
+                      <div className="flex items-center gap-1.5 mb-2">
+                        <CheckCircle2 className="size-3.5 text-emerald-700 dark:text-emerald-400" />
+
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-300">
+                          Why AI Selected This Block
+                        </span>
+
+                        <span className="ml-auto font-mono text-[10px] font-bold text-[#003366] dark:text-sky-400">
+                          Score{" "}
+                          {blockIntelligence[b.block_id]?.ai_explanation?.score?.toFixed(2) ??
+                            "0.00"}
+                        </span>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        {(blockIntelligence[b.block_id]?.ai_explanation?.why_selected ?? []).map(
+                          (reason, index) => (
+                            <div
+                              key={`${b.block_id}-reason-${index}`}
+                              className="flex items-start gap-2 text-[10px] text-slate-700 dark:text-slate-300"
+                            >
+                              <span className="text-emerald-600 dark:text-emerald-400 font-bold">
+                                ✓
+                              </span>
+
+                              <span>{reason}</span>
+                            </div>
+                          ),
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             ))}
@@ -696,27 +1071,41 @@ function OptimizerPage() {
                     Optimizer Executive Summary
                   </p>
                   <p className="text-slate-700 dark:text-slate-300">
-                    IR-ABPS successfully scheduled <strong>{apiData.blocks.length} multi-departmental megablocks</strong> across Northern Central Railway. All high-criticality USFD rail flaws and signal overhauls have been clustered into low-density night/afternoon windows.
+                    IR-ABPS successfully scheduled{" "}
+                    <strong>{apiData.blocks.length} multi-departmental megablocks</strong> across
+                    Northern Central Railway. All high-criticality USFD rail flaws and signal
+                    overhauls have been clustered into low-density night/afternoon windows.
                   </p>
                 </div>
 
                 <div className="space-y-2">
-                  <p className="font-bold uppercase text-slate-500 text-[10px]">Allocated Block Schedule</p>
+                  <p className="font-bold uppercase text-slate-500 text-[10px]">
+                    Allocated Block Schedule
+                  </p>
                   {apiData.blocks.map((bl) => (
-                    <div key={bl.block_id} className="border border-border p-3 rounded-[2px] bg-slate-50 dark:bg-slate-900">
+                    <div
+                      key={bl.block_id}
+                      className="border border-border p-3 rounded-[2px] bg-slate-50 dark:bg-slate-900"
+                    >
                       <div className="flex justify-between font-mono font-bold text-xs">
                         <span className="text-[#003366] dark:text-sky-400">{bl.block_id}</span>
-                        <span>{bl.date} ({bl.start} – {bl.end})</span>
+                        <span>
+                          {bl.date} ({bl.start} – {bl.end})
+                        </span>
                       </div>
                       <div className="mt-1 text-[11px] text-slate-600 dark:text-slate-400">
-                        Corridor: {bl.corridor} · Duration: {bl.duration} min · Tasks Bundled: {bl.number_of_tasks}
+                        Corridor: {bl.corridor} · Duration: {bl.duration} min · Tasks Bundled:{" "}
+                        {bl.number_of_tasks}
                       </div>
                     </div>
                   ))}
                 </div>
 
                 <div className="pt-2">
-                  <Button asChild className="w-full bg-[#003366] hover:bg-[#002244] text-white font-bold h-9 rounded-[2px]">
+                  <Button
+                    asChild
+                    className="w-full bg-[#003366] hover:bg-[#002244] text-white font-bold h-9 rounded-[2px]"
+                  >
                     <Link to="/planner">
                       Open in Gantt Planner <ArrowRight className="ml-1.5 size-3.5" />
                     </Link>

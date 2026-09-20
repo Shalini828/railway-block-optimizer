@@ -21,10 +21,13 @@ import {
   FileText,
   RefreshCw,
   FileSpreadsheet,
+  Info,
+  Ban,
 } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader, deptColor } from "@/components/AppShell";
 import { useAbps } from "@/context/AbpsContext";
+import { useLanguage } from "@/context/LanguageContext";
 import {
   CORRIDORS,
   DEPT_LABEL,
@@ -38,6 +41,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { apiFetch } from "@/lib/api";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -101,8 +105,9 @@ const STATUSES: (Status | "All")[] = [
 ];
 
 function RequestsPage() {
-  const { reqs, addReq, role } = useAbps();
-  const defaultDept: Dept = role.dept === "COA" ? "TMS" : role.dept;
+  const { visibleReqs, reqs, addReq, role, scope, can } = useAbps();
+  const { t } = useLanguage();
+  const defaultDept: Dept = role.dept === "COA" ? "TMS" : (role.dept as Dept);
 
   const [dept, setDept] = useState<Dept>(defaultDept);
   const [assetId, setAssetId] = useState("TRK-ENG-1200");
@@ -121,11 +126,16 @@ function RequestsPage() {
   const [status, setStatus] = useState<Status | "All">("All");
   const [searchQuery, setSearchQuery] = useState("");
   const [detail, setDetail] = useState<Requisition | null>(null);
+  const [rejectingReq, setRejectingReq] = useState<Requisition | null>(null);
+  const [rejectionReason, setRejectionReason] = useState("");
 
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Use visibleReqs for department roles, reqs for network roles
+  const activeReqs = visibleReqs;
+
   const filtered = useMemo(() => {
-    return reqs.filter((r) => {
+    return activeReqs.filter((r) => {
       const matchTab = tab === "ALL" || r.dept === tab;
       const matchStatus = status === "All" || r.status === status;
       const matchSearch =
@@ -135,42 +145,44 @@ function RequestsPage() {
         r.section.toLowerCase().includes(searchQuery.toLowerCase());
       return matchTab && matchStatus && matchSearch;
     });
-  }, [reqs, tab, status, searchQuery]);
+  }, [activeReqs, tab, status, searchQuery]);
 
   const stats = useMemo(() => {
     return {
-      total: reqs.length,
-      pending: reqs.filter((r) => r.status === "Pending AI Scheduling").length,
-      active: reqs.filter((r) => r.status === "Active").length,
-      completed: reqs.filter((r) => r.status === "Completed").length,
+      total: activeReqs.length,
+      pending: activeReqs.filter((r) => r.status === "Pending AI Scheduling").length,
+      active: activeReqs.filter((r) => r.status === "Active").length,
+      completed: activeReqs.filter((r) => r.status === "Completed").length,
     };
-  }, [reqs]);
+  }, [activeReqs]);
 
   const insights = useMemo(() => {
-    const sortedByScore = [...reqs].sort(
+    const sortedByScore = [...activeReqs].sort(
       (a, b) => (b.score ?? criticalityScore(b)) - (a.score ?? criticalityScore(a)),
     );
-    const sortedByOverdue = [...reqs].sort((a, b) => b.daysOverdue - a.daysOverdue);
-    const sortedByDuration = [...reqs].sort((a, b) => b.duration - a.duration);
+    const sortedByOverdue = [...activeReqs].sort((a, b) => b.daysOverdue - a.daysOverdue);
+    const sortedByDuration = [...activeReqs].sort((a, b) => b.duration - a.duration);
 
     return {
       highestPriority: sortedByScore[0] ?? null,
       mostOverdue: sortedByOverdue[0] ?? null,
       longestBlock: sortedByDuration[0] ?? null,
-      activeWork: reqs.find((r) => r.status === "Active") ?? null,
+      activeWork: activeReqs.find((r) => r.status === "Active") ?? null,
     };
-  }, [reqs]);
+  }, [activeReqs]);
 
-  const submit = async () => {
+  const submit = async (runOptimizer = false) => {
     if (!work.trim()) {
-      toast.error("Please enter nature of work / task description");
+      toast.error(t("Please enter nature of work / task description", "कृपया कार्य का विवरण दर्ज करें"));
       return;
     }
 
     setIsSubmitting(true);
 
+    const submissionDept = scope === "department" ? (role.dept as Dept) : dept;
+
     const payload = {
-      dept,
+      dept: submissionDept,
       assetId,
       work,
       section,
@@ -187,7 +199,7 @@ function RequestsPage() {
 
     try {
       // 1. Create requisition in PostgreSQL
-      const requestResponse = await fetch("http://127.0.0.1:8000/block-requests/", {
+      const requestResponse = await apiFetch("/block-requests/", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -201,51 +213,100 @@ function RequestsPage() {
         throw new Error(requestData.detail || "Failed to submit requisition");
       }
 
-      console.log("Requisition created:", requestData);
-
-      // Keep frontend requisition ledger in sync
-      addReq(payload);
-
-      // 2. Immediately run IR-ABPS optimization
-      const optimizationResponse = await fetch("http://127.0.0.1:8000/optimization/", {
-        method: "POST",
+      // Add to local frontend requisition ledger with backendId
+      addReq({
+        ...payload,
+        backendId: requestData.request_id,
       });
-
-      const optimizationData = await optimizationResponse.json();
-
-      if (!optimizationResponse.ok) {
-        throw new Error(
-          optimizationData.detail || optimizationData.message || "Optimization failed",
-        );
-      }
-
-      console.log("Optimization completed:", optimizationData);
-
-      if (
-        optimizationData.status !== "success" ||
-        !optimizationData.blocks ||
-        optimizationData.blocks.length === 0
-      ) {
-        throw new Error("Requisition was submitted, but no optimized block was generated.");
-      }
 
       setWork("");
 
-      toast.success(
-        <div className="flex items-center gap-2">
-          <CircleCheck className="size-4 text-emerald-600" />
-          <span>Requisition filed & optimized successfully into Gantt schedule</span>
-        </div>,
-      );
+      if (runOptimizer && can("optimizer.run")) {
+        // 2. Immediately run IR-ABPS optimization (Admin flow)
+        const optimizationResponse = await apiFetch("/optimization/", {
+          method: "POST",
+        });
 
-      setTimeout(() => {
-        window.location.href = "/planner";
-      }, 700);
+        const optimizationData = await optimizationResponse.json();
+
+        if (!optimizationResponse.ok) {
+          throw new Error(
+            optimizationData.detail || optimizationData.message || "Optimization failed",
+          );
+        }
+
+        toast.success(
+          <div className="flex items-center gap-2">
+            <CircleCheck className="size-4 text-emerald-600" />
+            <span>{t("Requisition filed & optimized into Gantt schedule", "मांग पत्र दर्ज और गैंट शेड्यूल में अनुकूलित")}</span>
+          </div>,
+        );
+
+        setTimeout(() => {
+          window.location.href = "/planner";
+        }, 700);
+      } else {
+        // Department flow or standard submit: stay on page
+        toast.success(
+          <div className="flex items-center gap-2">
+            <CircleCheck className="size-4 text-emerald-600" />
+            <span>
+              {t(
+                "Requisition submitted — Pending AI Scheduling. Control / DRM Planning will schedule it.",
+                "मांग पत्र जमा किया गया — एआई शेड्यूलिंग लंबित। नियंत्रण / डीआरएम योजना इसे निर्धारित करेगी।"
+              )}
+            </span>
+          </div>,
+        );
+      }
     } catch (error) {
-      console.error("Requisition/optimization error:", error);
+      console.error("Requisition submission error:", error);
       toast.error(error instanceof Error ? error.message : "Could not complete requisition.");
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleCancel = async (req: Requisition) => {
+    if (!confirm(t(`Cancel requisition ${req.id}?`, `मांग पत्र ${req.id} रद्द करें?`))) return;
+    try {
+      const targetId = req.backendId || req.id;
+      const res = await apiFetch(`/block-requests/${targetId}/cancel`, { method: "POST" });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.detail || "Failed to cancel");
+      }
+      req.status = "Cancelled";
+      toast.success(t(`Requisition ${req.id} cancelled.`, `मांग पत्र ${req.id} रद्द कर दिया गया।`));
+    } catch (e: any) {
+      toast.error(e.message || "Failed to cancel requisition");
+    }
+  };
+
+  const handleReject = async () => {
+    if (!rejectingReq) return;
+    if (!rejectionReason.trim()) {
+      toast.error(t("Please provide a rejection reason", "कृपया अस्वीकृति का कारण बताएं"));
+      return;
+    }
+    try {
+      const targetId = rejectingReq.backendId || rejectingReq.id;
+      const res = await apiFetch(`/block-requests/${targetId}/reject`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: rejectionReason }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.detail || "Failed to reject");
+      }
+      rejectingReq.status = "Rejected";
+      rejectingReq.rejectionReason = rejectionReason;
+      setRejectingReq(null);
+      setRejectionReason("");
+      toast.success(t(`Requisition ${rejectingReq.id} rejected.`, `मांग पत्र ${rejectingReq.id} अस्वीकृत।`));
+    } catch (e: any) {
+      toast.error(e.message || "Failed to reject requisition");
     }
   };
 
@@ -300,6 +361,10 @@ function RequestsPage() {
         return "bg-amber-100 text-amber-900 border-amber-300 font-bold";
       case "Completed":
         return "bg-slate-100 text-slate-900 border-slate-300";
+      case "Cancelled":
+        return "bg-slate-100 text-slate-600 border-slate-300 line-through";
+      case "Rejected":
+        return "bg-red-100 text-red-900 border-red-300 font-semibold";
     }
   };
 
@@ -320,262 +385,366 @@ function RequestsPage() {
       {/* Summary KPI Strip */}
       <div className="mb-5 grid grid-cols-2 sm:grid-cols-4 gap-3">
         <div className="border border-border bg-white dark:bg-slate-900 p-3 rounded-[2px]">
-          <p className="text-[10px] font-bold uppercase text-slate-500">Total Demands</p>
+          <p className="text-[10px] font-bold uppercase text-slate-500">{t("Total Demands", "कुल मांग")}</p>
           <p className="text-xl font-bold text-slate-900 dark:text-slate-100 mt-0.5">{stats.total}</p>
         </div>
         <div className="border border-border bg-white dark:bg-slate-900 p-3 rounded-[2px]">
-          <p className="text-[10px] font-bold uppercase text-purple-700 dark:text-purple-400">Pending AI Scheduling</p>
+          <p className="text-[10px] font-bold uppercase text-purple-700 dark:text-purple-400">{t("Pending AI Scheduling", "एआई शेड्यूलिंग लंबित")}</p>
           <p className="text-xl font-bold text-purple-700 dark:text-purple-400 mt-0.5">{stats.pending}</p>
         </div>
         <div className="border border-border bg-white dark:bg-slate-900 p-3 rounded-[2px]">
-          <p className="text-[10px] font-bold uppercase text-amber-700 dark:text-amber-400">Active Execution</p>
+          <p className="text-[10px] font-bold uppercase text-amber-700 dark:text-amber-400">{t("Active Execution", "सक्रिय निष्पादन")}</p>
           <p className="text-xl font-bold text-amber-700 dark:text-amber-400 mt-0.5">{stats.active}</p>
         </div>
         <div className="border border-border bg-white dark:bg-slate-900 p-3 rounded-[2px]">
-          <p className="text-[10px] font-bold uppercase text-emerald-700 dark:text-emerald-400">Completed & Closed</p>
+          <p className="text-[10px] font-bold uppercase text-emerald-700 dark:text-emerald-400">{t("Completed & Closed", "पूर्ण एवं बंद")}</p>
           <p className="text-xl font-bold text-emerald-700 dark:text-emerald-400 mt-0.5">{stats.completed}</p>
         </div>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[400px_1fr] xl:grid-cols-[440px_1fr]">
-        {/* LEFT PANEL: FORM IR-REQ-2024 */}
-        <div className="space-y-4">
-          <Card className="border-2 border-[#003366] bg-white dark:bg-slate-900 rounded-[2px] shadow-none">
-            <div className="bg-[#003366] p-3 text-white border-b-2 border-[#FF9933] flex items-center justify-between">
-              <div>
-                <h2 className="text-xs font-bold uppercase tracking-wider">Form IR-REQ-2024</h2>
-                <p className="text-[10px] text-slate-300">Electronic Maintenance Demand Filing</p>
-              </div>
-              <span className="bg-[#FF9933] text-slate-950 text-[9px] font-bold px-1.5 py-0.5 rounded-[2px] uppercase">
-                Official
+      {/* Pending Scheduling Banner */}
+      {stats.pending > 0 && (
+        <div className="mb-5 bg-purple-50 dark:bg-purple-950/40 border-2 border-purple-300 dark:border-purple-800 p-3.5 rounded-[2px] flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-2.5">
+            <CalendarClock className="size-5 text-purple-700 dark:text-purple-300" />
+            <div>
+              <span className="text-xs font-bold text-purple-950 dark:text-purple-100">
+                {stats.pending}{" "}
+                {t(
+                  "requisitions awaiting AI scheduling",
+                  "मांग पत्र एआई शेड्यूलिंग की प्रतीक्षा कर रहे हैं"
+                )}
               </span>
+              <p className="text-[11px] text-purple-700 dark:text-purple-400">
+                {t(
+                  "Review demands in the IR-ABPS Brain optimization matrix.",
+                  "आईआर-एबीपीएस ब्रेन ऑप्टिमाइज़ेशन मैट्रिक्स में मांगों की समीक्षा करें।"
+                )}
+              </p>
             </div>
+          </div>
+          <Link to="/optimizer">
+            <Button size="sm" className="h-8 bg-purple-700 hover:bg-purple-800 text-white font-bold text-xs rounded-[2px]">
+              <Brain className="mr-1.5 size-3.5" />
+              {t("Open IR-ABPS Brain", "आईआर-एबीपीएस ब्रेन खोलें")}
+              <ArrowRight className="ml-1.5 size-3" />
+            </Button>
+          </Link>
+        </div>
+      )}
 
-            <CardContent className="space-y-3.5 p-4 text-xs">
-              <div className="grid gap-1">
-                <Label className="text-[11px] font-bold uppercase text-slate-700 dark:text-slate-300">
-                  Originating Department <span className="text-destructive">*</span>
-                </Label>
-                <Select value={dept} onValueChange={(v) => setDept(v as Dept)}>
-                  <SelectTrigger className="h-8 rounded-[2px] text-xs bg-background">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent className="rounded-[2px]">
-                    {(Object.keys(DEPT_LABEL) as Dept[]).map((d) => (
-                      <SelectItem key={d} value={d} className="text-xs">
-                        <div className="flex items-center gap-2">
-                          <Building2 className="size-3.5 text-muted-foreground" />
-                          {DEPT_LABEL[d]}
-                        </div>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="grid gap-1">
-                <div className="flex justify-between items-center">
-                  <Label className="text-[11px] font-bold uppercase text-slate-700 dark:text-slate-300">
-                    Asset / Equipment Tag <span className="text-destructive">*</span>
-                  </Label>
-                  <span className="text-[10px] font-mono text-slate-500">TMS/SMMS/TDMS Tag</span>
+      <div className="grid gap-6 lg:grid-cols-[400px_1fr] xl:grid-cols-[440px_1fr]">
+        {/* LEFT PANEL: FORM IR-REQ-2024 or Control Office Info */}
+        <div className="space-y-4">
+          {role.id === "control" ? (
+            <Card className="border-2 border-[#003366] bg-white dark:bg-slate-900 rounded-[2px] shadow-none p-5">
+              <div className="flex items-start gap-3">
+                <Info className="size-5 text-[#003366] dark:text-sky-400 mt-0.5 shrink-0" />
+                <div>
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-slate-100">
+                    {t("Control Office Requisition Consumer", "नियंत्रण कार्यालय मांग पत्र उपभोक्ता")}
+                  </h3>
+                  <p className="text-xs text-slate-600 dark:text-slate-300 mt-1.5 leading-relaxed">
+                    {t(
+                      "Requisitions are raised by the department engineers. Control consumes and schedules them.",
+                      "मांग पत्र विभागीय इंजीनियरों द्वारा उठाए जाते हैं। नियंत्रण उन्हें प्राप्त और निर्धारित करता है।"
+                    )}
+                  </p>
+                  <div className="mt-4">
+                    <Link to="/optimizer">
+                      <Button size="sm" className="h-8 bg-[#003366] hover:bg-[#002244] text-white font-bold text-xs rounded-[2px]">
+                        <Brain className="mr-1.5 size-3.5" />
+                        {t("Open IR-ABPS Brain", "आईआर-एबीपीएस ब्रेन खोलें")}
+                      </Button>
+                    </Link>
+                  </div>
                 </div>
-                <Input
-                  className="h-8 font-mono text-xs rounded-[2px] bg-background"
-                  value={assetId}
-                  onChange={(e) => setAssetId(e.target.value)}
-                />
+              </div>
+            </Card>
+          ) : (
+            <Card className="border-2 border-[#003366] bg-white dark:bg-slate-900 rounded-[2px] shadow-none">
+              <div className="bg-[#003366] p-3 text-white border-b-2 border-[#FF9933] flex items-center justify-between">
+                <div>
+                  <h2 className="text-xs font-bold uppercase tracking-wider">Form IR-REQ-2024</h2>
+                  <p className="text-[10px] text-slate-300">{t("Electronic Maintenance Demand Filing", "इलेक्ट्रॉनिक अनुरक्षण मांग फाइलिंग")}</p>
+                </div>
+                <span className="bg-[#FF9933] text-slate-950 text-[9px] font-bold px-1.5 py-0.5 rounded-[2px] uppercase">
+                  Official
+                </span>
               </div>
 
-              <div className="grid gap-1">
-                <Label className="text-[11px] font-bold uppercase text-slate-700 dark:text-slate-300">
-                  Nature of Maintenance Work <span className="text-destructive">*</span>
-                </Label>
-                <Input
-                  className="h-8 text-xs rounded-[2px] bg-background"
-                  value={work}
-                  placeholder="e.g. USFD Class IMR Flaw Rectification / Point Overhaul"
-                  onChange={(e) => setWork(e.target.value)}
-                />
-              </div>
-
-              <div className="grid gap-1">
-                <Label className="text-[11px] font-bold uppercase text-slate-700 dark:text-slate-300">
-                  Railway Section <span className="text-destructive">*</span>
-                </Label>
-                <Select value={section} onValueChange={setSection}>
-                  <SelectTrigger className="h-8 rounded-[2px] text-xs bg-background">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent className="rounded-[2px]">
-                    {BACKEND_CORRIDORS.map((c) => (
-                      <SelectItem key={c.id} value={c.id} className="text-xs">
-                        {c.name} ({c.id})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
+              <CardContent className="space-y-3.5 p-4 text-xs">
                 <div className="grid gap-1">
                   <Label className="text-[11px] font-bold uppercase text-slate-700 dark:text-slate-300">
-                    Track Line
+                    {t("Originating Department", "मूल विभाग")} <span className="text-destructive">*</span>
                   </Label>
-                  <Select value={line} onValueChange={setLine}>
+                  <Select
+                    value={scope === "department" ? (role.dept as Dept) : dept}
+                    onValueChange={(v) => setDept(v as Dept)}
+                    disabled={scope === "department"}
+                  >
                     <SelectTrigger className="h-8 rounded-[2px] text-xs bg-background">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent className="rounded-[2px]">
-                      {["Up Main", "Down Main", "Line 3 Up", "Freight Loop"].map((l) => (
-                        <SelectItem key={l} value={l} className="text-xs">
-                          {l}
+                      {(Object.keys(DEPT_LABEL) as Dept[]).map((d) => (
+                        <SelectItem key={d} value={d} className="text-xs">
+                          <div className="flex items-center gap-2">
+                            <Building2 className="size-3.5 text-muted-foreground" />
+                            {DEPT_LABEL[d]}
+                          </div>
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
+                  {scope === "department" && (
+                    <span className="text-[10px] text-muted-foreground italic">
+                      {t("Locked to departmental jurisdiction", "विभागीय अधिकार क्षेत्र के अनुसार लॉक किया गया")}
+                    </span>
+                  )}
                 </div>
+
                 <div className="grid gap-1">
-                  <Label className="text-[11px] font-bold uppercase text-slate-700 dark:text-slate-300">
-                    Chainage (KM)
-                  </Label>
+                  <div className="flex justify-between items-center">
+                    <Label className="text-[11px] font-bold uppercase text-slate-700 dark:text-slate-300">
+                      Asset / Equipment Tag <span className="text-destructive">*</span>
+                    </Label>
+                    <span className="text-[10px] font-mono text-slate-500">TMS/SMMS/TDMS Tag</span>
+                  </div>
                   <Input
                     className="h-8 font-mono text-xs rounded-[2px] bg-background"
-                    value={chainage}
-                    onChange={(e) => setChainage(e.target.value)}
+                    value={assetId}
+                    onChange={(e) => setAssetId(e.target.value)}
                   />
                 </div>
-              </div>
 
-              <div className="grid grid-cols-2 gap-3">
                 <div className="grid gap-1">
                   <Label className="text-[11px] font-bold uppercase text-slate-700 dark:text-slate-300">
-                    Block Nature
+                    Nature of Maintenance Work <span className="text-destructive">*</span>
                   </Label>
-                  <Select
-                    value={blockType}
-                    onValueChange={(v) => setBlockType(v as Requisition["blockType"])}
-                  >
+                  <Input
+                    className="h-8 text-xs rounded-[2px] bg-background"
+                    value={work}
+                    placeholder="e.g. USFD Class IMR Flaw Rectification / Point Overhaul"
+                    onChange={(e) => setWork(e.target.value)}
+                  />
+                </div>
+
+                <div className="grid gap-1">
+                  <Label className="text-[11px] font-bold uppercase text-slate-700 dark:text-slate-300">
+                    Railway Section <span className="text-destructive">*</span>
+                  </Label>
+                  <Select value={section} onValueChange={setSection}>
                     <SelectTrigger className="h-8 rounded-[2px] text-xs bg-background">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent className="rounded-[2px]">
-                      {["Traffic Block", "Power Block", "Disconnection"].map((b) => (
-                        <SelectItem key={b} value={b} className="text-xs">
-                          {b}
+                      {BACKEND_CORRIDORS.map((c) => (
+                        <SelectItem key={c.id} value={c.id} className="text-xs">
+                          {c.name} ({c.id})
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="grid gap-1">
-                  <Label className="text-[11px] font-bold uppercase text-slate-700 dark:text-slate-300">
-                    Duration (Hrs)
-                  </Label>
-                  <Input
-                    className="h-8 text-xs rounded-[2px] bg-background"
-                    type="number"
-                    value={duration}
-                    onChange={(e) => setDuration(e.target.value)}
-                  />
-                </div>
-              </div>
 
-              <div className="grid grid-cols-3 gap-2">
-                <div className="grid gap-1">
-                  <Label className="text-[10px] font-bold uppercase text-slate-700 dark:text-slate-300">
-                    Crew Gang
-                  </Label>
-                  <Input
-                    className="h-8 text-xs rounded-[2px] bg-background"
-                    type="number"
-                    value={crew}
-                    onChange={(e) => setCrew(e.target.value)}
-                  />
-                </div>
-                <div className="grid gap-1">
-                  <Label className="text-[10px] font-bold uppercase text-slate-700 dark:text-slate-300">
-                    Criticality
-                  </Label>
-                  <Select
-                    value={criticality}
-                    onValueChange={(v) => setCriticality(v as Requisition["criticality"])}
-                  >
-                    <SelectTrigger className="h-8 rounded-[2px] text-xs bg-background">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent className="rounded-[2px]">
-                      {["High", "Medium", "Low", "Critical"].map((c) => (
-                        <SelectItem key={c} value={c} className="text-xs">
-                          {c}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="grid gap-1">
-                  <Label className="text-[10px] font-bold uppercase text-slate-700 dark:text-slate-300">
-                    Days Overdue
-                  </Label>
-                  <Input
-                    className="h-8 text-xs rounded-[2px] bg-background"
-                    type="number"
-                    value={overdue}
-                    onChange={(e) => setOverdue(e.target.value)}
-                  />
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between border border-border bg-slate-50 dark:bg-slate-800/60 p-2.5 rounded-[2px]">
-                <div className="flex flex-col gap-0.5">
-                  <Label className="text-xs font-bold cursor-pointer" htmlFor="tsr-toggle">
-                    TSR Risk If Deferred
-                  </Label>
-                  <span className="text-[10px] text-slate-500">Imposes sectional caution order</span>
-                </div>
-                <Switch id="tsr-toggle" checked={tsr} onCheckedChange={setTsr} />
-              </div>
-
-              {/* Live Priority Score Tile */}
-              <div className="border border-border bg-slate-50 dark:bg-slate-800/80 p-3 rounded-[2px]">
-                <div className="flex justify-between items-center mb-1.5">
-                  <span className="text-[10px] font-bold uppercase text-slate-600 dark:text-slate-400">
-                    Calculated Criticality Index
-                  </span>
-                  <span className={`px-2 py-0.5 rounded-[2px] text-[10px] font-bold ${scoreBg}`}>
-                    {scoreLabel}
-                  </span>
-                </div>
-                <div className="flex items-center gap-3">
-                  <div className="h-2 flex-1 rounded-[2px] bg-slate-200 dark:bg-slate-700 overflow-hidden">
-                    <div
-                      className="h-full bg-[#003366] dark:bg-sky-400"
-                      style={{ width: `${currentScore}%` }}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="grid gap-1">
+                    <Label className="text-[11px] font-bold uppercase text-slate-700 dark:text-slate-300">
+                      Track Line
+                    </Label>
+                    <Select value={line} onValueChange={setLine}>
+                      <SelectTrigger className="h-8 rounded-[2px] text-xs bg-background">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="rounded-[2px]">
+                        {["Up Main", "Down Main", "Line 3 Up", "Freight Loop"].map((l) => (
+                          <SelectItem key={l} value={l} className="text-xs">
+                            {l}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="grid gap-1">
+                    <Label className="text-[11px] font-bold uppercase text-slate-700 dark:text-slate-300">
+                      Chainage (KM)
+                    </Label>
+                    <Input
+                      className="h-8 font-mono text-xs rounded-[2px] bg-background"
+                      value={chainage}
+                      onChange={(e) => setChainage(e.target.value)}
                     />
                   </div>
-                  <span className="font-mono text-base font-bold text-slate-900 dark:text-slate-100">
-                    {currentScore}/100
-                  </span>
                 </div>
-              </div>
 
-              <Button
-                className="w-full h-9 bg-[#003366] hover:bg-[#002244] text-white font-bold text-xs rounded-[2px]"
-                onClick={submit}
-                disabled={isSubmitting}
-              >
-                {isSubmitting ? (
-                  <>
-                    <RefreshCw className="mr-2 size-3.5 animate-spin" /> Transmitting to Optimizer...
-                  </>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="grid gap-1">
+                    <Label className="text-[11px] font-bold uppercase text-slate-700 dark:text-slate-300">
+                      Block Type
+                    </Label>
+                    <Select
+                      value={blockType}
+                      onValueChange={(v) => setBlockType(v as Requisition["blockType"])}
+                    >
+                      <SelectTrigger className="h-8 rounded-[2px] text-xs bg-background">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="rounded-[2px]">
+                        {["Traffic Block", "Power Block", "Integrated Block", "Shadow Block"].map(
+                          (b) => (
+                            <SelectItem key={b} value={b} className="text-xs">
+                              {b}
+                            </SelectItem>
+                          ),
+                        )}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="grid gap-1">
+                    <Label className="text-[11px] font-bold uppercase text-slate-700 dark:text-slate-300">
+                      Duration (Hrs)
+                    </Label>
+                    <Input
+                      className="h-8 font-mono text-xs rounded-[2px] bg-background"
+                      type="number"
+                      value={duration}
+                      onChange={(e) => setDuration(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="grid gap-1">
+                    <Label className="text-[10px] font-bold uppercase text-slate-700 dark:text-slate-300">
+                      Crew Req.
+                    </Label>
+                    <Input
+                      className="h-8 font-mono text-xs rounded-[2px] bg-background"
+                      type="number"
+                      value={crew}
+                      onChange={(e) => setCrew(e.target.value)}
+                    />
+                  </div>
+                  <div className="grid gap-1">
+                    <Label className="text-[10px] font-bold uppercase text-slate-700 dark:text-slate-300">
+                      Criticality
+                    </Label>
+                    <Select
+                      value={criticality}
+                      onValueChange={(v) => setCriticality(v as Requisition["criticality"])}
+                    >
+                      <SelectTrigger className="h-8 rounded-[2px] text-xs bg-background">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="rounded-[2px]">
+                        {["High", "Medium", "Low", "Critical"].map((c) => (
+                          <SelectItem key={c} value={c} className="text-xs">
+                            {c}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="grid gap-1">
+                    <Label className="text-[10px] font-bold uppercase text-slate-700 dark:text-slate-300">
+                      Days Overdue
+                    </Label>
+                    <Input
+                      className="h-8 text-xs rounded-[2px] bg-background"
+                      type="number"
+                      value={overdue}
+                      onChange={(e) => setOverdue(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between border border-border bg-slate-50 dark:bg-slate-800/60 p-2.5 rounded-[2px]">
+                  <div className="flex flex-col gap-0.5">
+                    <Label className="text-xs font-bold cursor-pointer" htmlFor="tsr-toggle">
+                      TSR Risk If Deferred
+                    </Label>
+                    <span className="text-[10px] text-slate-500">Imposes sectional caution order</span>
+                  </div>
+                  <Switch id="tsr-toggle" checked={tsr} onCheckedChange={setTsr} />
+                </div>
+
+                {/* Live Priority Score Tile */}
+                <div className="border border-border bg-slate-50 dark:bg-slate-800/80 p-3 rounded-[2px]">
+                  <div className="flex justify-between items-center mb-1.5">
+                    <span className="text-[10px] font-bold uppercase text-slate-600 dark:text-slate-400">
+                      Calculated Criticality Index
+                    </span>
+                    <span className={`px-2 py-0.5 rounded-[2px] text-[10px] font-bold ${scoreBg}`}>
+                      {scoreLabel}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <div className="h-2 flex-1 rounded-[2px] bg-slate-200 dark:bg-slate-700 overflow-hidden">
+                      <div
+                        className="h-full bg-[#003366] dark:bg-sky-400"
+                        style={{ width: `${currentScore}%` }}
+                      />
+                    </div>
+                    <span className="font-mono text-base font-bold text-slate-900 dark:text-slate-100">
+                      {currentScore}/100
+                    </span>
+                  </div>
+                </div>
+
+                {role.id === "admin" ? (
+                  <div className="flex flex-col gap-2">
+                    <Button
+                      className="w-full h-9 bg-slate-100 hover:bg-slate-200 text-slate-900 border border-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-100 dark:border-slate-700 font-bold text-xs rounded-[2px]"
+                      onClick={() => submit(false)}
+                      disabled={isSubmitting}
+                    >
+                      {isSubmitting ? (
+                        <>
+                          <RefreshCw className="mr-2 size-3.5 animate-spin" /> {t("Filing...", "दर्ज किया जा रहा है...")}
+                        </>
+                      ) : (
+                        <>
+                          <Send className="mr-2 size-3.5" /> {t("Submit Requisition", "मांग पत्र जमा करें")}
+                        </>
+                      )}
+                    </Button>
+                    <Button
+                      className="w-full h-9 bg-[#003366] hover:bg-[#002244] text-white font-bold text-xs rounded-[2px]"
+                      onClick={() => submit(true)}
+                      disabled={isSubmitting}
+                    >
+                      {isSubmitting ? (
+                        <>
+                          <RefreshCw className="mr-2 size-3.5 animate-spin" /> {t("Optimizing...", "अनुकूलन जारी...")}
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="mr-2 size-3.5 text-amber-400" /> {t("Submit & Run IR-ABPS", "जमा करें और आईआर-एबीपीएस चलाएं")}
+                        </>
+                      )}
+                    </Button>
+                  </div>
                 ) : (
-                  <>
-                    <Send className="mr-2 size-3.5" /> Submit Requisition for Shadow Scheduling
-                  </>
+                  <Button
+                    className="w-full h-9 bg-[#003366] hover:bg-[#002244] text-white font-bold text-xs rounded-[2px]"
+                    onClick={() => submit(false)}
+                    disabled={isSubmitting}
+                  >
+                    {isSubmitting ? (
+                      <>
+                        <RefreshCw className="mr-2 size-3.5 animate-spin" /> {t("Transmitting...", "प्रेषित किया जा रहा है...")}
+                      </>
+                    ) : (
+                      <>
+                        <Send className="mr-2 size-3.5" /> {t("Submit Requisition", "मांग पत्र जमा करें")}
+                      </>
+                    )}
+                  </Button>
                 )}
-              </Button>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          )}
         </div>
 
         {/* RIGHT PANEL: REQUISITIONS LEDGER */}
@@ -693,14 +862,39 @@ function RequestsPage() {
                           </span>
                         </TableCell>
                         <TableCell className="text-right">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-7 px-2 text-[11px] font-bold border-slate-300 dark:border-slate-700"
-                            onClick={() => setDetail(r)}
-                          >
-                            Details <ArrowRight className="ml-1 size-3" />
-                          </Button>
+                          <div className="flex items-center justify-end gap-1.5">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 px-2 text-[11px] font-bold border-slate-300 dark:border-slate-700"
+                              onClick={() => setDetail(r)}
+                            >
+                              {t("Details", "विवरण")} <ArrowRight className="ml-1 size-3" />
+                            </Button>
+                            {r.status === "Pending AI Scheduling" && can("requests.cancel") && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 px-2 text-[11px] font-bold text-red-600 border-red-200 hover:bg-red-50 dark:border-red-900/50 dark:text-red-400 dark:hover:bg-red-950/40"
+                                onClick={() => handleCancel(r)}
+                                title={t("Cancel pending requisition", "लंबित मांग पत्र रद्द करें")}
+                              >
+                                <Ban className="mr-1 size-3" />
+                                {t("Cancel", "रद्द")}
+                              </Button>
+                            )}
+                            {r.status === "Pending AI Scheduling" && can("requests.reject") && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 px-2 text-[11px] font-bold text-amber-700 border-amber-200 hover:bg-amber-50 dark:border-amber-900/50 dark:text-amber-400 dark:hover:bg-amber-950/40"
+                                onClick={() => setRejectingReq(r)}
+                                title={t("Reject requisition with reason", "कारण सहित मांग पत्र अस्वीकार करें")}
+                              >
+                                {t("Reject", "अस्वीकार")}
+                              </Button>
+                            )}
+                          </div>
                         </TableCell>
                       </TableRow>
                     );
@@ -791,9 +985,59 @@ function RequestsPage() {
                   <span className="text-[10px] font-bold uppercase text-slate-500">Filed By</span>
                   <p className="font-semibold">{detail.requestedBy}</p>
                 </div>
+                {detail.rejectionReason && (
+                  <div className="col-span-2 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 p-2 rounded-[2px]">
+                    <span className="text-[10px] font-bold uppercase text-red-700 dark:text-red-400">Rejection Reason</span>
+                    <p className="font-semibold text-red-900 dark:text-red-200 text-xs mt-0.5">{detail.rejectionReason}</p>
+                  </div>
+                )}
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Reject Requisition Dialog */}
+      <Dialog open={!!rejectingReq} onOpenChange={(o) => !o && setRejectingReq(null)}>
+        <DialogContent className="sm:max-w-md border-2 border-red-700 bg-white dark:bg-slate-950 p-0 rounded-[2px] shadow-lg">
+          <DialogHeader className="bg-red-700 p-4 text-white">
+            <DialogTitle className="text-sm font-bold uppercase text-white">
+              {t("Reject Block Requisition", "ब्लॉक मांग पत्र अस्वीकार करें")}
+            </DialogTitle>
+            <p className="text-[11px] text-red-100 font-mono mt-0.5">
+              {rejectingReq?.id} ({rejectingReq?.assetId} - {rejectingReq?.dept})
+            </p>
+          </DialogHeader>
+          <div className="p-4 space-y-3">
+            <div>
+              <Label className="text-[11px] font-bold uppercase text-slate-700 dark:text-slate-300">
+                {t("Reason for Rejection", "अस्वीकृति का कारण")} <span className="text-destructive">*</span>
+              </Label>
+              <Input
+                className="mt-1 text-xs rounded-[2px]"
+                placeholder={t("e.g. Traffic saturation / Overlapping mega-block", "उदा. यातायात अधिभार / अतिव्यापी ब्लॉक")}
+                value={rejectionReason}
+                onChange={(e) => setRejectionReason(e.target.value)}
+              />
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-xs rounded-[2px]"
+                onClick={() => setRejectingReq(null)}
+              >
+                {t("Cancel", "रद्द")}
+              </Button>
+              <Button
+                size="sm"
+                className="bg-red-700 hover:bg-red-800 text-white font-bold text-xs rounded-[2px]"
+                onClick={handleReject}
+              >
+                {t("Confirm Rejection", "अस्वीकृति की पुष्टि करें")}
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </>

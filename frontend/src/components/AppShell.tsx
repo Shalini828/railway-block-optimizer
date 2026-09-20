@@ -38,31 +38,56 @@ import { GovtHeader } from "./GovtHeader";
 import { GovtSidebar } from "./GovtSidebar";
 import { GovtFooter } from "./GovtFooter";
 import { GovtNationalEmblem } from "./GovtNationalEmblem";
+import { AccessDenied } from "./AccessDenied";
+import { ROUTE_ACCESS } from "@/lib/permissions";
 
 export function AppShell({ children }: { children: ReactNode }) {
-  const { role, signedIn, signIn, signOut } = useAbps();
+  const { role, signedIn, signIn, signOut, authReady, can } = useAbps();
   const { t } = useLanguage();
   const location = useLocation();
 
   const [selectedRoleId, setSelectedRoleId] = useState<RoleId>("admin");
   const [password, setPassword] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
+  const [loading, setLoading] = useState(false);
 
   const isHomePage = location.pathname === "/";
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (password === "12345") {
-      setErrorMsg("");
-      setPassword("");
-      signIn(selectedRoleId);
+    setErrorMsg("");
+    setLoading(true);
+
+    try {
+      await signIn(selectedRoleId, password);
       toast.success(t("Officer Authenticated Successfully", "अधिकारी सफलतापूर्वक प्रमाणित"), {
         description: `${t("Welcome", "स्वागत है")}, ${role.name || "Authorized Controller"}.`,
       });
-    } else {
-      setErrorMsg(t("Security credentials invalid. Please enter valid password (12345).", "सुरक्षा क्रेडेंशियल अमान्य हैं। कृपया सही पासवर्ड (12345) दर्ज करें।"));
+      setPassword("");
+    } catch (err: any) {
+      setErrorMsg(
+        err.message ||
+          t(
+            "Security credentials invalid. Please enter valid password (12345).",
+            "सुरक्षा क्रेडेंशियल अमान्य हैं। कृपया सही पासवर्ड (12345) दर्ज करें।"
+          )
+      );
+    } finally {
+      setLoading(false);
     }
   };
+
+  // 0. VERIFYING SESSION SPLASH
+  if (!authReady) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center bg-[#f4f6f9] dark:bg-[#0b1320] text-foreground">
+        <GovtNationalEmblem className="size-12 animate-pulse mb-3" />
+        <p className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+          {t("Verifying Secure Session...", "सुरक्षित सत्र का सत्यापन किया जा रहा है...")}
+        </p>
+      </div>
+    );
+  }
 
   // 1. NOT SIGNED IN & NOT ON HOME PAGE -> SHOW OFFICIAL RAILWAYS LOGIN PORTAL
   if (!signedIn && !isHomePage) {
@@ -115,8 +140,8 @@ export function AppShell({ children }: { children: ReactNode }) {
                       <SelectValue placeholder="Select official designation..." />
                     </SelectTrigger>
                     <SelectContent className="rounded-[2px] border-slate-300 dark:border-slate-700">
-                      {Object.entries(ROLES).map(([id, r]) => (
-                        <SelectItem key={id} value={id} className="text-xs">
+                      {ROLES.map((r) => (
+                        <SelectItem key={r.id} value={r.id} className="text-xs">
                           <div className="flex flex-col py-0.5">
                             <span className="font-bold text-slate-900 dark:text-slate-100">{r.title}</span>
                             <span className="text-[10px] text-muted-foreground">{r.name} · {r.system}</span>
@@ -151,8 +176,8 @@ export function AppShell({ children }: { children: ReactNode }) {
                   )}
                 </div>
 
-                <Button type="submit" className="w-full h-9 bg-[#003366] hover:bg-[#002244] text-white font-bold rounded-[2px] cursor-pointer">
-                  <KeyRound className="mr-2 size-4" /> {t("Authenticate & Access Console", "प्रमाणित करें एवं कंसोल खोलें")}
+                <Button type="submit" disabled={loading} className="w-full h-9 bg-[#003366] hover:bg-[#002244] text-white font-bold rounded-[2px] cursor-pointer">
+                  <KeyRound className="mr-2 size-4" /> {loading ? t("Authenticating...", "प्रमाणीकरण जारी...") : t("Authenticate & Access Console", "प्रमाणित करें एवं कंसोल खोलें")}
                 </Button>
 
                 <div className="pt-2 text-center border-t border-border/80 mt-4">
@@ -180,6 +205,10 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   // 2. AUTHENTICATED WORKSPACE: FULL-WIDTH WITH FLUSH LEFT-DOCKED SIDEBAR
   if (signedIn) {
+    const pathname = location.pathname.replace(/\/+$/, "") || "/";
+    const requiredPerm = ROUTE_ACCESS[pathname];
+    const isAuthorized = !requiredPerm || can(requiredPerm);
+
     return (
       <div className="flex min-h-screen flex-col bg-[#f4f6f9] dark:bg-[#0b1320] text-foreground">
         <GovtTopUtilityBar />
@@ -191,7 +220,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
           {/* Main Operational Workspace */}
           <main id="main-content" className="flex-1 min-w-0 p-4 sm:p-6 lg:p-8 overflow-x-hidden">
-            {children}
+            {isAuthorized ? children : <AccessDenied requiredPerm={requiredPerm} />}
           </main>
         </div>
 

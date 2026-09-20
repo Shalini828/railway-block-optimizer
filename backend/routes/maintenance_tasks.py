@@ -1,8 +1,10 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 import psycopg
 import os
 from dotenv import load_dotenv
+
+from auth.security import get_current_user, require_permission, CurrentUser, RBACForbiddenException
 
 load_dotenv()
 
@@ -26,31 +28,52 @@ def get_connection():
 # GET ALL MAINTENANCE TASKS
 # ==========================================
 
-@router.get("/")
-def get_maintenance_tasks():
+@router.get("/", dependencies=[Depends(require_permission("tasks.view"))])
+def get_maintenance_tasks(user: CurrentUser = Depends(get_current_user)):
 
     conn = get_connection()
     cursor = conn.cursor()
 
     try:
-        cursor.execute("""
-            SELECT
-                task_id,
-                asset_id,
-                department,
-                task_type,
-                description,
-                created_date,
-                due_date,
-                estimated_duration_min,
-                overdue_days,
-                safety_risk,
-                task_status,
-                priority_score,
-                priority_category
-            FROM maintenance_tasks
-            ORDER BY priority_score DESC NULLS LAST, task_id
-        """)
+        if user.scope != "network":
+            cursor.execute("""
+                SELECT
+                    task_id,
+                    asset_id,
+                    department,
+                    task_type,
+                    description,
+                    created_date,
+                    due_date,
+                    estimated_duration_min,
+                    overdue_days,
+                    safety_risk,
+                    task_status,
+                    priority_score,
+                    priority_category
+                FROM maintenance_tasks
+                WHERE UPPER(department) = %s
+                ORDER BY priority_score DESC NULLS LAST, task_id
+            """, (user.dept.upper(),))
+        else:
+            cursor.execute("""
+                SELECT
+                    task_id,
+                    asset_id,
+                    department,
+                    task_type,
+                    description,
+                    created_date,
+                    due_date,
+                    estimated_duration_min,
+                    overdue_days,
+                    safety_risk,
+                    task_status,
+                    priority_score,
+                    priority_category
+                FROM maintenance_tasks
+                ORDER BY priority_score DESC NULLS LAST, task_id
+            """)
 
         rows = cursor.fetchall()
 
@@ -98,10 +121,11 @@ class TaskStatusUpdate(BaseModel):
     task_status: str
 
 
-@router.put("/{task_id}/status")
+@router.put("/{task_id}/status", dependencies=[Depends(require_permission("tasks.update"))])
 def update_task_status(
     task_id: str,
-    request: TaskStatusUpdate
+    request: TaskStatusUpdate,
+    user: CurrentUser = Depends(get_current_user)
 ):
 
     conn = get_connection()
@@ -110,7 +134,7 @@ def update_task_status(
     try:
 
         cursor.execute("""
-            SELECT task_id
+            SELECT task_id, department
             FROM maintenance_tasks
             WHERE task_id = %s
         """, (task_id,))
@@ -122,6 +146,16 @@ def update_task_status(
                 status_code=404,
                 detail="Maintenance task not found"
             )
+
+        if user.scope != "network":
+            task_dept = (task[1] or "").strip().upper()
+            user_dept = (user.dept or "").strip().upper()
+            if task_dept != user_dept:
+                raise RBACForbiddenException(
+                    required=f"department.{user.dept}",
+                    role=user.role_id,
+                    detail=f"Cannot update task belonging to another department ({task_dept})",
+                )
 
         cursor.execute("""
             UPDATE maintenance_tasks
