@@ -100,24 +100,38 @@ MATRIX_403_CASES = [
     # (method, path, body, role_id, description)
     ("POST", "/optimized-plan/BLK-1/approve", {"approved_by": "Someone"}, "engineering", "Engineering cannot approve"),
     ("POST", "/optimized-plan/BLK-1/approve", {"approved_by": "Someone"}, "traction", "Traction cannot approve"),
+    ("POST", "/optimized-plan/BLK-1/approve", {"approved_by": "Someone"}, "signal", "Signal cannot approve"),
     ("POST", "/optimized-plan/BLK-1/approve", {"approved_by": "Someone"}, "control", "Control cannot approve"),
     ("POST", "/optimized-plan/BLK-1/reject", {"reason": "Test"}, "engineering", "Engineering cannot reject"),
+    ("POST", "/optimized-plan/BLK-1/reject", {"reason": "Test"}, "traction", "Traction cannot reject"),
+    ("POST", "/optimized-plan/BLK-1/reject", {"reason": "Test"}, "signal", "Signal cannot reject"),
     ("POST", "/optimized-plan/BLK-1/reject", {"reason": "Test"}, "control", "Control cannot reject"),
     ("POST", "/optimization/", {}, "engineering", "Engineering cannot run optimizer"),
     ("POST", "/optimization/", {}, "traction", "Traction cannot run optimizer"),
+    ("POST", "/optimization/", {}, "signal", "Signal cannot run optimizer"),
     ("POST", "/optimization/recommend-windows", {}, "engineering", "Engineering cannot recommend windows"),
     ("POST", "/optimization/simulate", {}, "traction", "Traction cannot simulate"),
+    ("POST", "/optimization/simulate", {}, "signal", "Signal cannot simulate"),
     ("PUT", "/maintenance-tasks/TSK-1/status", {"status": "COMPLETED"}, "control", "Control cannot update task status"),
     ("POST", "/block-requests/", {"work": "Test", "dept": "COA"}, "control", "Control cannot create block request"),
     ("PATCH", "/emergency/INC-1/resolve", {"resolution_notes": "Done"}, "engineering", "Engineering cannot resolve emergency"),
     ("PATCH", "/emergency/INC-1/resolve", {"resolution_notes": "Done"}, "traction", "Traction cannot resolve emergency"),
+    ("PATCH", "/emergency/INC-1/resolve", {"resolution_notes": "Done"}, "signal", "Signal cannot resolve emergency"),
     ("POST", "/ai/tasks/apply-priorities", {}, "control", "Control cannot apply AI priorities"),
     ("POST", "/ai/tasks/apply-priorities", {}, "engineering", "Engineering cannot apply AI priorities"),
     ("POST", "/ai/tasks/apply-priorities", {}, "traction", "Traction cannot apply AI priorities"),
+    ("POST", "/ai/tasks/apply-priorities", {}, "signal", "Signal cannot apply AI priorities"),
     ("GET", "/admin/permission-matrix", None, "control", "Control cannot view admin permission matrix"),
     ("GET", "/admin/permission-matrix", None, "engineering", "Engineering cannot view admin permission matrix"),
     ("GET", "/admin/permission-matrix", None, "traction", "Traction cannot view admin permission matrix"),
+    ("GET", "/admin/permission-matrix", None, "signal", "Signal cannot view admin permission matrix"),
     ("GET", "/admin/audit-log", None, "control", "Control cannot view admin audit log"),
+    ("GET", "/admin/audit-log", None, "signal", "Signal cannot view admin audit log"),
+    ("POST", "/special-trains/", {}, "engineering", "Engineering cannot create special trains"),
+    ("POST", "/special-trains/", {}, "traction", "Traction cannot create special trains"),
+    ("POST", "/special-trains/", {}, "signal", "Signal cannot create special trains"),
+    ("PUT", "/special-trains/SPL-1", {}, "engineering", "Engineering cannot update special trains"),
+    ("PATCH", "/special-trains/SPL-1/active", {"active": False}, "traction", "Traction cannot toggle special trains"),
 ]
 
 @pytest.mark.parametrize("method,path,body,role_id,desc", MATRIX_403_CASES)
@@ -164,6 +178,13 @@ def test_department_mismatch_block_request():
     assert res.status_code == 403
     assert "You may only raise requisitions for your own department" in res.json().get("detail", "")
 
+    # Signal attempting to create request for TMS -> 403
+    sig_headers = get_auth_header("signal")
+    payload["dept"] = "TMS"
+    res = client.post("/block-requests/", json=payload, headers=sig_headers)
+    assert res.status_code == 403
+    assert "You may only raise requisitions for your own department" in res.json().get("detail", "")
+
 
 # 5. Emergency domain group enforcement
 def test_emergency_domain_enforcement():
@@ -186,6 +207,18 @@ def test_emergency_domain_enforcement():
     assert res.status_code == 403
     assert "not authorized to report" in res.json().get("detail", "")
 
+    # Signal reporting Track Fracture -> 403
+    sig_headers = get_auth_header("signal")
+    payload["emergency_type"] = "Track Fracture"
+    res = client.post("/emergency/", json=payload, headers=sig_headers)
+    assert res.status_code == 403
+    assert "not authorized to report" in res.json().get("detail", "")
+
+    # Signal reporting Signal Failure -> passes RBAC check (not 401 or 403)
+    payload["emergency_type"] = "Signal Failure"
+    res = client.post("/emergency/", json=payload, headers=sig_headers)
+    assert res.status_code not in (401, 403)
+
 
 # 6. Allowed roles get not 401/403
 ALLOWED_ROLE_CASES = [
@@ -193,11 +226,18 @@ ALLOWED_ROLE_CASES = [
     ("GET", "/dashboard/kpis", "control"),
     ("GET", "/dashboard/kpis", "engineering"),
     ("GET", "/dashboard/kpis", "traction"),
+    ("GET", "/dashboard/kpis", "signal"),
     ("GET", "/maintenance-tasks/", "engineering"),
     ("GET", "/maintenance-tasks/", "traction"),
+    ("GET", "/maintenance-tasks/", "signal"),
     ("GET", "/maintenance-tasks/", "admin"),
     ("GET", "/maintenance-tasks/", "control"),
     ("GET", "/admin/permission-matrix", "admin"),
+    ("GET", "/block-requests/", "signal"),
+    ("GET", "/optimized-plan/", "signal"),
+    ("GET", "/conflicts/", "signal"),
+    ("GET", "/analytics/", "signal"),
+    ("GET", "/emergency/", "signal"),
 ]
 
 @pytest.mark.parametrize("method,path,role_id", ALLOWED_ROLE_CASES)
@@ -225,3 +265,43 @@ def test_approver_identity_from_token():
     # Status code will either be 404 (block not found) or 400 (already approved) or 500 (db down), NOT 403 or 401
     assert res.status_code in (400, 404, 500)
     assert res.status_code not in (401, 403)
+
+
+# 8. Test Signal Team authentication, /auth/me, and scoping helpers
+def test_signal_authentication_and_profile():
+    from auth.permissions import is_network_scope, department_of, dept_id_of, can_report_emergency_type
+
+    # Verify pure helpers
+    assert not is_network_scope("signal")
+    assert department_of("signal") == "SMMS"
+    assert dept_id_of("signal") == "DEPT-SMMS"
+    assert can_report_emergency_type("signal", "Signal Failure")
+    assert can_report_emergency_type("signal", "Point Machine Failure")
+    assert not can_report_emergency_type("signal", "Track Fracture")
+    assert not can_report_emergency_type("signal", "OHE Snapping")
+
+    # Login via /auth/login
+    login_res = client.post("/auth/login", json={"role_id": "signal", "password": "12345"})
+    assert login_res.status_code == 200
+    data = login_res.json()
+    assert "access_token" in data
+    user = data["user"]
+    assert user["role_id"] == "signal"
+    assert user["name"] == "SSE / S&T"
+    assert user["title"] == "SIGNAL TEAM"
+    assert user["dept"] == "SMMS"
+    assert user["scope"] == "department"
+    assert user["system"] == "SMMS Requisition Portal"
+    assert "S&T" in user["reportable_emergency_groups"]
+
+    # Verify /auth/me
+    token = data["access_token"]
+    me_res = client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
+    assert me_res.status_code == 200
+    me_data = me_res.json()
+    assert me_data["user"]["role_id"] == "signal"
+    assert me_data["user"]["dept"] == "SMMS"
+    assert "requests.create" in me_data["permissions"]
+    assert "planner.approve" not in me_data["permissions"]
+    assert "optimizer.run" not in me_data["permissions"]
+

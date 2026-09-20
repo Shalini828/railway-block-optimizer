@@ -7,10 +7,20 @@ from ml.predict_service import predict_asset_risk
 from auth.security import require_permission, get_current_user, CurrentUser
 from auth.permissions import is_network_scope, department_of
 from auth.audit import record_audit
+
+
+
 from ml.traffic_predict_service import predict_traffic_impact
 from ml.goods_forecast_service import predict_goods_train_demand
 from ml.block_intelligence import analyze_block
-
+from logic.traffic_intelligence import (
+    load_traffic_in_window,
+    classify_counts,
+    normalize_train_type,
+    windows_overlap,
+    evaluate_window,
+)
+from logic.freight_pressure import get_daily_goods_forecast
 
 router = APIRouter(
     prefix="/ai",
@@ -693,7 +703,7 @@ def apply_ai_task_priorities(user: CurrentUser = Depends(get_current_user)):
         if connection:
             connection.close()
 
-@router.post("/traffic-impact")
+@router.post("/traffic-impact", dependencies=[Depends(require_permission("optimizer.simulate"))])
 def traffic_impact_prediction(payload: dict):
     """
     Predict traffic/disruption impact for a proposed railway block.
@@ -717,8 +727,9 @@ def traffic_impact_prediction(payload: dict):
     }
 
 
-@router.get("/blocks/{block_id}/traffic-impact")
+@router.get("/blocks/{block_id}/traffic-impact", dependencies=[Depends(require_permission("ai.risk.view"))])
 def get_block_traffic_impact(block_id: str):
+
 
     connection = None
 
@@ -763,70 +774,23 @@ def get_block_traffic_impact(block_id: str):
         ) = block
 
         # --------------------------------------------------
-        # GET TRAINS AFFECTED BY THIS BLOCK WINDOW
+        # GET TRAINS AFFECTED BY THIS BLOCK WINDOW (UNIFIED)
         # --------------------------------------------------
 
         with connection.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT
-                    train_id,
-                    train_type,
-                    operational_priority
-                FROM trains
-                WHERE corridor_id = %s
-                  AND travel_date = %s
-                  AND arrival_time < %s
-                  AND departure_time > %s
-                """,
-                (
-                    corridor_id,
-                    block_date,
-                    end_time,
-                    start_time
-                )
+            overlapping_items = load_traffic_in_window(
+                cursor,
+                corridor_id,
+                block_date,
+                start_time,
+                end_time
             )
+            counts = classify_counts(overlapping_items)
 
-            train_rows = cursor.fetchall()
-
-        passenger_trains = 0
-        goods_trains = 0
-        special_trains = 0
-        express_trains = 0
-
-        for train_id, train_type, operational_priority in train_rows:
-
-            train_type = (
-                str(train_type).upper()
-                if train_type
-                else ""
-            )
-
-            if train_type == "EXPRESS":
-                express_trains += 1
-                passenger_trains += 1
-
-            elif train_type in (
-                "PASSENGER",
-                "MAIL",
-                "SUPERFAST"
-            ):
-                passenger_trains += 1
-
-            elif train_type in (
-                "FREIGHT",
-                "GOODS"
-            ):
-                goods_trains += 1
-
-            elif train_type in (
-                "SPECIAL",
-                "FESTIVAL"
-            ):
-                special_trains += 1
-
-            else:
-                passenger_trains += 1
+        passenger_trains = counts["passenger_trains"]
+        goods_trains = counts["goods_trains"]
+        special_trains = counts["special_trains"]
+        express_trains = counts["express_trains"]
 
         # --------------------------------------------------
         # GET CORRIDOR CONGESTION
@@ -948,7 +912,7 @@ def get_block_traffic_impact(block_id: str):
             connection.close()
 
 
-@router.post("/goods-demand")
+@router.post("/goods-demand", dependencies=[Depends(require_permission("optimizer.simulate"))])
 def goods_demand_prediction(payload: dict):
     """
     Predict future goods-train demand for a corridor.
@@ -972,49 +936,21 @@ def goods_demand_prediction(payload: dict):
     }
 
 
-@router.get("/goods-demand/{corridor_id}")
+@router.get("/goods-demand/{corridor_id}", dependencies=[Depends(require_permission("ai.risk.view"))])
 def get_goods_demand_forecast(
     corridor_id: str,
     forecast_date: str
 ):
     """
     Generate a goods-train demand forecast for a corridor/date
-    and save it to PostgreSQL.
+    and save it to PostgreSQL (duplicate-safe: updates if existing).
     """
+    from logic.freight_pressure import get_daily_goods_forecast
 
     connection = None
-
     try:
-        from datetime import datetime, timedelta
-
         connection = psycopg.connect(**DB_CONFIG)
-
-        # --------------------------------------------------
-        # Parse forecast date
-        # --------------------------------------------------
-
-        target_date = datetime.strptime(
-            forecast_date,
-            "%Y-%m-%d"
-        ).date()
-
-        day_of_week = target_date.weekday()
-        month = target_date.month
-
-        is_weekend = (
-            1 if day_of_week >= 5 else 0
-        )
-
-        festival_period = (
-            1 if month in [9, 10, 11] else 0
-        )
-
-        # --------------------------------------------------
-        # Check corridor
-        # --------------------------------------------------
-
         with connection.cursor() as cursor:
-
             cursor.execute(
                 """
                 SELECT corridor_id
@@ -1023,262 +959,34 @@ def get_goods_demand_forecast(
                 """,
                 (corridor_id,)
             )
-
-            corridor = cursor.fetchone()
-
-        if corridor is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Corridor '{corridor_id}' not found"
-            )
-
-        # --------------------------------------------------
-        # Get previous goods demand
-        # --------------------------------------------------
-
-        previous_date = target_date - timedelta(days=1)
-
-        with connection.cursor() as cursor:
-
-            cursor.execute(
-                """
-                SELECT expected_goods_trains
-                FROM goods_train_forecast
-                WHERE corridor_id = %s
-                  AND forecast_date = %s
-                ORDER BY forecast_id DESC
-                LIMIT 1
-                """,
-                (
-                    corridor_id,
-                    previous_date
+            if not cursor.fetchone():
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Corridor '{corridor_id}' not found"
                 )
-            )
 
-            previous_row = cursor.fetchone()
-
-        previous_day_demand = (
-            float(previous_row[0])
-            if previous_row
-            else 20.0
-        )
-
-        # --------------------------------------------------
-        # Get corridor traffic level
-        # --------------------------------------------------
-
-        with connection.cursor() as cursor:
-
-            cursor.execute(
-                """
-                SELECT traffic_level
-                FROM corridors
-                WHERE corridor_id = %s
-                """,
-                (corridor_id,)
-            )
-
-            traffic_row = cursor.fetchone()
-
-        traffic_level = (
-            str(traffic_row[0]).upper()
-            if traffic_row and traffic_row[0]
-            else "MEDIUM"
-        )
-
-        traffic_pressure = {
-            "LOW": 25,
-            "MEDIUM": 50,
-            "HIGH": 75,
-            "VERY HIGH": 90,
-            "CRITICAL": 100
-        }
-
-        operational_pressure = traffic_pressure.get(
-            traffic_level,
-            50
-        )
-
-        # --------------------------------------------------
-        # Get industrial demand proxy
-        #
-        # Current DB does not have a dedicated industrial
-        # demand table, so derive a deterministic proxy from
-        # existing corridor traffic.
-        # --------------------------------------------------
-
-        industrial_demand = min(
-            100,
-            operational_pressure + 10
-        )
-
-        # --------------------------------------------------
-        # Predict for each major commodity and average
-        # --------------------------------------------------
-
-        commodities = [
-            "COAL",
-            "IRON_ORE",
-            "CEMENT",
-            "FOOD_GRAINS",
-            "FERTILIZER",
-            "CONTAINER",
-            "PETROLEUM"
-        ]
-
-        predictions = []
-
-        for commodity in commodities:
-
-            result = predict_goods_train_demand(
-                day_of_week=day_of_week,
-                month=month,
-                is_weekend=is_weekend,
-                festival_period=festival_period,
-                operational_pressure=operational_pressure,
-                industrial_demand=industrial_demand,
-                previous_day_demand=previous_day_demand,
-                corridor_id=corridor_id,
-                commodity=commodity
-            )
-
-            predictions.append(
-                result["predicted_goods_train_demand"]
-            )
-
-        # Average commodity-level predictions
-        predicted_demand = sum(predictions) / len(
-            predictions
-        )
-
-        predicted_demand = max(
-            0,
-            min(
-                60,
-                round(predicted_demand)
-            )
-        )
-
-        # --------------------------------------------------
-        # Confidence
-        # --------------------------------------------------
-
-        confidence = max(
-            0,
-            min(
-                100,
-                100 - (
-                    abs(
-                        max(predictions)
-                        - min(predictions)
-                    ) * 2
-                )
-            )
-        )
-
-        confidence = round(
-            confidence,
-            2
-        )
-
-        # --------------------------------------------------
-        # Traffic level from forecast
-        # --------------------------------------------------
-
-        if predicted_demand >= 40:
-            forecast_traffic_level = "VERY_HIGH"
-
-        elif predicted_demand >= 30:
-            forecast_traffic_level = "HIGH"
-
-        elif predicted_demand >= 15:
-            forecast_traffic_level = "MEDIUM"
-
-        else:
-            forecast_traffic_level = "LOW"
-
-        # --------------------------------------------------
-        # Save forecast
-        # --------------------------------------------------
-
-        with connection.cursor() as cursor:
-
-            cursor.execute(
-                """
-                INSERT INTO goods_train_forecast (
-                    corridor_id,
-                    forecast_date,
-                    expected_goods_trains,
-                    forecast_confidence,
-                    traffic_level
-                )
-                VALUES (%s, %s, %s, %s, %s)
-                RETURNING forecast_id
-                """,
-                (
-                    corridor_id,
-                    target_date,
-                    int(predicted_demand),
-                    confidence,
-                    forecast_traffic_level
-                )
-            )
-
-            forecast_id = cursor.fetchone()[0]
+            res = get_daily_goods_forecast(cursor, corridor_id, forecast_date, persist=True)
 
         connection.commit()
-
-        # --------------------------------------------------
-        # Response
-        # --------------------------------------------------
-
-        return {
-            "status": "success",
-            "forecast_id": forecast_id,
-            "corridor_id": corridor_id,
-            "forecast_date": str(target_date),
-
-            "forecast": {
-                "expected_goods_trains": int(
-                    predicted_demand
-                ),
-                "forecast_confidence": confidence,
-                "traffic_level": forecast_traffic_level
-            },
-
-            "commodity_predictions": {
-                commodity: round(
-                    prediction,
-                    2
-                )
-                for commodity, prediction
-                in zip(
-                    commodities,
-                    predictions
-                )
-            }
-        }
+        return res
 
     except HTTPException:
         raise
-
     except Exception as exc:
-
         if connection:
             connection.rollback()
-
         raise HTTPException(
             status_code=500,
             detail=str(exc)
         )
-
     finally:
-
         if connection:
             connection.close()
 
-@router.get("/blocks/{block_id}/intelligence")
+
+@router.get("/blocks/{block_id}/intelligence", dependencies=[Depends(require_permission("ai.risk.view"))])
 def get_block_intelligence(block_id: str):
+
     """
     Unified AI intelligence for an optimized block.
 
@@ -1440,47 +1148,72 @@ def get_block_intelligence(block_id: str):
             ).total_seconds() / 60
         )
 
-        # Get overlapping trains
+        # Corridor traffic level and priorities
         cur.execute("""
-            SELECT
-                train_id,
-                train_type
-            FROM trains
+            SELECT traffic_level
+            FROM corridors
             WHERE corridor_id = %s
-              AND (
-                    (arrival_time < %s AND departure_time > %s)
-                  )
-        """, (
-            corridor_id,
-            end_time,
-            start_time
-        ))
+        """, (corridor_id,))
 
-        trains = cur.fetchall()
+        corridor_row = cur.fetchone()
 
-        passenger_trains = sum(
-            1 for t in trains
-            if str(t[1]).upper() in ("PASSENGER", "MAIL", "SUPERFAST")
+        traffic_map = {
+            "LOW": 25,
+            "MEDIUM": 50,
+            "HIGH": 75,
+            "VERY HIGH": 90,
+            "VERY_HIGH": 90,
+            "CRITICAL": 100
+        }
+
+        traffic_level = (
+            str(corridor_row[0]).upper()
+            if corridor_row and corridor_row[0]
+            else "MEDIUM"
         )
 
-        goods_trains = sum(
-            1 for t in trains
-            if str(t[1]).upper() in ("FREIGHT", "GOODS")
+        corridor_congestion = traffic_map.get(
+            traffic_level,
+            50
         )
 
-        special_trains = sum(
-            1 for t in trains
-            if str(t[1]).upper() in ("SPECIAL", "FESTIVAL")
+        maintenance_priority = max(
+            [float(t[2] or 0) for t in tasks],
+            default=0.0
         )
 
-        express_trains = sum(
-            1 for t in trains
-            if str(t[1]).upper() in ("EXPRESS", "SUPERFAST")
+        criticality = max(
+            [int(t[3] or 3) for t in tasks],
+            default=3
         )
 
-        regular_passenger_trains = sum(
-            1 for t in trains
-            if str(t[1]).upper() == "PASSENGER"
+        # Unified Traffic Assessment via evaluate_window
+        assessment = evaluate_window(
+            cursor=cur,
+            corridor_id=corridor_id,
+            travel_date=block_date,
+            start_time=start_time,
+            end_time=end_time,
+            criticality=criticality,
+            maintenance_priority=maintenance_priority
+        )
+
+        counts = assessment["counts"]
+        conflicts = assessment["conflicts"]
+        f_pressure = assessment["freight_pressure"]
+
+        passenger_trains = counts["passenger_trains"]
+        goods_trains = counts["goods_trains"]
+        special_trains = counts["special_trains"]
+        express_trains = counts["express_trains"]
+        regular_passenger_trains = counts["regular_passenger_trains"]
+
+        # Shared daily goods forecast
+        daily_forecast = get_daily_goods_forecast(
+            cursor=cur,
+            corridor_id=corridor_id,
+            forecast_date=block_date,
+            persist=False
         )
 
         # ==========================================
@@ -1524,6 +1257,25 @@ def get_block_intelligence(block_id: str):
             why_selected.append(
                 "Traffic considered in selected window: "
                 + ", ".join(traffic_parts)
+            )
+
+        # Special train conflict details
+        special_conflicts = [c for c in conflicts if c.get("traffic_class") == "SPECIAL"]
+        if special_conflicts:
+            why_selected.append(
+                f"{len(special_conflicts)} Special train conflict(s) detected in window"
+            )
+
+        # Freight pressure details (labelled as forecast-based)
+        freight_level = f_pressure.get("level", "LOW")
+        why_selected.append(
+            f"Freight pressure level: {freight_level} (forecast-based)"
+        )
+
+        unscheduled_freight = f_pressure.get("unscheduled_expected", 0.0)
+        if unscheduled_freight > 0:
+            why_selected.append(
+                f"{unscheduled_freight:.1f} unscheduled freight trains expected in window"
             )
 
         # --------------------------------------------------
@@ -1586,44 +1338,6 @@ def get_block_intelligence(block_id: str):
             f"Optimization score: {optimization_score:.2f}"
         )
 
-        # Corridor traffic level
-        cur.execute("""
-            SELECT traffic_level
-            FROM corridors
-            WHERE corridor_id = %s
-        """, (corridor_id,))
-
-        corridor_row = cur.fetchone()
-
-        traffic_map = {
-            "LOW": 25,
-            "MEDIUM": 50,
-            "HIGH": 75,
-            "VERY HIGH": 90,
-            "CRITICAL": 100
-        }
-
-        traffic_level = (
-            str(corridor_row[0]).upper()
-            if corridor_row and corridor_row[0]
-            else "MEDIUM"
-        )
-
-        corridor_congestion = traffic_map.get(
-            traffic_level,
-            50
-        )
-
-        maintenance_priority = max(
-            [float(t[2] or 0) for t in tasks],
-            default=0
-        )
-
-        criticality = max(
-            [int(t[3] or 3) for t in tasks],
-            default=3
-        )
-
         # Run unified AI
         result = analyze_block(
             asset=asset,
@@ -1645,18 +1359,14 @@ def get_block_intelligence(block_id: str):
                 "day_of_week": block_date.weekday(),
                 "month": block_date.month,
                 "is_weekend": int(block_date.weekday() >= 5),
-                "festival_period": 0,
-                "operational_pressure": corridor_congestion,
-                "industrial_demand": min(
-                    corridor_congestion + 10,
-                    100
-                ),
-                "previous_day_demand": 20,
+                "festival_period": daily_forecast.get("festival_period", 0),
+                "operational_pressure": daily_forecast.get("operational_pressure", corridor_congestion),
+                "industrial_demand": daily_forecast.get("industrial_demand", min(corridor_congestion + 10, 100)),
+                "previous_day_demand": daily_forecast.get("previous_day_demand", 20.0),
                 "corridor_id": corridor_id,
                 "commodity": "COAL",
             }
         )
-
 
         return {
             "success": True,
@@ -1666,7 +1376,7 @@ def get_block_intelligence(block_id: str):
             "start_time": str(start_time),
             "end_time": str(end_time),
             "tasks_analyzed": len(tasks),
-            "trains_in_window": len(trains),
+            "trains_in_window": len(conflicts),
             "traffic_summary": {
                 "passenger_trains": passenger_trains,
                 "goods_trains": goods_trains,
@@ -1674,6 +1384,11 @@ def get_block_intelligence(block_id: str):
                 "express_trains": express_trains,
             },
             "intelligence": result,
+            "traffic_intelligence": {
+                "assessment": assessment,
+                "freight_pressure": f_pressure,
+                "adjustments": assessment.get("adjustments", []),
+            },
 
             # ==========================================
             # AI EXPLANATION
@@ -1710,3 +1425,4 @@ def get_block_intelligence(block_id: str):
 
     finally:
         conn.close()
+

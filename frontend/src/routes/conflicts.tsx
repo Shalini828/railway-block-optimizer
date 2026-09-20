@@ -19,6 +19,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 
 import { useAbps } from "@/context/AbpsContext";
 import { useLanguage } from "@/context/LanguageContext";
+import { classifyTrainConflictSeverity } from "@/lib/conflict-priority";
 
 export const Route = createFileRoute("/conflicts")({
   head: () => ({
@@ -39,7 +40,11 @@ type TrainConflict = {
   departure_time: string;
   operational_priority: string;
   estimated_delay_min: string;
+  severity?: string;
+  traffic_class?: string;
+  source?: string;
 };
+
 
 type Task = {
   block_id: string;
@@ -122,11 +127,11 @@ function ConflictsPage() {
     blocks.forEach((b) => {
       if (b.conflicts && b.conflicts.length > 0) {
         b.conflicts.forEach((c) => {
-          let severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" = "MEDIUM";
-          const prio = parseInt(c.operational_priority || "0");
-          if (prio >= 4 || c.train_type?.toUpperCase() === "EXPRESS") severity = "CRITICAL";
-          else if (prio === 3 || c.train_type?.toUpperCase() === "PASSENGER") severity = "HIGH";
-          else severity = "MEDIUM";
+          const severity = classifyTrainConflictSeverity(
+            c.operational_priority,
+            c.train_type,
+            c.severity
+          );
 
           list.push({
             id: `CF-${b.block_id}-${c.train_number}`,
@@ -179,14 +184,19 @@ function ConflictsPage() {
       if (b.conflicts?.length > 0 && b.block_status === "PLANNED") {
         openConflicts += b.conflicts.length;
         b.conflicts.forEach(c => {
-          const prio = parseInt(c.operational_priority || "0");
-          if (prio >= 4 || c.train_type?.toUpperCase() === "EXPRESS") {
+          const severity = classifyTrainConflictSeverity(
+            c.operational_priority,
+            c.train_type,
+            c.severity
+          );
+          if (severity === "CRITICAL") {
             criticalConflicts++;
             highRiskImpacts++;
           }
         });
       }
     });
+
 
     return { openConflicts, criticalConflicts, awaitingApproval, approvedToday, rejected, highRiskImpacts };
   }, [blocks]);

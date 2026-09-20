@@ -9,14 +9,14 @@ import requests
 
 BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
 DEMO_PASSWORD = os.getenv("DEMO_PASSWORD", "12345")
-ROLES = ["admin", "control", "engineering", "traction"]
+ROLES = ["admin", "control", "engineering", "traction", "signal"]
 
 print(f"\n=======================================================")
 print(f"  IR-ABPS LIVE RBAC SMOKE TEST MATRIX")
 print(f"  Target: {BASE_URL}")
 print(f"=======================================================\n")
 
-# 1. Login as all 4 roles
+# 1. Login as all 5 roles
 tokens = {}
 for role in ROLES:
     try:
@@ -56,6 +56,21 @@ ENDPOINTS = [
         "tsrRisk": False,
         "requestedBy": "Tester",
     }, "Create Requisition (TMS)"),
+    ("POST", "/block-requests/", {
+        "dept": "SMMS",
+        "assetId": "SIG-001",
+        "work": "Point Machine Maintenance",
+        "section": "NDLS-GZB",
+        "line": "UP",
+        "chainage": "10/2",
+        "blockType": "Traffic Block",
+        "duration": 90.0,
+        "crew": 3,
+        "criticality": "HIGH",
+        "daysOverdue": 1,
+        "tsrRisk": False,
+        "requestedBy": "Tester",
+    }, "Create Requisition (SMMS)"),
     ("POST", "/optimization/", {}, "Run Optimizer"),
     ("POST", "/optimization/simulate", {}, "Simulate Optimizer"),
     ("GET", "/optimized-plan/", None, "Gantt Plan View"),
@@ -82,18 +97,34 @@ ENDPOINTS = [
         "line": "UP",
         "severity": "CRITICAL"
     }, "Report Traction Emergency"),
+    ("POST", "/emergency/", {
+        "emergency_type": "Signal Failure",
+        "section": "NDLS-GZB",
+        "line": "UP",
+        "severity": "CRITICAL"
+    }, "Report Signal Emergency"),
     ("PATCH", "/emergency/INC-DEMO/resolve", {"resolution_notes": "Fixed"}, "Resolve Emergency"),
     ("POST", "/ai/tasks/apply-priorities", {}, "Apply AI Priorities"),
     ("GET", "/admin/permission-matrix", None, "Admin Permission Matrix"),
     ("GET", "/admin/audit-log", None, "Admin Audit Log"),
+    ("GET", "/special-trains/", None, "Special Trains View"),
+    ("POST", "/special-trains/", {
+        "train_number": "09999",
+        "train_name": "Test Special",
+        "special_type": "FESTIVAL",
+        "corridor_id": "CORR-001",
+        "service_date": "2026-10-01",
+        "arrival_time": "10:00:00",
+        "departure_time": "12:00:00"
+    }, "Create Special Train"),
 ]
 
 # Print header
-header_fmt = "{:<6} {:<36} | {:<8} {:<8} {:<12} {:<10}"
-print(header_fmt.format("METHOD", "ENDPOINT", "ADMIN", "CONTROL", "ENGINEERING", "TRACTION"))
-print("-" * 88)
+header_fmt = "{:<6} {:<36} | {:<8} {:<8} {:<12} {:<10} {:<8}"
+print(header_fmt.format("METHOD", "ENDPOINT", "ADMIN", "CONTROL", "ENGINEERING", "TRACTION", "SIGNAL"))
+print("-" * 98)
 
-row_fmt = "{:<6} {:<36} | {:<8} {:<8} {:<12} {:<10}"
+row_fmt = "{:<6} {:<36} | {:<8} {:<8} {:<12} {:<10} {:<8}"
 
 for method, path, payload, desc in ENDPOINTS:
     status_map = {}
@@ -118,10 +149,11 @@ for method, path, payload, desc in ENDPOINTS:
         status_map["admin"],
         status_map["control"],
         status_map["engineering"],
-        status_map["traction"]
+        status_map["traction"],
+        status_map["signal"]
     ))
 
-print("-" * 88)
+print("-" * 98)
 
 # 2. Assert Data Scoping
 print("\n--- Verifying Data Scoping ---")
@@ -129,18 +161,21 @@ print("\n--- Verifying Data Scoping ---")
 # (A) Maintenance Tasks Scope
 h_eng = {"Authorization": f"Bearer {tokens['engineering']}"}
 h_trd = {"Authorization": f"Bearer {tokens['traction']}"}
+h_sig = {"Authorization": f"Bearer {tokens['signal']}"}
 h_adm = {"Authorization": f"Bearer {tokens['admin']}"}
 
 res_eng = requests.get(f"{BASE_URL}/maintenance-tasks/", headers=h_eng, timeout=5)
 res_trd = requests.get(f"{BASE_URL}/maintenance-tasks/", headers=h_trd, timeout=5)
+res_sig = requests.get(f"{BASE_URL}/maintenance-tasks/", headers=h_sig, timeout=5)
 res_adm = requests.get(f"{BASE_URL}/maintenance-tasks/", headers=h_adm, timeout=5)
 
-if res_eng.status_code == 200 and res_trd.status_code == 200 and res_adm.status_code == 200:
+if res_eng.status_code == 200 and res_trd.status_code == 200 and res_sig.status_code == 200 and res_adm.status_code == 200:
     tasks_eng = res_eng.json()
     tasks_trd = res_trd.json()
+    tasks_sig = res_sig.json()
     tasks_adm = res_adm.json()
 
-    print(f"Total tasks: Admin={len(tasks_adm)}, Engineering={len(tasks_eng)}, Traction={len(tasks_trd)}")
+    print(f"Total tasks: Admin={len(tasks_adm)}, Engineering={len(tasks_eng)}, Traction={len(tasks_trd)}, Signal={len(tasks_sig)}")
 
     # Verify engineering sees only TMS
     non_tms = [t for t in tasks_eng if t.get("department") != "TMS"]
@@ -152,14 +187,21 @@ if res_eng.status_code == 200 and res_trd.status_code == 200 and res_adm.status_
     assert len(non_tdms) == 0, f"Traction maintenance-tasks scoped strictly to department == 'TDMS'."
     print("[PASS] Traction maintenance-tasks scoped strictly to department == 'TDMS'.")
 
+    # Verify signal sees only SMMS
+    non_smms = [t for t in tasks_sig if t.get("department") != "SMMS"]
+    assert len(non_smms) == 0, f"Signal saw non-SMMS tasks: {non_smms}"
+    print("[PASS] Signal maintenance-tasks scoped strictly to department == 'SMMS'.")
+
     # Verify admin is superset
     assert len(tasks_adm) >= len(tasks_eng), "Admin should see superset of tasks"
+    assert len(tasks_adm) >= len(tasks_sig), "Admin should see superset of tasks"
     print("[PASS] Admin maintenance-tasks is superset of department tasks.")
 else:
     print(f"[INFO] Maintenance tasks data check skipped (database status: Admin {res_adm.status_code}, Eng {res_eng.status_code})")
 
 # (B) Plan Scope
 res_plan_trd = requests.get(f"{BASE_URL}/optimized-plan/", headers=h_trd, timeout=5)
+res_plan_sig = requests.get(f"{BASE_URL}/optimized-plan/", headers=h_sig, timeout=5)
 res_plan_adm = requests.get(f"{BASE_URL}/optimized-plan/", headers=h_adm, timeout=5)
 
 if res_plan_trd.status_code == 200 and res_plan_adm.status_code == 200:
@@ -176,6 +218,16 @@ if res_plan_trd.status_code == 200 and res_plan_adm.status_code == 200:
         has_tdms = any(t.get("department") == "TDMS" for t in tasks)
         assert has_tdms, f"Block {block.get('block_id')} returned to Traction with no TDMS tasks!"
     print("[PASS] Traction optimized-plan blocks all contain >=1 TDMS task.")
+
+    if res_plan_sig.status_code == 200:
+        plan_sig = res_plan_sig.json()
+        blocks_sig = plan_sig.get("blocks", [])
+        for block in blocks_sig:
+            tasks = block.get("tasks", [])
+            has_smms = any(t.get("department") == "SMMS" for t in tasks)
+            assert has_smms, f"Block {block.get('block_id')} returned to Signal with no SMMS tasks!"
+        print("[PASS] Signal optimized-plan blocks all contain >=1 SMMS task.")
+
     assert len(blocks_adm) >= len(blocks_trd), "Admin sees superset of blocks."
     print("[PASS] Admin optimized-plan is superset of department blocks.")
 else:

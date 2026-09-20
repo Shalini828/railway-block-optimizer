@@ -34,7 +34,7 @@ export function GovtSidebar() {
   const sections = getNavSections(role.id);
 
   return (
-    <aside className="w-full lg:w-80 xl:w-88 shrink-0 bg-white dark:bg-slate-900 border-r-2 border-slate-300 dark:border-slate-800 select-none min-h-full flex flex-col justify-between shadow-xs">
+    <aside className="w-full lg:w-80 xl:w-88 shrink-0 bg-white dark:bg-slate-900 border-r-2 border-slate-300 dark:border-slate-800 select-none flex flex-col shadow-xs lg:self-start lg:sticky lg:top-0 lg:max-h-screen lg:overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
       <div>
         {/* Officer Active Session Strip */}
         <div className="bg-[#003366] text-white p-4.5 sm:p-5 border-b-2 border-[#FF9933]">

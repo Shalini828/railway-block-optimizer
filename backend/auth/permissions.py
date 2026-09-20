@@ -58,6 +58,9 @@ ROLE_TABLE: Dict[str, Dict[str, Any]] = {
             # Trains
             "trains.view",
             "trains.edit",          # reserved
+            # Special Trains
+            "special_trains.view",
+            "special_trains.manage",
             # AI
             "ai.risk.view",
             "ai.priorities.apply",
@@ -101,6 +104,9 @@ ROLE_TABLE: Dict[str, Dict[str, Any]] = {
             # Trains
             "trains.view",
             "trains.edit",          # reserved
+            # Special Trains
+            "special_trains.view",
+            "special_trains.manage",
             # AI
             "ai.risk.view",
         },
@@ -141,6 +147,8 @@ ROLE_TABLE: Dict[str, Dict[str, Any]] = {
             "corridors.view",
             # Trains
             "trains.view",
+            # Special Trains
+            "special_trains.view",
             # AI
             "ai.risk.view",
         },
@@ -181,6 +189,50 @@ ROLE_TABLE: Dict[str, Dict[str, Any]] = {
             "corridors.view",
             # Trains
             "trains.view",
+            # Special Trains
+            "special_trains.view",
+            # AI
+            "ai.risk.view",
+        },
+    },
+    "signal": {
+        "role_id": "signal",
+        "name": "SSE / S&T",
+        "title": "SIGNAL TEAM",
+        "system": "SMMS Requisition Portal",
+        "dept": "SMMS",
+        "scope": "department",
+        "permissions": {
+            # Dashboard
+            "dashboard.view",
+            # Requests (own dept)
+            "requests.view",
+            "requests.create",
+            "requests.edit",
+            "requests.cancel",
+            # Optimizer (read-only view)
+            "optimizer.view",
+            # Planner (own blocks, request change)
+            "planner.view",
+            "planner.request_change",
+            # Conflicts (own blocks, acknowledge)
+            "conflicts.view",
+            "conflicts.acknowledge",
+            # Maintenance Tasks (own dept)
+            "tasks.view",
+            "tasks.update",
+            "tasks.create",         # reserved
+            # Analytics
+            "analytics.view",
+            # Emergency
+            "emergency.view",
+            "emergency.report",
+            # Corridors
+            "corridors.view",
+            # Trains
+            "trains.view",
+            # Special Trains
+            "special_trains.view",
             # AI
             "ai.risk.view",
         },
@@ -215,6 +267,7 @@ REPORTABLE_GROUPS: Dict[str, Set[str]] = {
     "control": ALL_EMERGENCY_GROUPS,
     "engineering": {"Track", "Engineering", "General"},
     "traction": {"Traction", "General"},
+    "signal": {"S&T", "General"},
 }
 
 # ============================================================

@@ -11,6 +11,9 @@ sys.path.append(
 )
 import psycopg
 from dotenv import load_dotenv
+import psycopg
+from db_config import DB_CONFIG
+from logic.traffic_intelligence import evaluate_window
 
 from ml.predict_service import predict_asset_risk
 from ml.traffic_predict_service import predict_traffic_impact
@@ -40,14 +43,7 @@ WEIGHT_CONSOLIDATION = 0.10
 # DATABASE CONNECTION
 # ==========================================
 
-connection = psycopg.connect(
-    host=os.getenv("DB_HOST"),
-    port=os.getenv("DB_PORT"),
-    dbname=os.getenv("DB_NAME"),
-    user=os.getenv("DB_USER"),
-    password=os.getenv("DB_PASSWORD")
-)
-
+connection = psycopg.connect(**DB_CONFIG)
 cursor = connection.cursor()
 
 
@@ -940,56 +936,14 @@ def get_train_conflicts(
     corridor,
     block_date,
     start_time,
-    end_time
+    end_time,
+    cur=None
 ):
-
-    conflicts = []
-
-    block_start = time_to_minutes(start_time)
-    block_end = time_to_minutes(end_time)
-
-
-    for train in trains:
-
-        (
-            train_id,
-            train_number,
-            train_name,
-            train_type,
-            train_corridor,
-            train_date,
-            arrival,
-            departure
-        ) = train
-
-
-        if train_corridor != corridor:
-            continue
-
-        if train_date != block_date:
-            continue
-
-
-        train_start = time_to_minutes(arrival)
-        train_end = time_to_minutes(departure)
-
-
-        if (
-            block_start < train_end
-            and train_start < block_end
-        ):
-
-            conflicts.append(
-                {
-                    "train_id": train_id,
-                    "train_number": train_number,
-                    "train_name": train_name,
-                    "train_type": train_type
-                }
-            )
-
-
-    return conflicts
+    if cur is not None:
+        assessment = evaluate_window(cur, corridor, block_date, start_time, end_time)
+        return assessment.get("conflicts", [])
+    assessment = evaluate_window(cursor, corridor, block_date, start_time, end_time)
+    return assessment.get("conflicts", [])
 
 
 # ==========================================
@@ -2823,6 +2777,19 @@ for group in groups:
         best_candidate["score"]
     )
 
+    try:
+        assessment = evaluate_window(
+            cursor=cursor,
+            corridor_id=corridor,
+            travel_date=block_date,
+            start_time=start_time,
+            end_time=end_time
+        )
+        estimated_delay = assessment.get("estimated_delay_min", 0)
+    except Exception:
+        assessment = {}
+        estimated_delay = 0
+
     # ======================================
     # BUILD AI EXPLANATION
     # ======================================
@@ -2953,7 +2920,6 @@ for group in groups:
         train_impact_score,
         100
     )
-
 
     # ======================================
     # MAINTENANCE UTILIZATION
@@ -3315,6 +3281,9 @@ for group in groups:
             "duration": duration,
 
             "utilization": utilization,
+            "train_impact_score": train_impact_score,
+            "train_impact": train_impact_score,
+            "estimated_delay": estimated_delay,
 
             "maintenance_priority": round(
                 maintenance_priority,
@@ -3456,8 +3425,8 @@ for block in optimized_blocks:
             block["duration"],
             block["utilization"],
             block.get(
-                "traffic_impact_score",
-                0
+                "train_impact_score",
+                block.get("traffic_impact_score", 0)
             ),
             block["optimization_score"],
             len(block["tasks"]),
@@ -3655,107 +3624,116 @@ print("==============================================================")
 print("              OPTIMIZATION COMPLETE")
 print("==============================================================")
 
-
-
 # ==========================================
 # TEST 30-DAY MAINTENANCE INTELLIGENCE
 # ==========================================
 
-print()
-print("==========================================")
-print("30-DAY MAINTENANCE INTELLIGENCE TEST")
-print("==========================================")
+try:
+    print()
+    print("==========================================")
+    print("30-DAY MAINTENANCE INTELLIGENCE TEST")
+    print("==========================================")
 
-maintenance_30_result = generate_30_day_maintenance_intelligence(
-    start_date=datetime(2026, 9, 1).date(),
-    corridor_id="C02",
-)
-
-print(
-    "CORRIDOR:",
-    maintenance_30_result["corridor"]
-)
-
-print(
-    "START DATE:",
-    maintenance_30_result["start_date"]
-)
-
-print(
-    "END DATE:",
-    maintenance_30_result["end_date"]
-)
-
-print(
-    "TOTAL TASKS:",
-    maintenance_30_result["total_tasks"]
-)
-
-print(
-    "CRITICAL TASKS:",
-    maintenance_30_result["critical_tasks"]
-)
-
-print(
-    "HIGH PRIORITY TASKS:",
-    maintenance_30_result["high_priority_tasks"]
-)
-
-for task in maintenance_30_result["tasks"]:
-
-    print(
-        f"{task['task_id']} | "
-        f"{task['corridor']} | "
-        f"{task['requested_date']} | "
-        f"asset_risk={task['asset_risk']} | "
-        f"maintenance_priority={task['maintenance_priority']} | "
-        f"traffic={task['traffic_pressure']} | "
-        f"goods={task['goods_impact']} | "
-        f"urgency={task['maintenance_urgency']} | "
-        f"level={task['urgency_level']}"
+    maintenance_30_result = generate_30_day_maintenance_intelligence(
+        start_date=datetime(2026, 9, 1).date(),
+        corridor_id="C02",
     )
 
-print(
-    "HIGHEST PRIORITY TASK:",
-    maintenance_30_result["highest_priority_task"]
-)
+    print(
+        "CORRIDOR:",
+        maintenance_30_result["corridor"]
+    )
 
-print("==========================================")
+    print(
+        "START DATE:",
+        maintenance_30_result["start_date"]
+    )
 
-print("\n" + "=" * 60)
-print("EMERGENCY BLOCK OPTIMIZATION TEST")
-print("=" * 60)
+    print(
+        "END DATE:",
+        maintenance_30_result["end_date"]
+    )
 
-emergency_result = optimize_emergency_block(
-    task_id="T-AUTO-0001",
-    corridor_id="C02",
-    block_date=datetime(2026, 9, 1).date(),
-    requested_start="10:00:00",
-    requested_end="13:00:00",
-)
+    print(
+        "TOTAL TASKS:",
+        maintenance_30_result["total_tasks"]
+    )
 
-print("TASK:", emergency_result["task_id"])
-print("CORRIDOR:", emergency_result["corridor_id"])
-print(
-    "REQUESTED WINDOW:",
-    emergency_result["requested_window"]
-)
+    print(
+        "CRITICAL TASKS:",
+        maintenance_30_result["critical_tasks"]
+    )
 
-print(
-    "CANDIDATES EVALUATED:",
-    emergency_result["candidates_evaluated"]
-)
+    print(
+        "HIGH PRIORITY TASKS:",
+        maintenance_30_result["high_priority_tasks"]
+    )
 
-print(
-    "BEST EMERGENCY WINDOW:",
-    emergency_result["best_window"]
-)
+    for task in maintenance_30_result["tasks"]:
 
-print("\nALTERNATIVES:")
+        print(
+            f"{task['task_id']} | "
+            f"{task['corridor']} | "
+            f"{task['requested_date']} | "
+            f"asset_risk={task['asset_risk']} | "
+            f"maintenance_priority={task['maintenance_priority']} | "
+            f"traffic={task['traffic_pressure']} | "
+            f"goods={task['goods_impact']} | "
+            f"urgency={task['maintenance_urgency']} | "
+            f"level={task['urgency_level']}"
+        )
 
-for alternative in emergency_result["alternatives"]:
-    print(alternative)
+    print(
+        "HIGHEST PRIORITY TASK:",
+        maintenance_30_result["highest_priority_task"]
+    )
 
+    print("==========================================")
+except Exception as exc:
+    print("30-day maintenance test error/skipped:", exc)
 
-cursor.close()
-connection.close()
+try:
+    print("\n" + "=" * 60)
+    print("EMERGENCY BLOCK OPTIMIZATION TEST")
+    print("=" * 60)
+
+    emergency_result = optimize_emergency_block(
+        task_id="T-AUTO-0001",
+        corridor_id="C02",
+        block_date=datetime(2026, 9, 1).date(),
+        requested_start="10:00:00",
+        requested_end="13:00:00",
+    )
+
+    print("TASK:", emergency_result["task_id"])
+    print("CORRIDOR:", emergency_result["corridor_id"])
+    print(
+        "REQUESTED WINDOW:",
+        emergency_result["requested_window"]
+    )
+
+    print(
+        "CANDIDATES EVALUATED:",
+        emergency_result["candidates_evaluated"]
+    )
+
+    print(
+        "BEST EMERGENCY WINDOW:",
+        emergency_result["best_window"]
+    )
+
+    print("\nALTERNATIVES:")
+
+    for alternative in emergency_result["alternatives"]:
+        print(alternative)
+except Exception as exc:
+    print("Emergency test error/skipped:", exc)
+
+try:
+    cursor.close()
+except Exception:
+    pass
+try:
+    connection.close()
+except Exception:
+    pass

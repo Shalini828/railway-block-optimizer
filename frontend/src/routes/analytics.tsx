@@ -599,7 +599,9 @@ function AnalyticsPage() {
                   ? t("TMS Departmental Performance & Availability Analytics", "टीएमएस विभागीय प्रदर्शन एवं उपलब्धता विश्लेषण")
                   : role.id === "traction"
                     ? t("TRD Departmental Performance & Availability Analytics", "टीआरडी विभागीय प्रदर्शन एवं उपलब्धता विश्लेषण")
-                    : t("Sectional Performance & Availability Audit Report", "अनुभागीय प्रदर्शन एवं उपलब्धता ऑडिट रिपोर्ट")}
+                    : role.id === "signal"
+                      ? t("SMMS Departmental Performance & Availability Analytics", "एसएमएमएस विभागीय प्रदर्शन एवं उपलब्धता विश्लेषण")
+                      : t("Sectional Performance & Availability Audit Report", "अनुभागीय प्रदर्शन एवं उपलब्धता ऑडिट रिपोर्ट")}
               </h1>
             </div>
           </div>

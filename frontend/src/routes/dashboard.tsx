@@ -287,9 +287,19 @@ function DashboardPage() {
     ? isDept
       ? [
           {
-            label: dept === "TMS" ? t("Track Asset Availability", "ट्रैक परिसंपत्ति उपलब्धता") : t("OHE Asset Availability", "ओएचई परिसंपत्ति उपलब्धता"),
-            value: formatNumber(deptKpis?.asset_availability_percent ?? (dept === "TMS" ? 95.8 : 96.4), true),
-            note: dept === "TMS" ? t("P.Way Track, Rails & Turnouts", "पी.वे ट्रैक, रेल एवं टर्नआउट") : t("TRD Masts, Feeders & Transformers", "टीआरडी पोल, फीडर एवं ट्रांसफार्मर"),
+            label:
+              dept === "TMS"
+                ? t("Track Asset Availability", "ट्रैक परिसंपत्ति उपलब्धता")
+                : dept === "SMMS"
+                  ? t("Signal Asset Availability", "सिग्नल परिसंपत्ति उपलब्धता")
+                  : t("OHE Asset Availability", "ओएचई परिसंपत्ति उपलब्धता"),
+            value: formatNumber(deptKpis?.asset_availability_percent ?? (dept === "TMS" ? 95.8 : dept === "SMMS" ? 97.2 : 96.4), true),
+            note:
+              dept === "TMS"
+                ? t("P.Way Track, Rails & Turnouts", "पी.वे ट्रैक, रेल एवं टर्नआउट")
+                : dept === "SMMS"
+                  ? t("Point Machines, Interlocking & Relays", "पॉइंट मशीन, इंटरलॉकिंग एवं रिले")
+                  : t("TRD Masts, Feeders & Transformers", "टीआरडी पोल, फीडर एवं ट्रांसफार्मर"),
             status: t("Department Certified", "विभाग प्रमाणित"),
             icon: Gauge,
             tone: "text-emerald-700 dark:text-emerald-400",
@@ -303,7 +313,13 @@ function DashboardPage() {
             tone: "text-[#003366] dark:text-sky-400",
           },
           {
-            label: `${t("Critical", "गंभीर")} ${dept === "TMS" ? t("Track Defects", "ट्रैक दोष") : t("OHE Defects", "ओएचई दोष")}`,
+            label: `${t("Critical", "गंभीर")} ${
+              dept === "TMS"
+                ? t("Track Defects", "ट्रैक दोष")
+                : dept === "SMMS"
+                  ? t("Signal Failures", "सिग्नल विफलताएं")
+                  : t("OHE Defects", "ओएचई दोष")
+            }`,
             value: `${deptKpis?.critical_tasks_or_defects ?? 2} ${t("Critical", "अति-महत्वपूर्ण")}`,
             note: t("Immediate Sectional Priority", "तत्काल अनुभागीय प्राथमिकता"),
             status: t("Priority Red Zone", "प्राथमिकता रेड जोन"),
@@ -362,7 +378,9 @@ function DashboardPage() {
           isDept
             ? dept === "TMS"
               ? t("Engineering (TMS) Operational Desk", "इंजीनियरिंग (टीएमएस) परिचालन डेस्क")
-              : t("Traction (TDMS) Operational Desk", "विद्युत कर्षण (टीडीएमएस) परिचालन डेस्क")
+              : dept === "SMMS"
+                ? t("Signal & Telecom (SMMS) Operational Desk", "सिग्नल एवं दूरसंचार (एसएमएमएस) परिचालन डेस्क")
+                : t("Traction (TDMS) Operational Desk", "विद्युत कर्षण (टीडीएमएस) परिचालन डेस्क")
             : t("Central Executive Operations Desk", "केंद्रीय कार्यकारी परिचालन डेस्क")
         }
         subtitle={
@@ -641,7 +659,7 @@ function DashboardPage() {
             ) : (
               <div className="divide-y divide-border">
                 {data?.urgent_risks
-                  .filter((r) => !isDept || r.dept === dept || (dept === "TMS" ? r.id.startsWith("TRK") : r.id.startsWith("OHE")))
+                  .filter((r) => !isDept || r.dept === dept || (dept === "TMS" ? r.id.startsWith("TRK") : dept === "SMMS" ? (r.id.startsWith("SIG") || r.id.startsWith("SNT")) : r.id.startsWith("OHE")))
                   .sort((a, b) => {
                     const order: Record<string, number> = { Critical: 1, High: 2, Medium: 3, Low: 4 };
                     return (order[a.severity] || 5) - (order[b.severity] || 5);

@@ -172,7 +172,7 @@ function AdminPage() {
           </span>
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           {Object.values(roles).map((r) => (
             <Card
               key={r.role_id}
@@ -251,6 +251,7 @@ function AdminPage() {
                 <TableHead className="text-center">{t("Chief Controller", "मुख्य नियंत्रक")}</TableHead>
                 <TableHead className="text-center">{t("Engineering (TMS)", "इंजीनियरिंग")}</TableHead>
                 <TableHead className="text-center">{t("Traction (TDMS)", "ट्रैक्शन")}</TableHead>
+                <TableHead className="text-center">{t("Signal (SMMS)", "सिग्नल")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -259,7 +260,7 @@ function AdminPage() {
                   <TableCell className="font-mono text-xs font-semibold text-slate-800 dark:text-slate-200">
                     {perm}
                   </TableCell>
-                  {["admin", "control", "engineering", "traction"].map((rId) => {
+                  {["admin", "control", "engineering", "traction", "signal"].map((rId) => {
                     const has = roles[rId]?.permissions.includes(perm);
                     return (
                       <TableCell key={rId} className="text-center">
@@ -304,6 +305,7 @@ function AdminPage() {
                   <SelectItem value="control">Control</SelectItem>
                   <SelectItem value="engineering">Engineering</SelectItem>
                   <SelectItem value="traction">Traction</SelectItem>
+                  <SelectItem value="signal">Signal</SelectItem>
                 </SelectContent>
               </Select>
 

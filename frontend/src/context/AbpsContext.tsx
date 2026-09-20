@@ -193,8 +193,8 @@ export function AbpsProvider({ children }: { children: ReactNode }) {
     return permissions.includes(perm);
   };
 
-  const scope: "network" | "department" = user?.scope ?? (role.id === "engineering" || role.id === "traction" ? "department" : "network");
-  const dept = user?.dept ?? (role.id === "engineering" ? "TMS" : role.id === "traction" ? "TDMS" : null);
+  const scope: "network" | "department" = user?.scope ?? (role.id === "engineering" || role.id === "traction" || role.id === "signal" ? "department" : "network");
+  const dept = user?.dept ?? (role.id === "engineering" ? "TMS" : role.id === "traction" ? "TDMS" : role.id === "signal" ? "SMMS" : null);
 
   // Authenticated signIn
   const signIn = async (id: RoleId, password: string = "12345"): Promise<boolean> => {

@@ -1,7 +1,7 @@
 // IR-ABPS mock data engine: departments, requisitions, corridors, trains, AI optimizer.
 
 export type Dept = "TMS" | "SMMS" | "TDMS";
-export type RoleId = "admin" | "control" | "engineering" | "traction";
+export type RoleId = "admin" | "control" | "engineering" | "traction" | "signal";
 
 export type Role = {
   id: RoleId;
@@ -39,6 +39,13 @@ export const ROLES: Role[] = [
     title: "TRACTION TEAM",
     dept: "TDMS",
     system: "TDMS Isolation & Power",
+  },
+  {
+    id: "signal",
+    name: "SSE / S&T",
+    title: "SIGNAL TEAM",
+    dept: "SMMS",
+    system: "SMMS Requisition Portal",
   },
 ];
 

@@ -13,6 +13,9 @@ import {
   TriangleAlert,
   XCircle,
   Zap,
+  Sparkles,
+  Star,
+  Layers,
 } from "lucide-react";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/api";
@@ -113,7 +116,16 @@ type Train = {
   travel_date: string;
   arrival_time: string;
   departure_time: string;
-  operational_priority?: string;
+  operational_priority?: string | number;
+  traffic_class?: string;
+  source?: string;
+  special_type?: string;
+  expected_passengers?: number;
+  origin?: string;
+  destination?: string;
+  origin_station?: string;
+  destination_station?: string;
+  reason?: string;
 };
 
 function timeToMinutes(timeStr: string) {
@@ -159,6 +171,13 @@ function PlannerPage() {
   const [selectedBlock, setSelectedBlock] =
     useState<OptimizedBlock | null>(null);
 
+  // Unified Traffic Timeline & Special Train Drawer State
+  const [freightForecast, setFreightForecast] = useState<any>(null);
+  const [timelineItems, setTimelineItems] = useState<Train[]>([]);
+  const [selectedSpecialTrain, setSelectedSpecialTrain] = useState<Train | null>(null);
+  const [specialImpactData, setSpecialImpactData] = useState<any>(null);
+  const [specialImpactLoading, setSpecialImpactLoading] = useState(false);
+
   const [softGateOpen, setSoftGateOpen] = useState(false);
   const [changeReqOpen, setChangeReqOpen] = useState(false);
   const [changeReason, setChangeReason] = useState("");
@@ -177,6 +196,45 @@ function PlannerPage() {
       setReviewHistory([]);
     }
   }, [selectedBlock]);
+
+  // Fetch Corridor Timeline & Freight Forecast
+  useEffect(() => {
+    const fetchTimeline = async () => {
+      const corr = selectedCorridor !== "ALL" ? selectedCorridor : (corridors[0]?.corridor_id || "CORR-001");
+      const d = dateStr || blocks[0]?.block_date || trains[0]?.travel_date || "2026-09-20";
+      try {
+        const res = await apiFetch(`/traffic/timeline?corridor_id=${corr}&date=${d}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.freight_forecast) {
+            setFreightForecast(data.freight_forecast);
+          }
+          if (data.items) {
+            setTimelineItems(data.items);
+          }
+        }
+      } catch (e) {
+        console.debug("Timeline fetch error:", e);
+      }
+    };
+    if (corridors.length > 0 || blocks.length > 0) {
+      void fetchTimeline();
+    }
+  }, [selectedCorridor, dateStr, corridors, blocks]);
+
+  // Fetch Special Train Impact for Drawer
+  useEffect(() => {
+    if (selectedSpecialTrain) {
+      setSpecialImpactLoading(true);
+      setSpecialImpactData(null);
+      const trainId = selectedSpecialTrain.train_id || (selectedSpecialTrain as any).id;
+      apiFetch(`/special-trains/${trainId}/impact`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => setSpecialImpactData(data))
+        .catch(() => setSpecialImpactData(null))
+        .finally(() => setSpecialImpactLoading(false));
+    }
+  }, [selectedSpecialTrain]);
 
   const fetchData = async () => {
     setLoading(true);
@@ -246,6 +304,21 @@ function PlannerPage() {
           train.corridor_id === selectedCorridor),
     );
   }, [trains, dateStr, selectedCorridor]);
+
+  // Combined traffic (trains + timelineItems containing goods & specials)
+  const allCorridorTrains = useMemo(() => {
+    const map = new Map<string, Train>();
+    filteredTrains.forEach((t) => map.set(t.train_number || t.train_id, t));
+    timelineItems.forEach((t) => {
+      const key = t.train_number || t.train_id || (t as any).id;
+      map.set(key, { ...map.get(key), ...t });
+    });
+    return Array.from(map.values()).filter(
+      (train) =>
+        (!dateStr || train.travel_date === dateStr || (train as any).date === dateStr) &&
+        (selectedCorridor === "ALL" || train.corridor_id === selectedCorridor),
+    );
+  }, [filteredTrains, timelineItems, dateStr, selectedCorridor]);
 
   const activeCorridors = useMemo(() => {
     if (selectedCorridor !== "ALL") {
@@ -762,7 +835,32 @@ function PlannerPage() {
               </div>
             ) : (
               <div className="min-w-[920px]">
-                <div className="mb-2 flex border-b border-border pb-1 pl-[130px] text-[10px] font-mono font-bold text-slate-500">
+                {/* Forecast-based Freight Pressure Strip */}
+                {freightForecast && (
+                  <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-[2px] border border-amber-300 bg-amber-50/80 px-3.5 py-2 text-xs dark:border-amber-700/50 dark:bg-amber-950/20">
+                    <div className="flex flex-wrap items-center gap-2.5">
+                      <Badge
+                        variant="outline"
+                        className="border-amber-500 bg-amber-100 text-amber-900 font-bold uppercase text-[10px] dark:bg-amber-900/50 dark:text-amber-200"
+                      >
+                        Freight Pressure: {freightForecast.level || "NORMAL"}
+                      </Badge>
+                      <span className="font-semibold text-slate-800 dark:text-slate-200">
+                        Forecast-based (hourly split is an estimate)
+                      </span>
+                      <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                        • Daily Expected: <strong className="font-mono text-slate-900 dark:text-slate-100">{freightForecast.expected_daily ?? "--"}</strong> freight trains
+                        • Unscheduled Expected: <strong className="font-mono text-slate-900 dark:text-slate-100">{freightForecast.unscheduled_expected ?? "--"}</strong>
+                        • Source: <span className="font-mono text-[10px] uppercase text-slate-600 dark:text-slate-400">{freightForecast.source ?? "corridor_defaults"}</span>
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-slate-500">
+                      Confidence: <span className="font-mono font-bold text-slate-700 dark:text-slate-300">{Math.round((freightForecast.confidence ?? 0.8) * 100)}%</span>
+                    </div>
+                  </div>
+                )}
+
+                <div className="mb-2 flex border-b border-border pb-1 pl-[150px] text-[10px] font-mono font-bold text-slate-500">
                   {Array.from({ length: 24 }).map((_, hour) => (
                     <div
                       key={hour}
@@ -779,29 +877,71 @@ function PlannerPage() {
                       block.corridor_id === corridor.corridor_id,
                   );
 
-                  const corridorTrains = filteredTrains.filter(
+                  const corridorTrains = allCorridorTrains.filter(
                     (train) =>
                       train.corridor_id === corridor.corridor_id,
                   );
 
+                  const passengerTrains = corridorTrains.filter((t) => {
+                    const type = t.train_type?.toUpperCase();
+                    const cls = t.traffic_class?.toUpperCase();
+                    if (cls === "SPECIAL" || type === "SPECIAL" || t.source === "special_train_services" || t.special_type) return false;
+                    if (cls === "FREIGHT" || type === "GOODS" || type === "FREIGHT") return false;
+                    return true;
+                  });
+
+                  const goodsTrains = corridorTrains.filter((t) => {
+                    const type = t.train_type?.toUpperCase();
+                    const cls = t.traffic_class?.toUpperCase();
+                    return cls === "FREIGHT" || type === "GOODS" || type === "FREIGHT";
+                  });
+
+                  const specialTrains = corridorTrains.filter((t) => {
+                    const type = t.train_type?.toUpperCase();
+                    const cls = t.traffic_class?.toUpperCase();
+                    return cls === "SPECIAL" || type === "SPECIAL" || t.source === "special_train_services" || !!t.special_type;
+                  });
+
                   return (
                     <div
                       key={corridor.corridor_id}
-                      className="mb-3 flex items-stretch border border-border bg-slate-50/50 dark:bg-slate-900/40"
+                      className="mb-4 flex items-stretch border border-border bg-slate-50/50 dark:bg-slate-900/40"
                     >
-                      <div className="flex w-[130px] shrink-0 flex-col justify-center border-r border-border bg-slate-100 p-2 dark:bg-slate-800">
-                        <span className="font-mono text-xs font-bold text-[#003366] dark:text-sky-400">
-                          {corridor.corridor_id}
-                        </span>
-                        <span
-                          className="truncate text-[10px] text-slate-600 dark:text-slate-400"
-                          title={corridor.corridor_name}
-                        >
-                          {corridor.corridor_name}
-                        </span>
+                      {/* Corridor Header with 4 Sub-lane indicators */}
+                      <div className="flex w-[150px] shrink-0 flex-col justify-between border-r border-border bg-slate-100 p-2 dark:bg-slate-800">
+                        <div>
+                          <span className="font-mono text-xs font-bold text-[#003366] dark:text-sky-400">
+                            {corridor.corridor_id}
+                          </span>
+                          <span
+                            className="block truncate text-[10px] text-slate-600 dark:text-slate-400"
+                            title={corridor.corridor_name}
+                          >
+                            {corridor.corridor_name}
+                          </span>
+                        </div>
+                        <div className="space-y-1 pt-1 text-[9px] font-medium text-slate-500 dark:text-slate-400">
+                          <div className="flex items-center gap-1">
+                            <span className="size-1.5 rounded-full bg-blue-500" />
+                            <span>Passenger</span>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <span className="size-1.5 rounded-full bg-amber-500" />
+                            <span>Goods</span>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <span className="size-1.5 rounded-full bg-purple-600" />
+                            <span>Special (★)</span>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <span className="size-1.5 rounded-full bg-[#003366] dark:bg-sky-400" />
+                            <span>Megablocks</span>
+                          </div>
+                        </div>
                       </div>
 
-                      <div className="relative min-h-[68px] flex-1 bg-white py-1 dark:bg-slate-950">
+                      {/* 4-Lane Timeline Track */}
+                      <div className="relative min-h-[108px] flex-1 bg-white py-1 dark:bg-slate-950">
                         {Array.from({ length: 24 }).map(
                           (_, hour) => (
                             <div
@@ -814,81 +954,139 @@ function PlannerPage() {
                           ),
                         )}
 
-                        {corridorTrains.map((train) => {
-                          const start = timeToMinutes(
-                            train.arrival_time,
-                          );
-                          let end = timeToMinutes(
-                            train.departure_time,
-                          );
-
+                        {/* Lane 1: Passenger / Express Trains */}
+                        {passengerTrains.map((train) => {
+                          const start = timeToMinutes(train.arrival_time);
+                          let end = timeToMinutes(train.departure_time);
                           if (end < start) end += 1440;
-
                           const left = (start / 1440) * 100;
                           let width = ((end - start) / 1440) * 100;
-
                           if (left > 100) return null;
-                          if (left + width > 100) {
-                            width = 100 - left;
-                          }
+                          if (left + width > 100) width = 100 - left;
 
                           return (
                             <div
-                              key={train.train_id}
-                              title={`${train.train_number} - ${train.train_name} (${formatTime(train.arrival_time)} to ${formatTime(train.departure_time)})`}
-                              className="absolute z-10 h-2 cursor-pointer rounded-[1px] border border-slate-600 bg-slate-500/70"
+                              key={train.train_id || train.train_number}
+                              title={`Passenger/Express: ${train.train_number} - ${train.train_name} (${formatTime(train.arrival_time)} to ${formatTime(train.departure_time)})`}
+                              className="absolute z-10 flex h-4 items-center overflow-hidden rounded-[1px] border border-blue-400/80 bg-blue-600/80 px-1 text-[8px] font-medium text-white shadow-xs"
                               style={{
                                 left: `${left}%`,
-                                width: `${Math.max(width, 0.6)}%`,
-                                top: "6px",
+                                width: `${Math.max(width, 0.8)}%`,
+                                top: "4px",
                               }}
-                            />
+                            >
+                              <span className="truncate">{train.train_number}</span>
+                            </div>
                           );
                         })}
 
-                        {corridorBlocks.map((block) => {
-                          const start = timeToMinutes(
-                            block.start_time,
-                          );
-                          let end = timeToMinutes(block.end_time);
-
+                        {/* Lane 2: Goods / Freight Trains */}
+                        {goodsTrains.map((train) => {
+                          const start = timeToMinutes(train.arrival_time);
+                          let end = timeToMinutes(train.departure_time);
                           if (end < start) end += 1440;
-
                           const left = (start / 1440) * 100;
                           let width = ((end - start) / 1440) * 100;
-
                           if (left > 100) return null;
-                          if (left + width > 100) {
-                            width = 100 - left;
-                          }
+                          if (left + width > 100) width = 100 - left;
 
-                          const isConflict = overlaps.list.some(
+                          return (
+                            <div
+                              key={train.train_id || train.train_number}
+                              title={`Goods Train: ${train.train_number} - ${train.train_name || "Freight"} (${formatTime(train.arrival_time)} to ${formatTime(train.departure_time)})`}
+                              className="absolute z-10 flex h-4 items-center overflow-hidden rounded-[1px] border border-amber-500 bg-amber-500/90 px-1 text-[8px] font-medium text-amber-950 shadow-xs"
+                              style={{
+                                left: `${left}%`,
+                                width: `${Math.max(width, 0.8)}%`,
+                                top: "24px",
+                              }}
+                            >
+                              <span className="truncate">G-{train.train_number}</span>
+                            </div>
+                          );
+                        })}
+
+                        {/* Lane 3: Special Trains (★ Star Marker + Distinct Purple) */}
+                        {specialTrains.map((train) => {
+                          const start = timeToMinutes(train.arrival_time);
+                          let end = timeToMinutes(train.departure_time);
+                          if (end < start) end += 1440;
+                          const left = (start / 1440) * 100;
+                          let width = ((end - start) / 1440) * 100;
+                          if (left > 100) return null;
+                          if (left + width > 100) width = 100 - left;
+
+                          return (
+                            <button
+                              key={train.train_id || train.train_number}
+                              type="button"
+                              onClick={() => setSelectedSpecialTrain(train)}
+                              title={`Click for Special Train details & recommended shift: ${train.train_number} - ${train.train_name || "Special"} (${formatTime(train.arrival_time)} to ${formatTime(train.departure_time)})`}
+                              className="absolute z-20 flex h-5 cursor-pointer items-center gap-0.5 overflow-hidden rounded-[2px] border border-purple-400 bg-purple-700 px-1 text-[8px] font-bold text-white shadow-xs transition-transform hover:scale-105 hover:bg-purple-800"
+                              style={{
+                                left: `${left}%`,
+                                width: `${Math.max(width, 2.0)}%`,
+                                top: "44px",
+                              }}
+                            >
+                              <Star className="size-2.5 shrink-0 fill-amber-300 text-amber-300" />
+                              <span className="truncate">{train.train_number}</span>
+                            </button>
+                          );
+                        })}
+
+                        {/* Lane 4: Maintenance Blocks (Highlighted with Special & Train Overlaps) */}
+                        {corridorBlocks.map((block) => {
+                          const start = timeToMinutes(block.start_time);
+                          let end = timeToMinutes(block.end_time);
+                          if (end < start) end += 1440;
+                          const left = (start / 1440) * 100;
+                          let width = ((end - start) / 1440) * 100;
+                          if (left > 100) return null;
+                          if (left + width > 100) width = 100 - left;
+
+                          // Check regular train conflict
+                          const isRegularConflict = overlaps.list.some(
                             (item) => item.block === block.block_id,
                           );
+
+                          // Check special train conflict
+                          const isSpecialConflict = specialTrains.some((st) => {
+                            const stStart = timeToMinutes(st.arrival_time);
+                            let stEnd = timeToMinutes(st.departure_time);
+                            if (stEnd < stStart) stEnd += 1440;
+                            return start < stEnd && stStart < end;
+                          });
 
                           return (
                             <button
                               key={block.block_id}
                               type="button"
                               onClick={() => setSelectedBlock(block)}
-                              title="Click to review this block"
+                              title="Click to review this maintenance block"
                               className={`absolute z-20 flex h-8 flex-col items-start justify-center overflow-hidden rounded-[2px] border px-1.5 text-left text-[10px] font-bold text-white transition-transform hover:scale-[1.01] ${
-                                isConflict
+                                isSpecialConflict
+                                  ? "border-2 border-purple-400 bg-red-950 shadow-[0_0_8px_rgba(168,85,247,0.7)] ring-1 ring-purple-400"
+                                  : isRegularConflict
                                   ? "border-red-400 bg-red-900"
                                   : "border-[#FF9933] bg-[#003366]"
                               }`}
                               style={{
                                 left: `${left}%`,
                                 width: `${Math.max(width, 2.5)}%`,
-                                top: "24px",
+                                top: "68px",
                               }}
                             >
-                              <span className="w-full truncate">
-                                {block.block_id}
-                              </span>
+                              <div className="flex w-full items-center justify-between">
+                                <span className="truncate">{block.block_id}</span>
+                                {isSpecialConflict && (
+                                  <span className="flex items-center gap-0.5 text-[8px] text-purple-300">
+                                    <Star className="size-2 fill-purple-300" /> SPL
+                                  </span>
+                                )}
+                              </div>
                               <span className="w-full truncate font-mono text-[8px] opacity-80">
-                                {formatTime(block.start_time)} –{" "}
-                                {formatTime(block.end_time)}
+                                {formatTime(block.start_time)} – {formatTime(block.end_time)}
                               </span>
                             </button>
                           );
@@ -908,13 +1106,25 @@ function PlannerPage() {
             </span>
 
             <span className="flex items-center gap-1.5 font-semibold text-slate-700 dark:text-slate-300">
-              <span className="h-2 w-4 rounded-[1px] border border-slate-600 bg-slate-500" />
-              Train Movement Path
+              <span className="h-2.5 w-4 rounded-[1px] border-2 border-purple-400 bg-red-950" />
+              Special Train Conflict
             </span>
 
             <span className="flex items-center gap-1.5 font-semibold text-slate-700 dark:text-slate-300">
-              <span className="h-2.5 w-4 rounded-[1px] border border-red-400 bg-red-900" />
-              Train Conflict
+              <span className="h-2 w-4 rounded-[1px] border border-blue-400 bg-blue-600" />
+              Passenger / Express Lane
+            </span>
+
+            <span className="flex items-center gap-1.5 font-semibold text-slate-700 dark:text-slate-300">
+              <span className="h-2 w-4 rounded-[1px] border border-amber-500 bg-amber-500" />
+              Goods / Freight Lane
+            </span>
+
+            <span className="flex items-center gap-1.5 font-semibold text-slate-700 dark:text-slate-300">
+              <span className="flex h-2.5 w-4 items-center justify-center rounded-[1px] border border-purple-400 bg-purple-700 text-[8px] text-white">
+                <Star className="size-2 fill-amber-300 text-amber-300" />
+              </span>
+              Special Train (Click for Drawer)
             </span>
           </div>
         </Card>
@@ -1508,6 +1718,111 @@ function PlannerPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Special Train Details & Recommended Shift Drawer */}
+      <Sheet open={!!selectedSpecialTrain} onOpenChange={(open) => !open && setSelectedSpecialTrain(null)}>
+        <SheetContent className="w-full sm:max-w-md border-l-2 border-purple-500 bg-white p-6 overflow-y-auto dark:bg-slate-950">
+          <SheetHeader className="pb-3 border-b border-border">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge className="bg-purple-700 text-white font-bold text-xs flex items-center gap-1">
+                <Star className="size-3 fill-amber-300 text-amber-300" />
+                SPECIAL TRAIN
+              </Badge>
+              {selectedSpecialTrain?.special_type && (
+                <Badge variant="outline" className="border-purple-300 text-purple-700 dark:text-purple-300 text-[10px] font-bold uppercase">
+                  {selectedSpecialTrain.special_type}
+                </Badge>
+              )}
+              <Badge variant="outline" className="border-slate-300 text-slate-700 text-[10px]">
+                Priority: {selectedSpecialTrain?.operational_priority ?? 4}
+              </Badge>
+            </div>
+            <SheetTitle className="text-base font-bold text-slate-900 dark:text-slate-100 mt-2">
+              {selectedSpecialTrain?.train_number} – {selectedSpecialTrain?.train_name || "Special Service"}
+            </SheetTitle>
+            <SheetDescription className="text-xs text-slate-500">
+              Corridor: {selectedSpecialTrain?.corridor_id} • Service Date: {selectedSpecialTrain?.travel_date || (selectedSpecialTrain as any)?.date || dateStr}
+            </SheetDescription>
+          </SheetHeader>
+
+          <div className="space-y-4 py-4 text-xs">
+            <div className="grid grid-cols-2 gap-2 bg-purple-50/60 dark:bg-purple-950/20 p-3 rounded-[2px] border border-purple-200 dark:border-purple-900">
+              <div>
+                <span className="text-[10px] uppercase font-bold text-slate-500">Schedule Window</span>
+                <p className="font-mono font-bold text-slate-800 dark:text-slate-200">
+                  {formatTime(selectedSpecialTrain?.arrival_time)} – {formatTime(selectedSpecialTrain?.departure_time)}
+                </p>
+              </div>
+              <div>
+                <span className="text-[10px] uppercase font-bold text-slate-500">Expected Passengers</span>
+                <p className="font-mono font-bold text-purple-700 dark:text-purple-300">
+                  {selectedSpecialTrain?.expected_passengers ?? 0}
+                </p>
+              </div>
+              <div className="col-span-2">
+                <span className="text-[10px] uppercase font-bold text-slate-500">Route</span>
+                <p className="text-slate-700 dark:text-slate-300">
+                  {selectedSpecialTrain?.origin_station || selectedSpecialTrain?.origin || "Origin"} → {selectedSpecialTrain?.destination_station || selectedSpecialTrain?.destination || "Destination"}
+                </p>
+              </div>
+            </div>
+
+            <div>
+              <h4 className="font-bold text-xs uppercase text-slate-700 dark:text-slate-300 mb-2 flex items-center gap-1.5">
+                <TriangleAlert className="size-3.5 text-amber-500" />
+                Conflicting Maintenance Blocks
+              </h4>
+              {specialImpactLoading ? (
+                <div className="flex items-center gap-2 text-xs text-slate-500 py-3">
+                  <RefreshCw className="size-3.5 animate-spin" />
+                  Analyzing overlapping blocks and recommended shifts...
+                </div>
+              ) : specialImpactData?.overlapping_blocks?.length > 0 ? (
+                <div className="space-y-2">
+                  {specialImpactData.overlapping_blocks.map((blk: any) => (
+                    <div key={blk.block_id} className="p-2.5 rounded-[2px] border border-red-300 bg-red-50/70 dark:bg-red-950/30 text-red-950 dark:text-red-200">
+                      <div className="flex justify-between items-center">
+                        <span className="font-mono font-bold text-xs">{blk.block_id}</span>
+                        <Badge variant="outline" className="border-red-400 text-red-700 font-bold text-[10px]">
+                          {blk.status || "CONFIRMED"}
+                        </Badge>
+                      </div>
+                      <p className="text-[11px] mt-1 font-mono text-slate-600 dark:text-slate-400">
+                        Window: {formatTime(blk.start_time)} – {formatTime(blk.end_time)} ({blk.duration_min} min)
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="p-3 rounded-[2px] border border-emerald-300 bg-emerald-50/70 dark:bg-emerald-950/30 text-emerald-900 dark:text-emerald-200">
+                  <p className="text-xs font-semibold flex items-center gap-1.5">
+                    <CheckCircle2 className="size-3.5" /> No Overlapping Blocks
+                  </p>
+                  <p className="text-[11px] mt-0.5 text-slate-600 dark:text-slate-400">
+                    This special train does not conflict with any scheduled maintenance blocks on this corridor.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {specialImpactData?.recommended_shift && (
+              <div className="rounded-[2px] border border-blue-300 bg-blue-50/80 p-3 dark:border-blue-900 dark:bg-blue-950/30">
+                <h4 className="font-bold text-xs uppercase text-blue-900 dark:text-blue-300 flex items-center gap-1.5 mb-1.5">
+                  <Sparkles className="size-3.5 text-blue-600 dark:text-blue-400" />
+                  AI Recommended Shift
+                </h4>
+                <p className="text-[11px] text-slate-700 dark:text-slate-300 leading-relaxed">
+                  {specialImpactData.recommended_shift.reasoning ||
+                    `Recommended to shift conflicting maintenance block by ${specialImpactData.recommended_shift.shift_min > 0 ? "+" : ""}${specialImpactData.recommended_shift.shift_min} min to maintain optimal clearance.`}
+                </p>
+                <div className="mt-2 text-[10px] text-slate-500 font-medium">
+                  * Note: Recommendation only. AI-optimizer → Controller review → Admin authorization workflow remains human-authorized.
+                </div>
+              </div>
+            )}
+          </div>
+        </SheetContent>
+      </Sheet>
     </>
   );
 }

@@ -25,6 +25,10 @@ import {
   GitBranch,
   CalendarCheck,
   Sliders,
+  Clock,
+  ArrowLeftRight,
+  Star,
+  Check,
 } from "lucide-react";
 import { toast } from "sonner";
 import { deptColor, PageHeader } from "@/components/AppShell";
@@ -34,6 +38,14 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { apiFetch } from "@/lib/api";
 import {
   Sheet,
@@ -256,6 +268,55 @@ function OptimizerPage() {
   const [blockIntelligence, setBlockIntelligence] = useState<Record<string, BlockIntelligence>>({});
 
   const pending = reqs.filter((r) => r.status === "Pending AI Scheduling");
+
+  // Window A vs Window B Candidate Evaluator State
+  const [corridorsList, setCorridorsList] = useState<{ corridor_id: string; corridor_name: string }[]>([]);
+  const [candCorridor, setCandCorridor] = useState("CORR-001");
+  const [candDate, setCandDate] = useState("2026-09-20");
+  const [candStart, setCandStart] = useState("09:00");
+  const [candEnd, setCandEnd] = useState("12:00");
+  const [recommendResult, setRecommendResult] = useState<any>(null);
+  const [recommendLoading, setRecommendLoading] = useState(false);
+  const [selectedCandidateIndex, setSelectedCandidateIndex] = useState(0);
+
+  const evaluateCandidateWindows = async () => {
+    setRecommendLoading(true);
+    try {
+      const res = await apiFetch("/optimization/recommend-windows", {
+        method: "POST",
+        body: JSON.stringify({
+          corridor: candCorridor,
+          date: candDate,
+          start: candStart,
+          end: candEnd,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || err.message || "Failed to evaluate candidate windows");
+      }
+      const data = await res.json();
+      setRecommendResult(data);
+      setSelectedCandidateIndex(0);
+      toast.success(t("Alternative candidate windows evaluated.", "वैकल्पिक उम्मीदवार विंडो का मूल्यांकन किया गया।"));
+    } catch (e: any) {
+      toast.error(e.message || "Candidate window evaluation failed");
+    } finally {
+      setRecommendLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    apiFetch("/corridors/")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.corridors?.length) {
+          setCorridorsList(data.corridors);
+          setCandCorridor(data.corridors[0].corridor_id);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -848,6 +909,373 @@ function OptimizerPage() {
           </div>
         </Card>
       </div>
+
+      {/* ==================================================== */}
+      {/* TRAFFIC IN WINDOW & WINDOW A vs B COMPARISON VIEW    */}
+      {/* ==================================================== */}
+      {(() => {
+        const activeCand =
+          recommendResult?.recommended_windows?.[selectedCandidateIndex] ??
+          recommendResult?.recommended_windows?.[0];
+
+        return (
+          <Card className="mb-6 border-2 border-[#003366] bg-white dark:bg-slate-900 rounded-[2px] shadow-none">
+            <CardHeader className="bg-[#003366] p-3 text-white border-b-2 border-[#FF9933] flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <Clock className="size-4 text-[#FF9933]" />
+                <CardTitle className="text-xs font-bold uppercase tracking-wider text-white">
+                  AI Decision Layer: Window A vs Window B Candidate Evaluator
+                </CardTitle>
+              </div>
+              <span className="text-[10px] font-mono text-slate-300">
+                POST /optimization/recommend-windows
+              </span>
+            </CardHeader>
+
+            <CardContent className="p-4 space-y-4">
+              {/* Corridor & Window Selection Controls */}
+              <div className="flex flex-wrap items-end gap-3 bg-slate-50 dark:bg-slate-800/60 p-3 rounded-[2px] border border-border text-xs">
+                <div className="w-[180px]">
+                  <label className="text-[10px] font-bold uppercase text-slate-500 block mb-1">
+                    Corridor
+                  </label>
+                  <Select value={candCorridor} onValueChange={setCandCorridor}>
+                    <SelectTrigger className="h-8 rounded-[2px] text-xs">
+                      <SelectValue placeholder="Select Corridor" />
+                    </SelectTrigger>
+                    <SelectContent className="rounded-[2px]">
+                      {corridorsList.map((c) => (
+                        <SelectItem key={c.corridor_id} value={c.corridor_id} className="text-xs">
+                          {c.corridor_id} – {c.corridor_name}
+                        </SelectItem>
+                      ))}
+                      {corridorsList.length === 0 && (
+                        <SelectItem value="CORR-001" className="text-xs">
+                          CORR-001
+                        </SelectItem>
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-bold uppercase text-slate-500 block mb-1">
+                    Date
+                  </label>
+                  <Input
+                    type="date"
+                    value={candDate}
+                    onChange={(e) => setCandDate(e.target.value)}
+                    className="h-8 w-[130px] rounded-[2px] text-xs"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-bold uppercase text-slate-500 block mb-1">
+                    Window Start
+                  </label>
+                  <Input
+                    type="time"
+                    value={candStart}
+                    onChange={(e) => setCandStart(e.target.value)}
+                    className="h-8 w-[100px] rounded-[2px] text-xs"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-bold uppercase text-slate-500 block mb-1">
+                    Window End
+                  </label>
+                  <Input
+                    type="time"
+                    value={candEnd}
+                    onChange={(e) => setCandEnd(e.target.value)}
+                    className="h-8 w-[100px] rounded-[2px] text-xs"
+                  />
+                </div>
+
+                <div className="pt-1">
+                  <Button
+                    onClick={() => void evaluateCandidateWindows()}
+                    disabled={recommendLoading}
+                    size="sm"
+                    className="bg-[#003366] hover:bg-[#002244] text-white font-bold h-8 text-xs rounded-[2px]"
+                  >
+                    {recommendLoading ? (
+                      <>
+                        <RefreshCw className="mr-1.5 size-3.5 animate-spin" /> Evaluating...
+                      </>
+                    ) : (
+                      <>
+                        <ArrowLeftRight className="mr-1.5 size-3.5 text-[#FF9933]" /> Compare Candidate Windows
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </div>
+
+              {/* TRAFFIC IN WINDOW GRID */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-xs font-bold uppercase text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                    <Activity className="size-3.5 text-[#003366] dark:text-sky-400" />
+                    Traffic in Window: Corridor Analysis
+                  </h3>
+                  {/* Freight Pressure Chip */}
+                  <div className="flex items-center gap-1.5">
+                    <Badge
+                      variant="outline"
+                      className="border-amber-500 bg-amber-100 text-amber-900 font-bold uppercase text-[10px] dark:bg-amber-900/50 dark:text-amber-200"
+                    >
+                      Freight Pressure: {activeCand?.freight_pressure_level || "MEDIUM"}
+                    </Badge>
+                    <span className="text-[10px] text-slate-500 hidden sm:inline">
+                      • Forecast-based (hourly split is an estimate)
+                    </span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                  <div className="border border-border bg-slate-50 dark:bg-slate-800 p-2.5 rounded-[2px]">
+                    <span className="text-[10px] uppercase font-bold text-slate-500 block">
+                      Passenger / Express
+                    </span>
+                    <p className="font-mono text-base font-bold text-blue-700 dark:text-blue-400 mt-0.5">
+                      {activeCand?.conflicts_by_class?.passenger ?? 0}
+                      <span className="text-[10px] font-normal text-slate-500 ml-1">
+                        ({activeCand?.conflicts_by_class?.express ?? 0} Exp)
+                      </span>
+                    </p>
+                  </div>
+
+                  <div className="border border-border bg-slate-50 dark:bg-slate-800 p-2.5 rounded-[2px]">
+                    <span className="text-[10px] uppercase font-bold text-slate-500 block">
+                      Scheduled Goods
+                    </span>
+                    <p className="font-mono text-base font-bold text-amber-700 dark:text-amber-400 mt-0.5">
+                      {activeCand?.conflicts_by_class?.goods ?? 0}
+                    </p>
+                  </div>
+
+                  <div className="border border-border bg-slate-50 dark:bg-slate-800 p-2.5 rounded-[2px]">
+                    <span className="text-[10px] uppercase font-bold text-slate-500 block">
+                      Special Services
+                    </span>
+                    <p className="font-mono text-base font-bold text-purple-700 dark:text-purple-400 mt-0.5">
+                      {activeCand?.special_conflicts ?? 0}
+                    </p>
+                  </div>
+
+                  <div className="border border-border bg-slate-50 dark:bg-slate-800 p-2.5 rounded-[2px]">
+                    <span className="text-[10px] uppercase font-bold text-slate-500 block">
+                      Est. Delay Min
+                    </span>
+                    <p className="font-mono text-base font-bold text-slate-900 dark:text-slate-100 mt-0.5">
+                      {activeCand?.estimated_delay_min ?? 0} min
+                    </p>
+                  </div>
+                </div>
+
+                {/* List of Special Conflicts */}
+                <div className="mt-2.5">
+                  {(activeCand?.special_conflicts ?? 0) > 0 ? (
+                    <div className="p-2.5 border border-purple-400 bg-purple-50/80 dark:bg-purple-950/30 rounded-[2px] flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-2">
+                        <Star className="size-4 text-purple-600 fill-amber-400 shrink-0" />
+                        <span className="text-purple-950 dark:text-purple-200 font-semibold">
+                          {activeCand.special_conflicts} Special train service(s) intersect with this maintenance window. Headway clearance required.
+                        </span>
+                      </div>
+                      <Badge className="bg-purple-700 text-white font-bold text-[10px]">
+                        CRITICAL HEADWAY
+                      </Badge>
+                    </div>
+                  ) : (
+                    <div className="p-2 border border-emerald-300 bg-emerald-50/50 dark:bg-emerald-950/20 rounded-[2px] flex items-center gap-2 text-xs text-emerald-800 dark:text-emerald-300">
+                      <CheckCircle2 className="size-3.5 text-emerald-600" />
+                      <span>Zero Special train conflicts detected in this time interval.</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* WINDOW A VS WINDOW B COMPARISON VIEW */}
+              {recommendResult?.recommended_windows && recommendResult.recommended_windows.length > 0 && (
+                <div className="border-t border-border pt-4">
+                  {/* AI Recommendation Driver Banner */}
+                  <div className="mb-4 p-3 rounded-[2px] border-2 border-emerald-500 bg-emerald-50/90 dark:bg-emerald-950/30 text-emerald-950 dark:text-emerald-200 text-xs">
+                    <div className="flex items-center gap-2 font-bold mb-1">
+                      <Sparkles className="size-4 text-emerald-600" />
+                      <span>Recommendation Driver</span>
+                    </div>
+                    <p className="text-[11px] leading-relaxed font-medium">
+                      {recommendResult.recommendation}
+                    </p>
+                  </div>
+
+                  {/* Candidate Selector Tabs */}
+                  {recommendResult.recommended_windows.length > 1 && (
+                    <div className="flex items-center gap-1.5 mb-3 overflow-x-auto pb-1 text-xs">
+                      <span className="text-[10px] font-bold uppercase text-slate-500 mr-1">
+                        Alternative Candidates:
+                      </span>
+                      {recommendResult.recommended_windows.map((cand: any, idx: number) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => setSelectedCandidateIndex(idx)}
+                          className={`px-2.5 py-1 rounded-[2px] text-xs font-mono font-bold border transition-colors ${
+                            selectedCandidateIndex === idx
+                              ? "bg-[#003366] text-white border-[#003366]"
+                              : "bg-slate-100 text-slate-700 border-slate-300 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300"
+                          }`}
+                        >
+                          Option {idx + 1}: {cand.start.slice(0, 5)}–{cand.end.slice(0, 5)} ({cand.optimization_score} pts)
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Side-by-Side Comparison Cards */}
+                  <div className="grid md:grid-cols-2 gap-4">
+                    {/* WINDOW A (Baseline / Requested Window) */}
+                    <div className="border border-border bg-slate-50 dark:bg-slate-800/40 p-3.5 rounded-[2px]">
+                      <div className="flex justify-between items-center mb-3 pb-2 border-b border-border">
+                        <Badge variant="outline" className="border-slate-400 font-bold uppercase text-[10px]">
+                          Window A (Requested Baseline)
+                        </Badge>
+                        <span className="font-mono font-bold text-xs text-slate-700 dark:text-slate-300">
+                          {candStart} – {candEnd}
+                        </span>
+                      </div>
+                      <div className="space-y-2 text-xs">
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">Corridor / Date:</span>
+                          <span className="font-mono font-bold">{candCorridor} · {candDate}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">Duration:</span>
+                          <span className="font-mono font-bold">
+                            {recommendResult?.requested_window?.duration_minutes ?? 180} min
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">Estimated Total Conflicts:</span>
+                          <span className="font-mono font-bold text-amber-700">
+                            {recommendResult?.requested_window?.train_conflicts ?? activeCand?.train_conflicts ?? "--"}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">Freight Pressure:</span>
+                          <span className="font-mono font-bold uppercase">
+                            {activeCand?.freight_pressure_level || "MEDIUM"}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">Corridor Congestion:</span>
+                          <span className="font-mono font-bold uppercase">
+                            {activeCand?.corridor_congestion || "MEDIUM"}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* WINDOW B (AI Recommended Candidate) */}
+                    <div className="border-2 border-[#003366] bg-blue-50/40 dark:bg-slate-800/70 p-3.5 rounded-[2px]">
+                      <div className="flex justify-between items-center mb-3 pb-2 border-b border-border">
+                        <div className="flex items-center gap-1.5">
+                          <Badge className="bg-[#003366] text-white font-bold uppercase text-[10px]">
+                            Window B (Option {selectedCandidateIndex + 1})
+                          </Badge>
+                          <span className="text-[10px] text-emerald-700 dark:text-emerald-400 font-bold">
+                            ★ RECOMMENDED
+                          </span>
+                        </div>
+                        <span className="font-mono font-bold text-xs text-[#003366] dark:text-sky-400">
+                          {activeCand?.start?.slice(0, 5)} – {activeCand?.end?.slice(0, 5)}
+                        </span>
+                      </div>
+
+                      <div className="space-y-2 text-xs">
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">Optimization Score:</span>
+                          <span className="font-mono font-extrabold text-sm text-emerald-700 dark:text-emerald-400">
+                            {activeCand?.optimization_score} / 100
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">Train Conflicts:</span>
+                          <span className="font-mono font-bold text-emerald-700">
+                            {activeCand?.train_conflicts} conflict(s)
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">Special Clashes:</span>
+                          <span className="font-mono font-bold text-purple-700">
+                            {activeCand?.special_conflicts}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">Freight Pressure:</span>
+                          <span className="font-mono font-bold uppercase">
+                            {activeCand?.freight_pressure_level}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">Risk Assessment:</span>
+                          <Badge
+                            variant="outline"
+                            className={`text-[10px] font-bold ${
+                              activeCand?.risk_level === "LOW"
+                                ? "border-emerald-400 text-emerald-800"
+                                : activeCand?.risk_level === "MEDIUM"
+                                ? "border-amber-400 text-amber-800"
+                                : "border-red-400 text-red-800"
+                            }`}
+                          >
+                            {activeCand?.risk_level}
+                          </Badge>
+                        </div>
+
+                        {activeCand?.reasons && activeCand.reasons.length > 0 && (
+                          <div className="pt-2 border-t border-border/60">
+                            <span className="text-[10px] font-bold uppercase text-slate-500 block mb-1">
+                              AI Decision Reasons:
+                            </span>
+                            <ul className="text-[11px] list-disc list-inside text-slate-700 dark:text-slate-300 space-y-0.5">
+                              {activeCand.reasons.map((r: string, idx: number) => (
+                                <li key={idx}>{r}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+
+                        <div className="pt-2">
+                          <Button
+                            size="sm"
+                            onClick={() => {
+                              if (activeCand?.start && activeCand?.end) {
+                                setCandStart(activeCand.start.slice(0, 5));
+                                setCandEnd(activeCand.end.slice(0, 5));
+                                toast.success(
+                                  `Adopted Window B: ${activeCand.start.slice(0, 5)}–${activeCand.end.slice(0, 5)}`,
+                                );
+                              }
+                            }}
+                            className="w-full bg-[#003366] hover:bg-[#002244] text-white text-xs font-bold h-8 rounded-[2px]"
+                          >
+                            Adopt Window B as Active Interval
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        );
+      })()}
 
       {/* SHADOW BLOCK OPPORTUNITIES */}
       <div className="mb-6 border-2 border-[#003366] bg-white dark:bg-slate-900 rounded-[2px]">

@@ -81,6 +81,13 @@ def minutes_to_string(minutes):
 # TRAIN IMPACT
 # ============================================================
 
+from logic.traffic_intelligence import (
+    load_traffic_in_window,
+    conflict_severity,
+    build_constraint_profile,
+    normalize_train_type,
+)
+
 def calculate_train_impact(
     cursor,
     corridor,
@@ -88,152 +95,62 @@ def calculate_train_impact(
     start_time,
     end_time
 ):
-
-    cursor.execute(
-        """
-        SELECT
-            train_id,
-            train_number,
-            train_name,
-            train_type,
-            arrival_time,
-            departure_time
-        FROM trains
-        WHERE corridor_id = %s
-          AND travel_date = %s
-        """,
-        (
-            corridor,
-            block_date
-        )
+    items = load_traffic_in_window(
+        cursor,
+        corridor,
+        block_date,
+        start_time,
+        end_time
     )
 
-    trains = cursor.fetchall()
-
-    block_start = time_to_minutes(start_time)
-    block_end = time_to_minutes(end_time)
-
     conflicts = []
-
     impact_score = 0
     estimated_delay = 0
 
-    for train in trains:
-
-        (
-            train_id,
-            train_number,
-            train_name,
-            train_type,
-            arrival,
-            departure
-        ) = train
-
-        train_start = time_to_minutes(arrival)
-        train_end = time_to_minutes(departure)
-
-        # Handle overnight train
-        if train_end < train_start:
-
-            train_end += 1440
-
-        # Handle overnight block
-        actual_block_end = block_end
-
-        if actual_block_end < block_start:
-
-            actual_block_end += 1440
-
-        # Overlap detection
-        conflict = (
-            block_start < train_end
-            and train_start < actual_block_end
+    for item in items:
+        profile = item.get("constraint_profile") or build_constraint_profile(
+            item.get("raw_train_type") or item.get("train_type"),
+            item.get("operational_priority"),
+            item.get("expected_passengers"),
+            source=item.get("source", "trains")
         )
 
-        if not conflict:
-            continue
-
-        # Calculate overlap
-        overlap_start = max(
-            block_start,
-            train_start
-        )
-
-        overlap_end = min(
-            actual_block_end,
-            train_end
-        )
-
-        overlap_minutes = max(
-            0,
-            overlap_end - overlap_start
-        )
-
-        # ----------------------------------------
-        # IMPACT WEIGHT
-        # ----------------------------------------
-
-        if train_type == "EXPRESS":
-
-            impact = 40
-            delay = 10
-
-        elif train_type == "PASSENGER":
-
-            impact = 25
-            delay = 5
-
-        elif train_type == "FREIGHT":
-
-            impact = 15
-            delay = 5
-
-        else:
-
-            impact = 20
-            delay = 5
-
-        impact_score += impact
+        impact = profile["impact_weight"]
+        delay = profile["base_delay_min"]
+        overlap_minutes = item.get("overlap_minutes", 0)
 
         # Increase delay when overlap is significant
         if overlap_minutes >= 30:
-
-            estimated_delay += delay
-
+            item_delay = delay
         elif overlap_minutes > 0:
+            item_delay = max(2, delay // 2)
+        else:
+            item_delay = 0
 
-            estimated_delay += max(
-                2,
-                delay // 2
-            )
+        impact_score += impact
+        estimated_delay += item_delay
 
-        conflicts.append(
-            {
-                "train_id": train_id,
-                "train_number": train_number,
-                "train_name": train_name,
-                "train_type": train_type,
-                "overlap_minutes": overlap_minutes,
-                "estimated_delay_minutes":
-                    max(
-                        2,
-                        delay
-                        if overlap_minutes >= 30
-                        else delay // 2
-                    )
-            }
-        )
+        conflicts.append({
+            "train_id": item["train_id"],
+            "train_number": item["train_number"],
+            "train_name": item["train_name"],
+            "train_type": item["train_type"],
+            "overlap_minutes": overlap_minutes,
+            "estimated_delay_minutes": item_delay,
+            "operational_priority": item.get("operational_priority", 3),
+            "traffic_class": item.get("traffic_class", "PASSENGER"),
+            "severity": conflict_severity(item),
+            "source": item.get("source", "trains"),
+        })
 
-    impact_score = min(
-        impact_score,
-        100
-    )
+    impact_score = min(impact_score, 100)
 
     return (
         conflicts,
         impact_score,
         estimated_delay
     )
+
 
 
 # ============================================================

@@ -141,6 +141,11 @@ function EmergencyPage() {
         ["Traction", "General"].includes(t.group),
       );
     }
+    if (role.id === "signal") {
+      return EMERGENCY_TYPES.filter((t) =>
+        ["S&T", "General"].includes(t.group),
+      );
+    }
     return EMERGENCY_TYPES;
   }, [role.id]);
   const [activity, setActivity] = useState<ActivityEvent[]>([]);

@@ -223,8 +223,6 @@ export function AppShell({ children }: { children: ReactNode }) {
             {isAuthorized ? children : <AccessDenied requiredPerm={requiredPerm} />}
           </main>
         </div>
-
-        <GovtFooter />
       </div>
     );
   }

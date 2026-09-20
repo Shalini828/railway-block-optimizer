@@ -19,6 +19,7 @@ import { Route as MaintenanceTasksRouteImport } from './routes/maintenance-tasks
 import { Route as OptimizerRouteImport } from './routes/optimizer'
 import { Route as PlannerRouteImport } from './routes/planner'
 import { Route as RequestsRouteImport } from './routes/requests'
+import { Route as SpecialTrainsRouteImport } from './routes/special-trains'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -70,6 +71,11 @@ const RequestsRoute = RequestsRouteImport.update({
   path: '/requests',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SpecialTrainsRoute = SpecialTrainsRouteImport.update({
+  id: '/special-trains',
+  path: '/special-trains',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -82,6 +88,7 @@ export interface FileRoutesByFullPath {
   '/optimizer': typeof OptimizerRoute
   '/planner': typeof PlannerRoute
   '/requests': typeof RequestsRoute
+  '/special-trains': typeof SpecialTrainsRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -94,6 +101,7 @@ export interface FileRoutesByTo {
   '/optimizer': typeof OptimizerRoute
   '/planner': typeof PlannerRoute
   '/requests': typeof RequestsRoute
+  '/special-trains': typeof SpecialTrainsRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -107,6 +115,7 @@ export interface FileRoutesById {
   '/optimizer': typeof OptimizerRoute
   '/planner': typeof PlannerRoute
   '/requests': typeof RequestsRoute
+  '/special-trains': typeof SpecialTrainsRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -121,6 +130,7 @@ export interface FileRouteTypes {
     | '/optimizer'
     | '/planner'
     | '/requests'
+    | '/special-trains'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -133,6 +143,7 @@ export interface FileRouteTypes {
     | '/optimizer'
     | '/planner'
     | '/requests'
+    | '/special-trains'
   id:
     | '__root__'
     | '/'
@@ -145,6 +156,7 @@ export interface FileRouteTypes {
     | '/optimizer'
     | '/planner'
     | '/requests'
+    | '/special-trains'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -158,6 +170,7 @@ export interface RootRouteChildren {
   OptimizerRoute: typeof OptimizerRoute
   PlannerRoute: typeof PlannerRoute
   RequestsRoute: typeof RequestsRoute
+  SpecialTrainsRoute: typeof SpecialTrainsRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -232,6 +245,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof RequestsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/special-trains': {
+      id: '/special-trains'
+      path: '/special-trains'
+      fullPath: '/special-trains'
+      preLoaderRoute: typeof SpecialTrainsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -246,6 +266,7 @@ const rootRouteChildren: RootRouteChildren = {
   OptimizerRoute: OptimizerRoute,
   PlannerRoute: PlannerRoute,
   RequestsRoute: RequestsRoute,
+  SpecialTrainsRoute: SpecialTrainsRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

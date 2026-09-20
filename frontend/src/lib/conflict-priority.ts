@@ -2,20 +2,31 @@ export type ConflictSeverity = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
 
 /**
  * Classifies a single train conflict's severity.
- * Mirrors the exact rule already used in frontend/src/routes/conflicts.tsx
- * so severity is consistent across the Planner and Conflicts pages.
+ * Prefers server-provided severity when present; falls back to canonical rules.
  */
 export function classifyTrainConflictSeverity(
   operationalPriority?: string | number | null,
   trainType?: string | null,
+  serverSeverity?: string | null,
 ): ConflictSeverity {
-  const prio = parseInt(String(operationalPriority ?? "0"), 10) || 0;
-  const type = (trainType || "").toUpperCase();
+  if (serverSeverity) {
+    const s = serverSeverity.toUpperCase();
+    if (s === "CRITICAL" || s === "HIGH" || s === "MEDIUM" || s === "LOW") {
+      return s as ConflictSeverity;
+    }
+  }
 
-  if (prio >= 4 || type === "EXPRESS") return "CRITICAL";
-  if (prio === 3 || type === "PASSENGER") return "HIGH";
-  return "MEDIUM";
+  const prio = parseInt(String(operationalPriority ?? "0"), 10) || 0;
+  const type = (trainType || "").toUpperCase().trim();
+
+  if (type === "EXPRESS" || prio >= 5) return "CRITICAL";
+  if (type === "SPECIAL") return prio >= 4 ? "CRITICAL" : "HIGH";
+  if (type === "SUPERFAST" || type === "MAIL" || type === "PASSENGER" || prio >= 3) return "HIGH";
+  if (type === "GOODS" || type === "FREIGHT") return "MEDIUM";
+
+  return prio >= 4 ? "CRITICAL" : prio === 3 ? "HIGH" : "MEDIUM";
 }
+
 
 /** Same color-token mapping already used in conflicts.tsx's getSeverityColor. */
 export function getSeverityColorClasses(severity: ConflictSeverity | string): string {
