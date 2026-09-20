@@ -1,13 +1,10 @@
-from typing import Optional, List, Dict, Any
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 import psycopg
 import os
 
 from dotenv import load_dotenv
 from datetime import date, datetime, time, timedelta
-
-from auth.security import get_current_user, require_permission, CurrentUser, RBACForbiddenException
 
 
 load_dotenv()
@@ -112,11 +109,10 @@ def resolve_user_id(cursor, requested_by: str):
         SELECT user_id
         FROM users
         WHERE user_id = %s
-           OR employee_code = %s
-           OR email = %s
+          OR email = %s
         LIMIT 1
         """,
-        (value, value, value)
+        (value, value)
     )
 
     row = cursor.fetchone()
@@ -146,19 +142,18 @@ def resolve_section_id(cursor, section: str, corridor_id: str):
         return None
 
     cursor.execute(
-        """
-        SELECT section_id
-        FROM corridor_sections
-        WHERE corridor_id = %s
-          AND (
-                section_id = %s
-                OR section_code = %s
-                OR section_name = %s
-              )
-        LIMIT 1
-        """,
-        (corridor_id, value, value, value)
-    )
+    """
+    SELECT section_id
+    FROM corridor_sections
+    WHERE corridor_id = %s
+      AND (
+            section_id = %s
+            OR section_name = %s
+          )
+    LIMIT 1
+    """,
+    (corridor_id, value, value)
+)
 
     row = cursor.fetchone()
 
@@ -169,83 +164,38 @@ def resolve_section_id(cursor, section: str, corridor_id: str):
 # GET ALL BLOCK REQUESTS
 # =========================================================
 
-@router.get("/", dependencies=[Depends(require_permission("requests.view"))])
-def get_block_requests(user: CurrentUser = Depends(get_current_user)):
+@router.get("/")
+def get_block_requests():
 
     conn = get_connection()
     cursor = conn.cursor()
 
     try:
-
-        if user.scope != "network":
-            clean_dept = user.dept.upper()
-            cursor.execute(
-                """
-                SELECT
-                    request_id,
-                    task_id,
-                    team_id,
-                    corridor_id,
-                    requested_date,
-                    requested_start,
-                    requested_end,
-                    requested_duration_min,
-                    block_type,
-                    request_status,
-                    submitted_date,
-                    requested_by,
-                    department_id,
-                    section_id,
-                    criticality,
-                    safety_risk,
-                    description,
-                    review_status,
-                    reviewed_by,
-                    reviewed_at,
-                    rejection_reason,
-                    created_at,
-                    updated_at
-                FROM block_requests
-                WHERE UPPER(COALESCE(department_id, '')) IN (%s, %s)
-                ORDER BY
-                    requested_date NULLS LAST,
-                    requested_start NULLS LAST
-                """,
-                (f"DEPT-{clean_dept}", clean_dept),
-            )
-        else:
-            cursor.execute(
-                """
-                SELECT
-                    request_id,
-                    task_id,
-                    team_id,
-                    corridor_id,
-                    requested_date,
-                    requested_start,
-                    requested_end,
-                    requested_duration_min,
-                    block_type,
-                    request_status,
-                    submitted_date,
-                    requested_by,
-                    department_id,
-                    section_id,
-                    criticality,
-                    safety_risk,
-                    description,
-                    review_status,
-                    reviewed_by,
-                    reviewed_at,
-                    rejection_reason,
-                    created_at,
-                    updated_at
-                FROM block_requests
-                ORDER BY
-                    requested_date NULLS LAST,
-                    requested_start NULLS LAST
-                """
-            )
+        cursor.execute(
+            """
+            SELECT
+                request_id,
+                task_id,
+                team_id,
+                corridor_id,
+                requested_date,
+                requested_start,
+                requested_end,
+                requested_duration_min,
+                block_type,
+                request_status,
+                submitted_date,
+                created_by,
+                reviewed_by,
+                reviewed_at,
+                priority,
+                review_notes
+            FROM block_requests
+            ORDER BY
+                requested_date NULLS LAST,
+                requested_start NULLS LAST
+            """
+        )
 
         rows = cursor.fetchall()
 
@@ -262,32 +212,15 @@ def get_block_requests(user: CurrentUser = Depends(get_current_user)):
                 "block_type": row[8],
                 "request_status": row[9],
                 "submitted_date": str(row[10]) if row[10] else None,
-
-                # New workflow fields
-                "requested_by": row[11],
-                "department_id": row[12],
-                "section_id": row[13],
-                "criticality": row[14],
-                "safety_risk": row[15],
-                "description": row[16],
-                "review_status": row[17],
-                "reviewed_by": row[18],
+                "created_by": row[11],
+                "reviewed_by": row[12],
                 "reviewed_at": (
-                    row[19].isoformat()
-                    if row[19]
+                    row[13].isoformat()
+                    if row[13]
                     else None
                 ),
-                "rejection_reason": row[20],
-                "created_at": (
-                    row[21].isoformat()
-                    if row[21]
-                    else None
-                ),
-                "updated_at": (
-                    row[22].isoformat()
-                    if row[22]
-                    else None
-                ),
+                "priority": row[14],
+                "review_notes": row[15],
             }
             for row in rows
         ]
@@ -296,276 +229,23 @@ def get_block_requests(user: CurrentUser = Depends(get_current_user)):
         cursor.close()
         conn.close()
 
-
-# =========================================================
-# EDIT BLOCK REQUEST (PENDING ONLY, OWN DEPT OR ADMIN)
-# =========================================================
-
-class BlockRequestUpdate(BaseModel):
-    work: Optional[str] = None
-    blockType: Optional[str] = None
-    requested_date: Optional[str] = None
-    requested_start: Optional[str] = None
-    requested_end: Optional[str] = None
-    duration: Optional[float] = None
-    criticality: Optional[str] = None
-
-
-@router.patch("/{request_id}", dependencies=[Depends(require_permission("requests.edit"))])
-def update_block_request(
-    request_id: str,
-    payload: BlockRequestUpdate,
-    user: CurrentUser = Depends(get_current_user),
-):
-    conn = get_connection()
-    cursor = conn.cursor()
-
-    try:
-        cursor.execute(
-            """
-            SELECT request_id, request_status, department_id
-            FROM block_requests
-            WHERE request_id = %s
-            """,
-            (request_id,),
-        )
-        row = cursor.fetchone()
-        if not row:
-            raise HTTPException(status_code=404, detail="Block request not found")
-
-        req_status = (row[1] or "").upper()
-        if req_status != "PENDING":
-            raise HTTPException(
-                status_code=400,
-                detail=f"Only PENDING requests can be edited (current status: {req_status})",
-            )
-
-        if user.scope != "network":
-            dept_id = (row[2] or "").upper()
-            user_dept = user.dept.upper()
-            if dept_id not in (f"DEPT-{user_dept}", user_dept):
-                raise RBACForbiddenException(
-                    required=f"department.{user.dept}",
-                    role=user.role_id,
-                    detail="Cannot edit requisitions from other departments",
-                )
-
-        updates = []
-        params = []
-        if payload.work is not None:
-            updates.append("description = %s")
-            params.append(payload.work)
-        if payload.blockType is not None:
-            updates.append("block_type = %s")
-            params.append(payload.blockType)
-        if payload.requested_date is not None:
-            updates.append("requested_date = %s")
-            params.append(payload.requested_date)
-        if payload.requested_start is not None:
-            updates.append("requested_start = %s")
-            params.append(payload.requested_start)
-        if payload.requested_end is not None:
-            updates.append("requested_end = %s")
-            params.append(payload.requested_end)
-        if payload.duration is not None:
-            updates.append("requested_duration_min = %s")
-            params.append(int(payload.duration * 60))
-        if payload.criticality is not None:
-            crit = normalize_criticality(payload.criticality)
-            updates.append("criticality = %s")
-            params.append(criticality_to_level(crit))
-
-        if updates:
-            updates.append("updated_at = CURRENT_TIMESTAMP")
-            params.append(request_id)
-            cursor.execute(
-                f"UPDATE block_requests SET {', '.join(updates)} WHERE request_id = %s",
-                params,
-            )
-            conn.commit()
-
-        return {
-            "status": "success",
-            "message": "Block request updated successfully",
-            "request_id": request_id,
-        }
-
-    except HTTPException:
-        conn.rollback()
-        raise
-    except Exception as e:
-        conn.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        cursor.close()
-        conn.close()
-
-
-# =========================================================
-# CANCEL BLOCK REQUEST (PENDING ONLY, OWN DEPT OR ADMIN)
-# =========================================================
-
-@router.post("/{request_id}/cancel", dependencies=[Depends(require_permission("requests.cancel"))])
-def cancel_block_request(
-    request_id: str,
-    user: CurrentUser = Depends(get_current_user),
-):
-    conn = get_connection()
-    cursor = conn.cursor()
-
-    try:
-        cursor.execute(
-            """
-            SELECT request_id, request_status, department_id
-            FROM block_requests
-            WHERE request_id = %s
-            """,
-            (request_id,),
-        )
-        row = cursor.fetchone()
-        if not row:
-            raise HTTPException(status_code=404, detail="Block request not found")
-
-        req_status = (row[1] or "").upper()
-        if req_status != "PENDING":
-            raise HTTPException(
-                status_code=400,
-                detail=f"Only PENDING requests can be cancelled (current status: {req_status})",
-            )
-
-        if user.scope != "network":
-            dept_id = (row[2] or "").upper()
-            user_dept = user.dept.upper()
-            if dept_id not in (f"DEPT-{user_dept}", user_dept):
-                raise RBACForbiddenException(
-                    required=f"department.{user.dept}",
-                    role=user.role_id,
-                    detail="Cannot cancel requisitions from other departments",
-                )
-
-        cursor.execute(
-            """
-            UPDATE block_requests
-            SET request_status = 'CANCELLED', updated_at = CURRENT_TIMESTAMP
-            WHERE request_id = %s
-            """,
-            (request_id,),
-        )
-        conn.commit()
-
-        return {
-            "status": "success",
-            "message": "Block request cancelled",
-            "request_id": request_id,
-            "request_status": "CANCELLED",
-        }
-
-    except HTTPException:
-        conn.rollback()
-        raise
-    except Exception as e:
-        conn.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        cursor.close()
-        conn.close()
-
-
-# =========================================================
-# REJECT BLOCK REQUEST (ADMIN ONLY)
-# =========================================================
-
-class BlockRequestReject(BaseModel):
-    reason: str
-
-
-@router.post("/{request_id}/reject", dependencies=[Depends(require_permission("requests.reject"))])
-def reject_block_request(
-    request_id: str,
-    payload: BlockRequestReject,
-    user: CurrentUser = Depends(get_current_user),
-):
-    if not payload.reason or not payload.reason.strip():
-        raise HTTPException(status_code=422, detail="Rejection reason is required")
-
-    conn = get_connection()
-    cursor = conn.cursor()
-
-    try:
-        cursor.execute(
-            "SELECT request_id FROM block_requests WHERE request_id = %s",
-            (request_id,),
-        )
-        if not cursor.fetchone():
-            raise HTTPException(status_code=404, detail="Block request not found")
-
-        approver_identity = f"{user.name} ({user.title})"
-        cursor.execute(
-            """
-            UPDATE block_requests
-            SET
-                request_status = 'REJECTED',
-                rejection_reason = %s,
-                reviewed_by = %s,
-                reviewed_at = CURRENT_TIMESTAMP,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE request_id = %s
-            """,
-            (payload.reason, approver_identity, request_id),
-        )
-        conn.commit()
-
-        return {
-            "status": "success",
-            "message": "Block request rejected",
-            "request_id": request_id,
-            "request_status": "REJECTED",
-        }
-
-    except HTTPException:
-        conn.rollback()
-        raise
-    except Exception as e:
-        conn.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        cursor.close()
-        conn.close()
-
-
 # =========================================================
 # CREATE BLOCK REQUEST
 # =========================================================
 
-@router.post("/", dependencies=[Depends(require_permission("requests.create"))])
-def create_block_request(
-    request: BlockRequestCreate,
-    user: CurrentUser = Depends(get_current_user)
-):
-
-    # =====================================================
-    # 1. NORMALIZE INPUT & ENFORCE RBAC IDENTITY
-    # =====================================================
-
-    if user.scope != "network":
-        body_dept = (request.dept or "").strip().upper()
-        user_dept = (user.dept or "").strip().upper()
-        if body_dept and body_dept != user_dept:
-            raise RBACForbiddenException(
-                required=f"department.{user.dept}",
-                role=user.role_id,
-                detail="You may only raise requisitions for your own department",
-            )
-        department = user_dept
-    else:
-        department = request.dept.strip().upper()
+@router.post("/")
+def create_block_request(request: BlockRequestCreate):
 
     conn = get_connection()
     cursor = conn.cursor()
 
     try:
 
-        requester_name = user.name or user.title or request.requestedBy
+        # =====================================================
+        # 1. NORMALIZE INPUT
+        # =====================================================
+
+        department = request.dept.strip().upper()
         section = request.section.strip()
         asset_input = request.assetId.strip()
         block_type = request.blockType.strip()
@@ -584,9 +264,9 @@ def create_block_request(
         # =====================================================
 
         team_mapping = {
-            "TMS": "TEAM-001",
-            "SMMS": "TEAM-002",
-            "TDMS": "TEAM-003"
+           "TMS": "ENG-01",
+           "SMMS": "SNT-01",
+           "TDMS": "TRD-01",
         }
 
         team_id = team_mapping.get(department)
@@ -666,7 +346,28 @@ def create_block_request(
 
 
         # =====================================================
-        # 6. ALLOW DIRECT CORRIDOR ID
+        # 6. ALLOW DIRECT SECTION ID
+        # =====================================================
+
+        if not corridor_id:
+            cursor.execute(
+                """
+                SELECT corridor_id
+                FROM corridor_sections
+                WHERE section_id = %s
+                LIMIT 1
+                """,
+                (section,)
+            )
+
+            section_row = cursor.fetchone()
+
+            if section_row:
+                corridor_id = section_row[0]
+
+
+        # =====================================================
+        # 7. ALLOW DIRECT CORRIDOR ID
         # =====================================================
 
         if not corridor_id:
@@ -696,7 +397,6 @@ def create_block_request(
                 )
             )
 
-
         # =====================================================
         # 7. RESOLVE SECTION ID
         # =====================================================
@@ -714,8 +414,8 @@ def create_block_request(
 
         requested_by_user_id = resolve_user_id(
             cursor,
-            requester_name
-        ) or user.role_id
+            request.requestedBy
+        )
 
 
         # =====================================================
@@ -1131,7 +831,8 @@ def create_block_request(
             f"Line: {request.line} | "
             f"Chainage: {request.chainage} | "
             f"Crew: {request.crew} | "
-            f"Requested by: {requester_name}"
+            f"Requested by: "
+            f"{request.requestedBy}"
         )
 
 
@@ -1200,85 +901,53 @@ def create_block_request(
         # =====================================================
 
         cursor.execute(
-            """
-            INSERT INTO block_requests
-            (
-                request_id,
-                task_id,
-                team_id,
-                corridor_id,
-                requested_date,
-                requested_start,
-                requested_end,
-                requested_duration_min,
-                block_type,
-                request_status,
-                submitted_date,
-
-                requested_by,
-                department_id,
-                section_id,
-                criticality,
-                safety_risk,
-                description,
-                review_status,
-                created_at,
-                updated_at
-            )
-            VALUES
-            (
-                %s,
-                %s,
-                %s,
-                %s,
-                %s,
-                %s,
-                %s,
-                %s,
-                %s,
-                %s,
-                %s,
-
-                %s,
-                %s,
-                %s,
-                %s,
-                %s,
-                %s,
-                %s,
-                CURRENT_TIMESTAMP,
-                CURRENT_TIMESTAMP
-            )
-            """,
-            (
-                request_id,
-                task_id,
-                team_id,
-                corridor_id,
-                planning_date,
-                requested_start,
-                requested_end,
-                duration_minutes,
-                block_type,
-
-                # Keep PENDING because the current
-                # optimizer reads PENDING requests.
-                "PENDING",
-
-                date.today(),
-
-                requested_by_user_id,
-                department_id,
-                section_id,
-                criticality_level,
-                safety_risk,
-                description,
-
-                # Department review is represented separately
-                # so existing optimizer compatibility is retained.
-                "PENDING"
-            )
-        )
+    """
+    INSERT INTO block_requests
+    (
+        request_id,
+        task_id,
+        team_id,
+        corridor_id,
+        requested_date,
+        requested_start,
+        requested_end,
+        requested_duration_min,
+        block_type,
+        request_status,
+        submitted_date,
+        created_by
+    )
+    VALUES
+    (
+        %s,
+        %s,
+        %s,
+        %s,
+        %s,
+        %s,
+        %s,
+        %s,
+        %s,
+        %s,
+        %s,
+        %s
+    )
+    """,
+    (
+        request_id,
+        task_id,
+        team_id,
+        corridor_id,
+        planning_date,
+        requested_start,
+        requested_end,
+        duration_minutes,
+        block_type,
+        "PENDING",
+        date.today(),
+        requested_by_user_id
+    )
+)
 
 
         # =====================================================
