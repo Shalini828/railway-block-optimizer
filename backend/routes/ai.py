@@ -1425,8 +1425,52 @@ def get_block_intelligence(block_id: str):
         }
 
         # Empty lists are valid for the current unified model.
-        defects = []
-        maintenance_history = []
+        # ==========================================
+        # GET REAL DEFECTS FOR THE ASSET
+        # ==========================================
+
+        cur.execute("""
+            SELECT
+                severity,
+                safety_impact,
+                repeat_failure
+            FROM defects
+            WHERE asset_id = %s
+        """, (task[1],))
+
+        defect_rows = cur.fetchall()
+
+        defects = [
+            {
+                "severity": row[0],
+                "safety_impact": row[1],
+                "repeat_failure": row[2],
+            }
+            for row in defect_rows
+        ]
+
+
+        # ==========================================
+        # GET REAL MAINTENANCE HISTORY
+        # ==========================================
+
+        cur.execute("""
+            SELECT
+                maintenance_type,
+                failure_after_maintenance
+            FROM maintenance_history
+            WHERE asset_id = %s
+        """, (task[1],))
+
+        history_rows = cur.fetchall()
+
+        maintenance_history = [
+            {
+                "maintenance_type": row[0],
+                "failure_after_maintenance": row[1],
+            }
+            for row in history_rows
+        ]
 
         # Block duration
         from datetime import datetime
@@ -1562,6 +1606,12 @@ def get_block_intelligence(block_id: str):
             "end_time": str(end_time),
             "tasks_analyzed": len(tasks),
             "trains_in_window": len(trains),
+            "traffic_summary": {
+                "passenger_trains": passenger_trains,
+                "goods_trains": goods_trains,
+                "special_trains": special_trains,
+                "express_trains": express_trains,
+            },
             "intelligence": result,
 
             # ==========================================

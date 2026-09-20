@@ -136,6 +136,23 @@ interface BlockIntelligence {
       goods_level: string;
     };
   };
+  traffic_summary: {
+    passenger_trains: number;
+    goods_trains: number;
+    special_trains: number;
+    express_trains: number;
+  };
+  ai_explanation: {
+    score: number;
+    why_selected: string[];
+    metrics: {
+      duration_min: number;
+      utilization_percent: number;
+      train_impact_score: number;
+      number_of_tasks: number;
+      number_of_departments: number;
+    };
+  };
 }
 
 async function fetchSavedOptimization(): Promise<OptimizationApiResponse | null> {
@@ -939,6 +956,45 @@ function OptimizerPage() {
                         </div>
                       </div>
 
+                      <div className="mt-3 border border-slate-200 dark:border-slate-700 rounded-[2px] p-3">
+                        <p className="text-[8px] uppercase font-bold tracking-wider text-slate-500 dark:text-slate-400 mb-2">
+                          Traffic in Window
+                        </p>
+
+                        <div className="grid grid-cols-4 gap-2">
+                          <div className="text-center">
+                            <p className="text-[8px] uppercase font-bold text-slate-500">
+                              Passenger
+                            </p>
+                            <p className="font-mono font-bold text-sm">
+                              {blockIntelligence[b.block_id]?.traffic_summary?.passenger_trains ??
+                                0}
+                            </p>
+                          </div>
+
+                          <div className="text-center">
+                            <p className="text-[8px] uppercase font-bold text-slate-500">Goods</p>
+                            <p className="font-mono font-bold text-sm">
+                              {blockIntelligence[b.block_id]?.traffic_summary?.goods_trains ?? 0}
+                            </p>
+                          </div>
+
+                          <div className="text-center">
+                            <p className="text-[8px] uppercase font-bold text-slate-500">Special</p>
+                            <p className="font-mono font-bold text-sm">
+                              {blockIntelligence[b.block_id]?.traffic_summary?.special_trains ?? 0}
+                            </p>
+                          </div>
+
+                          <div className="text-center">
+                            <p className="text-[8px] uppercase font-bold text-slate-500">Express</p>
+                            <p className="font-mono font-bold text-sm">
+                              {blockIntelligence[b.block_id]?.traffic_summary?.express_trains ?? 0}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
                       <div className="mt-2 pt-2 border-t border-border flex items-center justify-between">
                         <span className="text-[9px] uppercase font-bold text-slate-500">
                           Overall Pressure
@@ -949,6 +1005,42 @@ function OptimizerPage() {
                               ?.pressure_score ?? 0,
                           ).toFixed(1)}
                         </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* WHY AI SELECTED THIS BLOCK */}
+                  {blockIntelligence[b.block_id]?.ai_explanation && (
+                    <div className="border border-emerald-300 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/20 p-3 rounded-[2px]">
+                      <div className="flex items-center gap-1.5 mb-2">
+                        <CheckCircle2 className="size-3.5 text-emerald-700 dark:text-emerald-400" />
+
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-300">
+                          Why AI Selected This Block
+                        </span>
+
+                        <span className="ml-auto font-mono text-[10px] font-bold text-[#003366] dark:text-sky-400">
+                          Score{" "}
+                          {blockIntelligence[b.block_id]?.ai_explanation?.score?.toFixed(2) ??
+                            "0.00"}
+                        </span>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        {(blockIntelligence[b.block_id]?.ai_explanation?.why_selected ?? []).map(
+                          (reason, index) => (
+                            <div
+                              key={`${b.block_id}-reason-${index}`}
+                              className="flex items-start gap-2 text-[10px] text-slate-700 dark:text-slate-300"
+                            >
+                              <span className="text-emerald-600 dark:text-emerald-400 font-bold">
+                                ✓
+                              </span>
+
+                              <span>{reason}</span>
+                            </div>
+                          ),
+                        )}
                       </div>
                     </div>
                   )}
