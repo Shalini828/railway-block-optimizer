@@ -2146,8 +2146,8 @@ def find_shadow_block_opportunities(groups):
 
     # Normal grouping allows a 15-minute gap.
     # Shadow blocks intentionally look a little farther ahead.
-    shadow_max_gap = MAX_CONSOLIDATION_GAP * 2
-    shadow_max_duration = MAX_BLOCK_DURATION + 60
+    shadow_max_gap = 60
+    shadow_max_duration = MAX_BLOCK_DURATION + 120
 
     for i in range(len(groups)):
 
@@ -2164,12 +2164,12 @@ def find_shadow_block_opportunities(groups):
 
             # Requests are database tuples.
             first_task_ids = [
-                request[0]
+                request[1]
                 for request in first["requests"]
             ]
 
             second_task_ids = [
-                request[0]
+                request[1]
                 for request in second["requests"]
             ]
 

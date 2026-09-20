@@ -1,8 +1,10 @@
 from typing import Optional, List, Dict, Any
+
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 import psycopg
 from psycopg.rows import dict_row
+import importlib
 
 from db_config import DB_CONFIG
 from auth.security import (
@@ -30,6 +32,190 @@ def get_connection():
         **DB_CONFIG,
         row_factory=dict_row
     )
+
+
+def _time_to_minutes(value):
+    """Convert a DB time/datetime/time-like value to minutes since midnight."""
+    if value is None:
+        return 0
+
+    if hasattr(value, "hour") and hasattr(value, "minute"):
+        return int(value.hour) * 60 + int(value.minute)
+
+    text = str(value)
+    parts = text.split(":")
+    if len(parts) < 2:
+        return 0
+
+    try:
+        return int(parts[0]) * 60 + int(parts[1])
+    except (TypeError, ValueError):
+        return 0
+
+
+def _build_shadow_groups_from_db(cursor, current_blocks):
+    """
+    Rebuild the request groups needed by the shadow-block detector
+    from PostgreSQL. This is intentionally independent of the
+    in-memory block_optimizer module state, so it survives:
+      - browser refreshes
+      - backend restarts
+      - completed PENDING requests
+      - the saved-plan code path
+    """
+    if not current_blocks:
+        return []
+
+    # Only use maintenance requests that belong to the currently
+    # saved optimized plan. This prevents old plans from polluting
+    # the shadow-opportunity list.
+    cursor.execute("""
+        SELECT DISTINCT
+            br.request_id,
+            br.task_id,
+            br.team_id,
+            br.corridor_id,
+            br.requested_date,
+            br.requested_start,
+            br.requested_end,
+            br.requested_duration_min
+        FROM block_requests br
+        JOIN block_tasks bt
+            ON bt.task_id = br.task_id
+        JOIN optimized_blocks ob
+            ON ob.block_id = bt.block_id
+           AND ob.corridor_id = br.corridor_id
+           AND ob.block_date = br.requested_date
+        WHERE ob.block_id IS NOT NULL
+        ORDER BY
+            br.corridor_id,
+            br.requested_date,
+            br.requested_start
+    """)
+
+    rows = cursor.fetchall()
+    if not rows:
+        return []
+
+    try:
+        import logic.block_optimizer as optimizer
+        max_gap = int(getattr(optimizer, "MAX_CONSOLIDATION_GAP", 15))
+        max_duration = int(getattr(optimizer, "MAX_BLOCK_DURATION", 240))
+    except Exception:
+        max_gap = 15
+        max_duration = 240
+
+    groups = []
+
+    for row in rows:
+        corridor = row["corridor_id"]
+        request_date = row["requested_date"]
+        request_start = row["requested_start"]
+        request_end = row["requested_end"]
+
+        start = _time_to_minutes(request_start)
+        end = _time_to_minutes(request_end)
+        placed = False
+
+        for group in groups:
+            if group["corridor"] != corridor:
+                continue
+            if group["date"] != request_date:
+                continue
+
+            group_start = _time_to_minutes(group["start"])
+            group_end = _time_to_minutes(group["end"])
+
+            if start > group_end:
+                gap = start - group_end
+            elif group_start > end:
+                gap = group_start - end
+            else:
+                gap = 0
+
+            combined_start = min(group_start, start)
+            combined_end = max(group_end, end)
+            combined_duration = combined_end - combined_start
+
+            if gap <= max_gap and combined_duration <= max_duration:
+                group["start"] = min(group["start"], request_start)
+                group["end"] = max(group["end"], request_end)
+                group["requests"].append(
+                    (
+                        row["request_id"],
+                        row["task_id"],
+                        row["team_id"],
+                        row["corridor_id"],
+                        row["requested_date"],
+                        row["requested_start"],
+                        row["requested_end"],
+                        row["requested_duration_min"],
+                        0,
+                    )
+                )
+                placed = True
+                break
+
+        if not placed:
+            groups.append(
+                {
+                    "corridor": corridor,
+                    "date": request_date,
+                    "start": request_start,
+                    "end": request_end,
+                    "requests": [
+                        (
+                            row["request_id"],
+                            row["task_id"],
+                            row["team_id"],
+                            row["corridor_id"],
+                            row["requested_date"],
+                            row["requested_start"],
+                            row["requested_end"],
+                            row["requested_duration_min"],
+                            0,
+                        )
+                    ],
+                }
+            )
+
+    return groups
+
+
+def _get_shadow_opportunities(cursor, current_blocks):
+    """Get shadow opportunities from live optimizer state or rebuild from DB."""
+    try:
+        import logic.block_optimizer as optimizer
+
+        existing = getattr(
+            optimizer,
+            "shadow_block_opportunities",
+            [],
+        ) or []
+
+        if existing:
+            return existing
+
+        finder = getattr(
+            optimizer,
+            "find_shadow_block_opportunities",
+            None,
+        )
+
+        groups = _build_shadow_groups_from_db(
+            cursor,
+            current_blocks,
+        )
+
+        if groups and callable(finder):
+            return finder(groups) or []
+
+    except Exception as shadow_error:
+        print(
+            f"Shadow block DB rebuild unavailable: {shadow_error}"
+        )
+
+    return []
 
 
 # ============================================================
@@ -145,6 +331,25 @@ def get_optimized_plan(user: CurrentUser = Depends(get_current_user)):
                 }
             )
 
+
+        # ----------------------------------------------------
+        # Shadow block opportunities
+        # ----------------------------------------------------
+        # Prefer the opportunities generated during the current
+        # optimizer run. If that in-memory state is empty, rebuild
+        # them from the requests belonging to the saved PostgreSQL
+        # plan. This makes the result stable after refresh/restart.
+        # ----------------------------------------------------
+        shadow_block_opportunities = _get_shadow_opportunities(
+            cursor,
+            blocks,
+        )
+
+        print(
+            "SHADOW BLOCK OPPORTUNITIES RETURNED:",
+            len(shadow_block_opportunities),
+        )
+
         # ----------------------------------------------------
         # Format blocks for frontend (applying department scoping)
         # ----------------------------------------------------
@@ -222,6 +427,7 @@ def get_optimized_plan(user: CurrentUser = Depends(get_current_user)):
             "block_count": len(formatted_blocks),
             "blocks": formatted_blocks,
             "scope": user.scope,
+            "shadow_block_opportunities": shadow_block_opportunities,
         }
 
     except Exception as e:

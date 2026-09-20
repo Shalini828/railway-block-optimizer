@@ -1,15 +1,20 @@
 from fastapi import APIRouter, Depends
+
 import importlib
 import sys
 import time
 import psycopg
 import os
+
 from dotenv import load_dotenv
+
 import logic.block_optimizer as block_optimizer
 
 from auth.security import require_permission
 
+
 load_dotenv()
+
 
 router = APIRouter(
     prefix="/optimization",
@@ -35,49 +40,58 @@ def format_block(block):
         "block_id": str(
             block.get("block_id", "")
         ),
+
         "corridor": str(
             block.get(
                 "corridor",
                 block.get("corridor_id", "")
             )
         ),
+
         "date": str(
             block.get(
                 "date",
                 block.get("block_date", "")
             )
         ),
+
         "start": str(
             block.get(
                 "start",
                 block.get("start_time", "")
             )
         ),
+
         "end": str(
             block.get(
                 "end",
                 block.get("end_time", "")
             )
         ),
+
         "duration": float(
             block.get(
                 "duration",
                 block.get("duration_min", 0)
             ) or 0
         ),
+
         "utilization": float(
             block.get(
                 "utilization",
                 block.get("utilization_percent", 0)
             ) or 0
         ),
+
         "train_impact": float(
             block.get(
                 "train_impact",
                 block.get("train_impact_score", 0)
             ) or 0
         ),
+
         "number_of_tasks": len(tasks),
+
         "train_conflicts": len(conflicts)
     }
 
@@ -132,7 +146,215 @@ def get_saved_blocks():
         conn.close()
 
 
-@router.post("/", dependencies=[Depends(require_permission("optimizer.run"))])
+
+def _time_to_minutes(value):
+    """Convert PostgreSQL time/string values to minutes since midnight."""
+    if value is None:
+        return 0
+
+    if hasattr(value, "hour") and hasattr(value, "minute"):
+        return (
+            int(value.hour) * 60
+            + int(value.minute)
+            + int(getattr(value, "second", 0)) / 60
+        )
+
+    text = str(value).strip()
+    if not text:
+        return 0
+
+    parts = text.split(":")
+    try:
+        hours = int(parts[0])
+        minutes = int(parts[1]) if len(parts) > 1 else 0
+        seconds = float(parts[2]) if len(parts) > 2 else 0
+        return hours * 60 + minutes + seconds / 60
+    except (ValueError, TypeError):
+        return 0
+
+
+def _get_persistent_shadow_opportunities():
+    """
+    Rebuild shadow opportunities from the saved PostgreSQL optimization
+    when the in-memory optimizer state is empty.
+
+    This is only a shadow-analysis rebuild. It does NOT rerun the
+    optimization engine or modify the saved schedule.
+    """
+    try:
+        finder = getattr(
+            block_optimizer,
+            "find_shadow_block_opportunities",
+            None,
+        )
+
+        if not callable(finder):
+            return []
+
+        max_gap = int(
+            getattr(
+                block_optimizer,
+                "MAX_CONSOLIDATION_GAP",
+                15,
+            )
+        )
+        max_duration = int(
+            getattr(
+                block_optimizer,
+                "MAX_BLOCK_DURATION",
+                240,
+            )
+        )
+
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute("""
+                SELECT DISTINCT
+                    br.request_id,
+                    br.task_id,
+                    br.team_id,
+                    br.corridor_id,
+                    br.requested_date,
+                    br.requested_start,
+                    br.requested_end,
+                    br.requested_duration_min
+                FROM block_requests br
+                JOIN block_tasks bt
+                    ON bt.task_id = br.task_id
+                JOIN optimized_blocks ob
+                    ON ob.block_id = bt.block_id
+                   AND ob.corridor_id = br.corridor_id
+                   AND ob.block_date = br.requested_date
+                ORDER BY
+                    br.corridor_id,
+                    br.requested_date,
+                    br.requested_start
+            """)
+
+            rows = cursor.fetchall()
+        finally:
+            cursor.close()
+            conn.close()
+
+        if not rows:
+            print("PERSISTENT SHADOW REBUILD: no saved request rows found")
+            return []
+
+        groups = []
+
+        for row in rows:
+            (
+                request_id,
+                task_id,
+                team_id,
+                corridor_id,
+                request_date,
+                request_start,
+                request_end,
+                requested_duration,
+            ) = row
+
+            start = _time_to_minutes(request_start)
+            end = _time_to_minutes(request_end)
+            placed = False
+
+            for group in groups:
+                if group["corridor"] != corridor_id:
+                    continue
+
+                if group["date"] != request_date:
+                    continue
+
+                group_start = _time_to_minutes(group["start"])
+                group_end = _time_to_minutes(group["end"])
+
+                if start > group_end:
+                    gap = start - group_end
+                elif group_start > end:
+                    gap = group_start - end
+                else:
+                    gap = 0
+
+                combined_start = min(group_start, start)
+                combined_end = max(group_end, end)
+                combined_duration = combined_end - combined_start
+
+                if (
+                    gap <= max_gap
+                    and combined_duration <= max_duration
+                ):
+                    group["start"] = min(
+                        group["start"],
+                        request_start,
+                    )
+                    group["end"] = max(
+                        group["end"],
+                        request_end,
+                    )
+                    group["requests"].append(
+                        (
+                            request_id,
+                            task_id,
+                            team_id,
+                            corridor_id,
+                            request_date,
+                            request_start,
+                            request_end,
+                            requested_duration,
+                            0,
+                        )
+                    )
+                    placed = True
+                    break
+
+            if not placed:
+                groups.append(
+                    {
+                        "corridor": corridor_id,
+                        "date": request_date,
+                        "start": request_start,
+                        "end": request_end,
+                        "requests": [
+                            (
+                                request_id,
+                                task_id,
+                                team_id,
+                                corridor_id,
+                                request_date,
+                                request_start,
+                                request_end,
+                                requested_duration,
+                                0,
+                            )
+                        ],
+                    }
+                )
+
+        opportunities = finder(groups) or []
+
+        print(
+            "PERSISTENT SHADOW OPPORTUNITIES:",
+            len(opportunities),
+        )
+
+        return opportunities
+
+    except Exception as shadow_error:
+        print(
+            "Persistent shadow rebuild failed:",
+            shadow_error,
+        )
+        return []
+
+
+@router.post(
+    "/",
+    dependencies=[
+        Depends(require_permission("optimizer.run"))
+    ]
+)
 def run_optimization():
 
     start_time = time.time()
@@ -163,14 +385,27 @@ def run_optimization():
         # STEP 2
         # If there are NO pending requests,
         # return the existing saved plan.
-        #
-        # IMPORTANT:
-        # Do NOT reload block_optimizer.py here.
         # --------------------------------------------------
 
         if pending_requests == 0:
 
             saved_blocks = get_saved_blocks()
+
+            # Try to get the latest shadow opportunities
+            # already generated by the optimizer module.
+            shadow_block_opportunities = getattr(
+                block_optimizer,
+                "shadow_block_opportunities",
+                []
+            ) or []
+
+            # The in-memory list disappears after a backend restart.
+            # Rebuild the SAME shadow analysis from the saved PostgreSQL
+            # plan so Execute AI Engine remains stable after refresh/re-run.
+            if not shadow_block_opportunities:
+                shadow_block_opportunities = (
+                    _get_persistent_shadow_opportunities()
+                )
 
             execution_time = round(
                 time.time() - start_time,
@@ -186,30 +421,45 @@ def run_optimization():
                 sum(
                     block["utilization"]
                     for block in saved_blocks
-                ) / len(saved_blocks)
+                )
+                / len(saved_blocks)
                 if saved_blocks
                 else 0
             )
 
             return {
                 "status": "success",
+
                 "message": (
                     "Showing the latest saved optimization plan."
                 ),
+
                 "requests_processed": 0,
-                "blocks_generated": len(saved_blocks),
+
+                "blocks_generated": len(
+                    saved_blocks
+                ),
+
                 "execution_time": execution_time,
+
                 "total_duration": total_duration,
+
                 "average_utilization": round(
                     average_utilization,
                     2
                 ),
+
                 "train_impact": sum(
                     block["train_impact"]
                     for block in saved_blocks
                 ),
+
                 "conflicts_avoided": 0,
-                "blocks": saved_blocks
+
+                "blocks": saved_blocks,
+
+                "shadow_block_opportunities":
+                    shadow_block_opportunities
             }
 
 
@@ -222,10 +472,13 @@ def run_optimization():
         module_name = "logic.block_optimizer"
 
         if module_name in sys.modules:
+
             optimizer = importlib.reload(
                 sys.modules[module_name]
             )
+
         else:
+
             optimizer = importlib.import_module(
                 module_name
             )
@@ -254,6 +507,13 @@ def run_optimization():
             []
         ) or []
 
+        # Normally this is populated by the current optimizer run.
+        # Keep a persistent fallback in case the module state is empty.
+        if not shadow_block_opportunities:
+            shadow_block_opportunities = (
+                _get_persistent_shadow_opportunities()
+            )
+
 
         # --------------------------------------------------
         # STEP 5
@@ -265,8 +525,8 @@ def run_optimization():
             for block in optimized_blocks
         ]
 
-
         requests_processed = len(requests)
+
         blocks_generated = len(blocks)
 
 
@@ -284,7 +544,8 @@ def run_optimization():
             sum(
                 block["utilization"]
                 for block in blocks
-            ) / blocks_generated
+            )
+            / blocks_generated
             if blocks_generated
             else 0
         )
@@ -311,40 +572,85 @@ def run_optimization():
         # --------------------------------------------------
 
         return {
+
             "status": "success",
+
             "message": (
                 "Optimization completed successfully"
             ),
-            "requests_processed": requests_processed,
-            "blocks_generated": blocks_generated,
-            "execution_time": execution_time,
-            "total_duration": total_duration,
-            "average_utilization": round(
-                average_utilization,
-                2
-            ),
-            "train_impact": train_impact,
-            "conflicts_avoided": conflicts_avoided,
-            "blocks": blocks,
-            "shadow_block_opportunities": shadow_block_opportunities,
 
+            "requests_processed":
+                requests_processed,
+
+            "blocks_generated":
+                blocks_generated,
+
+            "execution_time":
+                execution_time,
+
+            "total_duration":
+                total_duration,
+
+            "average_utilization":
+                round(
+                    average_utilization,
+                    2
+                ),
+
+            "train_impact":
+                train_impact,
+
+            "conflicts_avoided":
+                conflicts_avoided,
+
+            "blocks":
+                blocks,
+
+            # ------------------------------------------
+            # SHADOW BLOCK OPPORTUNITIES
+            # ------------------------------------------
+
+            "shadow_block_opportunities":
+                shadow_block_opportunities
         }
 
 
     except Exception as e:
 
         return {
+
             "status": "error",
-            "message": str(e),
-            "requests_processed": 0,
-            "blocks_generated": 0,
-            "execution_time": round(
-                time.time() - start_time,
-                2
-            ),
-            "total_duration": 0,
-            "average_utilization": 0,
-            "train_impact": 0,
-            "conflicts_avoided": 0,
-            "blocks": []
+
+            "message":
+                str(e),
+
+            "requests_processed":
+                0,
+
+            "blocks_generated":
+                0,
+
+            "execution_time":
+                round(
+                    time.time() - start_time,
+                    2
+                ),
+
+            "total_duration":
+                0,
+
+            "average_utilization":
+                0,
+
+            "train_impact":
+                0,
+
+            "conflicts_avoided":
+                0,
+
+            "blocks":
+                [],
+
+            "shadow_block_opportunities":
+                []
         }

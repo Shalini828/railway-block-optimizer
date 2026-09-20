@@ -85,6 +85,23 @@ interface OptimizationApiResponse {
     number_of_tasks: number;
     train_conflicts: number;
   }>;
+
+  shadow_block_opportunities?: Array<{
+    corridor: string;
+    date: string;
+    base_tasks: string[];
+    candidate_tasks: string[];
+    base_window: {
+      start: string;
+      end: string;
+    };
+    candidate_window: {
+      start: string;
+      end: string;
+    };
+    gap_minutes: number;
+    combined_duration_minutes: number;
+  }>;
 }
 
 interface SavedPlanBlock {
@@ -165,6 +182,11 @@ async function fetchSavedOptimization(): Promise<OptimizationApiResponse | null>
   const payload = await response.json();
   const savedBlocks = (payload.blocks ?? []) as SavedPlanBlock[];
 
+  const savedShadowOpportunities =
+    (payload.shadow_block_opportunities ?? []) as NonNullable<
+      OptimizationApiResponse["shadow_block_opportunities"]
+    >;
+
   if (payload.status !== "success" || savedBlocks.length === 0) {
     return null;
   }
@@ -210,6 +232,7 @@ async function fetchSavedOptimization(): Promise<OptimizationApiResponse | null>
       total_train_conflicts: totalConflicts,
     },
     blocks,
+    shadow_block_opportunities: savedShadowOpportunities,
   };
 }
 
@@ -224,6 +247,10 @@ function OptimizerPage() {
 
   const [apiData, setApiData] = useState<OptimizationApiResponse | null>(null);
   const [apiError, setApiError] = useState(false);
+
+  // Shadow Block Opportunities are optional in the API response.
+  // Always expose a safe array to the UI so a missing/null apiData never breaks rendering.
+  const shadowBlockOpportunities = apiData?.shadow_block_opportunities ?? [];
   const [lastExecution, setLastExecution] = useState<Date | null>(null);
   const [executionDuration, setExecutionDuration] = useState<number | null>(null);
   const [blockIntelligence, setBlockIntelligence] = useState<Record<string, BlockIntelligence>>({});
@@ -247,6 +274,7 @@ function OptimizerPage() {
     };
 
     void restoreSavedPlan();
+    
 
     return () => {
       cancelled = true;
@@ -729,7 +757,11 @@ function OptimizerPage() {
               <div className="border border-border bg-slate-50 dark:bg-slate-800 p-2.5 rounded-[2px]">
                 <p className="text-[10px] font-bold uppercase text-slate-500">Compute Time</p>
                 <p className="font-mono text-lg font-bold text-slate-900 dark:text-slate-100 mt-0.5">
-                  {executionDuration ? `${executionDuration.toFixed(1)}s` : running ? "..." : "-"}
+                  {executionDuration !== null
+                    ? `${executionDuration.toFixed(1)}s`
+                    : running
+                      ? "..."
+                      : "-"}
                 </p>
               </div>
               <div className="border border-border bg-slate-50 dark:bg-slate-800 p-2.5 rounded-[2px]">
@@ -816,6 +848,131 @@ function OptimizerPage() {
           </div>
         </Card>
       </div>
+
+      {/* SHADOW BLOCK OPPORTUNITIES */}
+      <div className="mb-6 border-2 border-[#003366] bg-white dark:bg-slate-900 rounded-[2px]">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-[#003366] bg-slate-100 dark:bg-slate-800">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-[#003366] dark:text-sky-400 text-lg">◈</span>
+
+                <h2 className="font-mono font-bold text-sm uppercase tracking-wider text-[#003366] dark:text-sky-400">
+                  Shadow Block Opportunities
+                </h2>
+              </div>
+
+              <p className="text-[10px] text-slate-500 mt-1 uppercase tracking-wide">
+                AI-identified opportunities for combining nearby maintenance windows
+              </p>
+            </div>
+
+            <span className="border border-emerald-300 bg-emerald-100 text-emerald-800 px-3 py-1 text-[10px] font-bold uppercase">
+              {shadowBlockOpportunities.length} Opportunities
+            </span>
+          </div>
+
+          {shadowBlockOpportunities.length > 0 ? (
+            <div className="p-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+              {shadowBlockOpportunities.map((opportunity, index) => (
+              <div
+                key={`${opportunity.corridor}-${opportunity.date}-${index}`}
+                className="border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-4 rounded-[2px]"
+              >
+                {/* Header */}
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <p className="font-mono font-bold text-xs text-[#003366] dark:text-sky-400">
+                      SHADOW-{String(index + 1).padStart(2, "0")}
+                    </p>
+
+                    <p className="text-[10px] text-slate-500 uppercase mt-1">
+                      {opportunity.corridor} · {opportunity.date}
+                    </p>
+                  </div>
+
+                  <span className="text-[9px] font-bold uppercase border border-amber-300 bg-amber-100 text-amber-800 px-2 py-1">
+                    Candidate
+                  </span>
+                </div>
+
+                {/* Base Window */}
+                <div className="mb-2">
+                  <p className="text-[9px] uppercase font-bold text-slate-500">Existing Window</p>
+
+                  <div className="mt-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 px-3 py-2 font-mono text-xs">
+                    {opportunity.base_window.start}
+                    {" → "}
+                    {opportunity.base_window.end}
+                  </div>
+                </div>
+
+                {/* Candidate Window */}
+                <div className="mb-3">
+                  <p className="text-[9px] uppercase font-bold text-slate-500">Nearby Candidate</p>
+
+                  <div className="mt-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 px-3 py-2 font-mono text-xs">
+                    {opportunity.candidate_window.start}
+                    {" → "}
+                    {opportunity.candidate_window.end}
+                  </div>
+                </div>
+
+                {/* Metrics */}
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-2 text-center">
+                    <p className="text-[8px] uppercase font-bold text-slate-500">Gap</p>
+
+                    <p className="font-mono font-bold text-sm text-[#003366] dark:text-sky-400">
+                      {opportunity.gap_minutes} min
+                    </p>
+                  </div>
+
+                  <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-2 text-center">
+                    <p className="text-[8px] uppercase font-bold text-slate-500">Combined</p>
+
+                    <p className="font-mono font-bold text-sm text-[#003366] dark:text-sky-400">
+                      {opportunity.combined_duration_minutes} min
+                    </p>
+                  </div>
+                </div>
+
+                {/* Tasks */}
+                <div className="mt-3">
+                  <p className="text-[9px] uppercase font-bold text-slate-500 mb-1">
+                    Maintenance Tasks
+                  </p>
+
+                  <div className="flex flex-wrap gap-1">
+                    {[
+                      ...(opportunity.base_tasks || []),
+                      ...(opportunity.candidate_tasks || []),
+                    ].map((task, taskIndex) => (
+                      <span
+                        key={`${task}-${taskIndex}`}
+                        className="text-[9px] font-mono bg-slate-200 dark:bg-slate-700 px-2 py-1"
+                      >
+                        {task}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              ))}
+            </div>
+          ) : (
+            <div className="p-5">
+              <div className="border border-dashed border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 p-5 text-center rounded-[2px]">
+                <p className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-200">
+                  No Shadow Block Opportunities Identified
+                </p>
+                <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-1">
+                  The AI optimizer did not find another nearby maintenance window that can be
+                  combined within the configured corridor, time-gap, and block-duration limits.
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
 
       {/* GENERATED OPTIMIZED BLOCKS GRID */}
       {apiData && apiData.blocks && apiData.blocks.length > 0 && (
@@ -1047,8 +1204,9 @@ function OptimizerPage() {
                 </CardContent>
               </Card>
             ))}
-          </div>
+
         </div>
+          </div>
       )}
 
       {/* AI Recommendation Drawer */}
