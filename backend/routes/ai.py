@@ -1296,15 +1296,21 @@ def get_block_intelligence(block_id: str):
 
         # Get optimized block
         cur.execute("""
-            SELECT
-                ob.block_id,
-                ob.corridor_id,
-                ob.block_date,
-                ob.start_time,
-                ob.end_time
-            FROM optimized_blocks ob
-            WHERE ob.block_id = %s
-        """, (block_id,))
+        SELECT
+            ob.block_id,
+            ob.corridor_id,
+            ob.block_date,
+            ob.start_time,
+            ob.end_time,
+            ob.duration_min,
+            ob.utilization_percent,
+            ob.train_impact_score,
+            ob.optimization_score,
+            ob.number_of_tasks,
+            ob.number_of_departments
+        FROM optimized_blocks ob
+        WHERE ob.block_id = %s
+    """, (block_id,))
 
         block = cur.fetchone()
 
@@ -1314,7 +1320,70 @@ def get_block_intelligence(block_id: str):
                 detail=f"Optimized block {block_id} not found"
             )
 
-        block_id_db, corridor_id, block_date, start_time, end_time = block
+        (
+            block_id_db,
+            corridor_id,
+            block_date,
+            start_time,
+            end_time,
+            duration_min,
+            utilization_percent,
+            train_impact_score,
+            optimization_score,
+            number_of_tasks,
+            number_of_departments,
+        ) = block
+
+
+        # ==========================================
+        # AI EXPLANATION
+        # ==========================================
+
+        why_selected = []
+
+        if train_impact_score == 0:
+            why_selected.append(
+                "No train conflicts in the selected window"
+            )
+        else:
+            why_selected.append(
+                f"Train impact considered ({train_impact_score:.2f})"
+            )
+
+        if utilization_percent >= 90:
+            why_selected.append(
+                f"High block utilization ({utilization_percent:.2f}%)"
+            )
+        elif utilization_percent >= 70:
+            why_selected.append(
+                f"Good block utilization ({utilization_percent:.2f}%)"
+            )
+        else:
+            why_selected.append(
+                f"Block utilization ({utilization_percent:.2f}%)"
+            )
+
+        why_selected.append(
+            f"Traffic impact considered ({train_impact_score:.2f})"
+        )
+
+        if number_of_tasks > 1:
+            why_selected.append(
+                f"{number_of_tasks} maintenance tasks consolidated"
+            )
+        else:
+            why_selected.append(
+                "Maintenance task scheduled within the optimized window"
+            )
+
+        if number_of_departments > 1:
+            why_selected.append(
+                f"{number_of_departments} departments coordinated"
+            )
+
+        why_selected.append(
+            f"Optimization score: {optimization_score:.2f}"
+        )
 
         # Get tasks/assets associated with this block
         cur.execute("""
@@ -1483,6 +1552,7 @@ def get_block_intelligence(block_id: str):
             }
         )
 
+
         return {
             "success": True,
             "block_id": block_id_db,
@@ -1492,7 +1562,39 @@ def get_block_intelligence(block_id: str):
             "end_time": str(end_time),
             "tasks_analyzed": len(tasks),
             "trains_in_window": len(trains),
-            "intelligence": result
+            "intelligence": result,
+
+            # ==========================================
+            # AI EXPLANATION
+            # ==========================================
+
+            "ai_explanation": {
+                "score": float(optimization_score or 0),
+
+                "why_selected": why_selected,
+
+                "metrics": {
+                    "duration_min": int(
+                        duration_min or 0
+                    ),
+
+                    "utilization_percent": float(
+                        utilization_percent or 0
+                    ),
+
+                    "train_impact_score": float(
+                        train_impact_score or 0
+                    ),
+
+                    "number_of_tasks": int(
+                        number_of_tasks or 0
+                    ),
+
+                    "number_of_departments": int(
+                        number_of_departments or 0
+                    )
+                }
+            }
         }
 
     finally:
