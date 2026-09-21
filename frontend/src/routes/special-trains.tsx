@@ -139,10 +139,14 @@ interface ImpactData {
 }
 
 const CORRIDORS = [
-  { id: "CORR-001", name: "NDLS - GZB (Delhi Main - Ghaziabad)" },
-  { id: "CORR-002", name: "GZB - CNB (Ghaziabad - Kanpur)" },
-  { id: "CORR-003", name: "CNB - PRYJ (Kanpur - Prayagraj)" },
-  { id: "CORR-004", name: "PRYJ - DDU (Prayagraj - Pt. Deen Dayal Upadhyaya)" },
+  { id: "C01", name: "C01 (NDLS - GZB)" },
+  { id: "C02", name: "C02 (GZB - CNB)" },
+  { id: "C03", name: "C03 (CNB - PRYJ)" },
+  { id: "C04", name: "C04 (PRYJ - DDU)" },
+  { id: "C05", name: "C05" },
+  { id: "C06", name: "C06" },
+  { id: "C07", name: "C07" },
+  { id: "C08", name: "C08" },
 ];
 
 const SPECIAL_TYPES = [
@@ -192,7 +196,7 @@ function SpecialTrainsPage() {
   const [formNumber, setFormNumber] = useState("");
   const [formName, setFormName] = useState("");
   const [formType, setFormType] = useState("FESTIVAL");
-  const [formCorridor, setFormCorridor] = useState("CORR-001");
+  const [formCorridor, setFormCorridor] = useState("C01");
   const [isRange, setIsRange] = useState(false);
   const [formDate, setFormDate] = useState("");
   const [fromDate, setFromDate] = useState("");
@@ -209,30 +213,62 @@ function SpecialTrainsPage() {
 
   // Fetch special trains
   const fetchTrains = async () => {
-    try {
-      setLoading(true);
-      const params = new URLSearchParams();
-      if (selectedCorridor !== "ALL") params.append("corridor_id", selectedCorridor);
-      if (dateFilter) {
-        params.append("from", dateFilter);
-        params.append("to", dateFilter);
-      }
-      if (statusFilter === "ACTIVE") params.append("active", "true");
-      if (statusFilter === "INACTIVE") params.append("active", "false");
+  try {
+    setLoading(true);
 
-      const queryStr = params.toString() ? `?${params.toString()}` : "";
-      const res = await apiFetch(`/special-trains/${queryStr}`);
-      if (res && res.special_trains) {
-        setTrains(res.special_trains);
-      } else {
-        setTrains([]);
-      }
-    } catch (err: any) {
-      toast.error(t("Failed to load special trains", "विशेष रेलगाड़ी सूची लोड करने में त्रुटि"));
-    } finally {
-      setLoading(false);
+    const params = new URLSearchParams();
+
+    if (selectedCorridor !== "ALL") {
+      params.append("corridor_id", selectedCorridor);
     }
-  };
+
+    if (dateFilter) {
+      params.append("from", dateFilter);
+      params.append("to", dateFilter);
+    }
+
+    if (statusFilter === "ACTIVE") {
+      params.append("active", "true");
+    }
+
+    if (statusFilter === "INACTIVE") {
+      params.append("active", "false");
+    }
+
+    const queryStr = params.toString()
+      ? `?${params.toString()}`
+      : "";
+
+    const response = await apiFetch(
+      `/special-trains/${queryStr}`
+    );
+
+    if (!response.ok) {
+      throw new Error(
+        `Failed to load special trains (${response.status})`
+      );
+    }
+
+    const res = await response.json();
+
+    if (res && res.special_trains) {
+      setTrains(res.special_trains);
+    } else {
+      setTrains([]);
+    }
+
+  } catch (err: any) {
+    toast.error(
+      err.message ||
+      t(
+        "Failed to load special trains",
+        "विशेष रेलगाड़ी सूची लोड करने में त्रुटि"
+      )
+    );
+  } finally {
+    setLoading(false);
+  }
+};
 
   useEffect(() => {
     fetchTrains();
@@ -259,8 +295,14 @@ function SpecialTrainsPage() {
     setImpactData(null);
     setImpactLoading(true);
     try {
-      const data = await apiFetch(`/special-trains/${id}/impact`);
-      setImpactData(data);
+      const response = await apiFetch(`/special-trains/${id}/impact`);
+
+if (!response.ok) {
+  throw new Error(`Impact analysis failed (${response.status})`);
+}
+
+const data = await response.json();
+setImpactData(data);
     } catch (err: any) {
       toast.error(t("Failed to calculate special train impact", "विशेष रेलगाड़ी प्रभाव गणना विफल"));
     } finally {
@@ -338,16 +380,23 @@ function SpecialTrainsPage() {
         } else {
           payload.service_date = formDate;
         }
-        const res = await apiFetch("/special-trains/", {
-          method: "POST",
-          body: JSON.stringify(payload),
-        });
-        toast.success(
-          t(
-            `Successfully created ${res.created_count} special train service(s)`,
-            `${res.created_count} विशेष रेलगाड़ी सेवाएं सफलतापूर्वक बनाई गईं`
-          )
-        );
+        const response = await apiFetch("/special-trains/", {
+  method: "POST",
+  body: JSON.stringify(payload),
+});
+
+if (!response.ok) {
+  throw new Error(`Failed to create special train (${response.status})`);
+}
+
+const res = await response.json();
+
+toast.success(
+  t(
+    `Successfully created ${res.created_count} special train service(s)`,
+    `${res.created_count} विशेष रेलगाड़ी सेवाएं सफलतापूर्वक बनाई गईं`
+  )
+);
       }
       setCreateDialogOpen(false);
       setEditingTrain(null);
@@ -364,7 +413,7 @@ function SpecialTrainsPage() {
     setFormNumber("");
     setFormName("");
     setFormType("FESTIVAL");
-    setFormCorridor("CORR-001");
+    setFormCorridor("C01");
     setIsRange(false);
     setFormDate("");
     setFromDate("");

@@ -181,7 +181,10 @@ function ConflictsPage() {
       if (b.block_status === "APPROVED") approvedToday++;
       if (b.block_status === "REJECTED" || b.block_status === "REWORK") rejected++;
       
-      if (b.conflicts?.length > 0 && b.block_status === "PLANNED") {
+      if (
+  b.conflicts?.length > 0 &&
+  (b.block_status === "PLANNED" || b.block_status === "PENDING")
+) {
         openConflicts += b.conflicts.length;
         b.conflicts.forEach(c => {
           const severity = classifyTrainConflictSeverity(
