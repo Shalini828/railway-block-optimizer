@@ -23,6 +23,9 @@ import {
   FileSpreadsheet,
   Info,
   Ban,
+  Maximize2,
+  Minimize2,
+  Plus,
 } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader, deptColor } from "@/components/AppShell";
@@ -130,6 +133,7 @@ function RequestsPage() {
   const [rejectionReason, setRejectionReason] = useState("");
 
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showForm, setShowForm] = useState(true);
 
   // Use visibleReqs for department roles, reqs for network roles
   const activeReqs = visibleReqs;
@@ -433,11 +437,43 @@ function RequestsPage() {
         </div>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-[400px_1fr] xl:grid-cols-[440px_1fr]">
-        {/* LEFT PANEL: FORM IR-REQ-2024 or Control Office Info */}
-        <div className="space-y-4">
-          {role.id === "control" ? (
-            <Card className="border-2 border-[#003366] bg-white dark:bg-slate-900 rounded-[2px] shadow-none p-5">
+      <div className="space-y-6">
+        {/* TOP PANEL: FORM IR-REQ-2024 or Control Office Info */}
+        {!showForm ? (
+          <div className="bg-slate-50 dark:bg-slate-900 border border-border p-3.5 rounded-[2px] flex items-center justify-between shadow-xs">
+            <div className="flex items-center gap-2.5">
+              <div className="p-1.5 bg-[#003366] text-white rounded-[2px]">
+                <FileText className="size-4 text-[#FF9933]" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                    Form IR-REQ-2024
+                  </span>
+                  <span className="bg-[#FF9933] text-slate-950 text-[9px] font-bold px-1.5 py-0.2 rounded-[2px] uppercase">
+                    Official
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-500">
+                  {t(
+                    "Electronic Maintenance Demand Filing · Filing form is currently minimized.",
+                    "इलेक्ट्रॉनिक अनुरक्षण मांग फाइलिंग · मांग पत्र फॉर्म वर्तमान में छोटा किया गया है।"
+                  )}
+                </p>
+              </div>
+            </div>
+            <Button
+              size="sm"
+              onClick={() => setShowForm(true)}
+              className="h-8 text-xs bg-[#003366] hover:bg-[#002244] text-white font-bold gap-1.5 rounded-[2px] cursor-pointer"
+            >
+              <Plus className="size-3.5" />
+              <span>{t("File New Requisition", "नया मांग पत्र भरें")}</span>
+            </Button>
+          </div>
+        ) : role.id === "control" ? (
+          <Card className="border-2 border-[#003366] bg-white dark:bg-slate-900 rounded-[2px] shadow-none p-5">
+            <div className="flex items-start justify-between gap-4">
               <div className="flex items-start gap-3">
                 <Info className="size-5 text-[#003366] dark:text-sky-400 mt-0.5 shrink-0" />
                 <div>
@@ -446,11 +482,11 @@ function RequestsPage() {
                   </h3>
                   <p className="text-xs text-slate-600 dark:text-slate-300 mt-1.5 leading-relaxed">
                     {t(
-                      "Requisitions are raised by the department engineers. Control consumes and schedules them.",
-                      "मांग पत्र विभागीय इंजीनियरों द्वारा उठाए जाते हैं। नियंत्रण उन्हें प्राप्त और निर्धारित करता है।"
+                      "Requisitions are raised by the department engineers. Control consumes, schedules, and reviews them.",
+                      "मांग पत्र विभागीय इंजीनियरों द्वारा उठाए जाते हैं। नियंत्रण उन्हें प्राप्त, निर्धारित एवं समीक्षा करता है।"
                     )}
                   </p>
-                  <div className="mt-4">
+                  <div className="mt-3.5">
                     <Link to="/optimizer">
                       <Button size="sm" className="h-8 bg-[#003366] hover:bg-[#002244] text-white font-bold text-xs rounded-[2px]">
                         <Brain className="mr-1.5 size-3.5" />
@@ -460,20 +496,51 @@ function RequestsPage() {
                   </div>
                 </div>
               </div>
-            </Card>
-          ) : (
-            <Card className="border-2 border-[#003366] bg-white dark:bg-slate-900 rounded-[2px] shadow-none">
-              <div className="bg-[#003366] p-3 text-white border-b-2 border-[#FF9933] flex items-center justify-between">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 gap-1 rounded-[2px]"
+                onClick={() => setShowForm(false)}
+              >
+                <Minimize2 className="size-3" />
+                <span>{t("Minimize", "छोटा करें")}</span>
+              </Button>
+            </div>
+          </Card>
+        ) : (
+          <Card className="border-2 border-[#003366] bg-white dark:bg-slate-900 rounded-[2px] shadow-sm">
+            <div className="bg-[#003366] p-3 text-white border-b-2 border-[#FF9933] flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <FileText className="size-4 text-[#FF9933]" />
                 <div>
-                  <h2 className="text-xs font-bold uppercase tracking-wider">Form IR-REQ-2024</h2>
-                  <p className="text-[10px] text-slate-300">{t("Electronic Maintenance Demand Filing", "इलेक्ट्रॉनिक अनुरक्षण मांग फाइलिंग")}</p>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-xs font-bold uppercase tracking-wider">Form IR-REQ-2024</h2>
+                    <span className="bg-[#FF9933] text-slate-950 text-[9px] font-bold px-1.5 py-0.5 rounded-[2px] uppercase">
+                      Official
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-slate-300">
+                    {t("Electronic Maintenance Demand Filing · Centre for Railway Information Systems", "इलेक्ट्रॉनिक अनुरक्षण मांग फाइलिंग · रेलवे सूचना प्रणाली केंद्र")}
+                  </p>
                 </div>
-                <span className="bg-[#FF9933] text-slate-950 text-[9px] font-bold px-1.5 py-0.5 rounded-[2px] uppercase">
-                  Official
-                </span>
               </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs text-white hover:bg-white/10 gap-1 rounded-[2px] cursor-pointer"
+                onClick={() => setShowForm(false)}
+                title="Minimize Form"
+              >
+                <Minimize2 className="size-3" />
+                <span className="hidden sm:inline">{t("Minimize Form", "फॉर्म छोटा करें")}</span>
+              </Button>
+            </div>
 
-              <CardContent className="space-y-3.5 p-4 text-xs">
+            <CardContent className="p-4 sm:p-5 text-xs space-y-4">
+              {/* Row 1: General Demand & Asset Identification */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3.5">
                 <div className="grid gap-1">
                   <Label className="text-[11px] font-bold uppercase text-slate-700 dark:text-slate-300">
                     {t("Originating Department", "मूल विभाग")} <span className="text-destructive">*</span>
@@ -518,7 +585,7 @@ function RequestsPage() {
                   />
                 </div>
 
-                <div className="grid gap-1">
+                <div className="grid gap-1 md:col-span-2">
                   <Label className="text-[11px] font-bold uppercase text-slate-700 dark:text-slate-300">
                     Nature of Maintenance Work <span className="text-destructive">*</span>
                   </Label>
@@ -529,7 +596,10 @@ function RequestsPage() {
                     onChange={(e) => setWork(e.target.value)}
                   />
                 </div>
+              </div>
 
+              {/* Row 2: Location & Block Parameters */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3.5">
                 <div className="grid gap-1">
                   <Label className="text-[11px] font-bold uppercase text-slate-700 dark:text-slate-300">
                     Railway Section <span className="text-destructive">*</span>
@@ -548,118 +618,122 @@ function RequestsPage() {
                   </Select>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="grid gap-1">
-                    <Label className="text-[11px] font-bold uppercase text-slate-700 dark:text-slate-300">
-                      Track Line
-                    </Label>
-                    <Select value={line} onValueChange={setLine}>
-                      <SelectTrigger className="h-8 rounded-[2px] text-xs bg-background">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent className="rounded-[2px]">
-                        {["Up Main", "Down Main", "Line 3 Up", "Freight Loop"].map((l) => (
-                          <SelectItem key={l} value={l} className="text-xs">
-                            {l}
+                <div className="grid gap-1">
+                  <Label className="text-[11px] font-bold uppercase text-slate-700 dark:text-slate-300">
+                    Track Line
+                  </Label>
+                  <Select value={line} onValueChange={setLine}>
+                    <SelectTrigger className="h-8 rounded-[2px] text-xs bg-background">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="rounded-[2px]">
+                      {["Up Main", "Down Main", "Line 3 Up", "Freight Loop"].map((l) => (
+                        <SelectItem key={l} value={l} className="text-xs">
+                          {l}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="grid gap-1">
+                  <Label className="text-[11px] font-bold uppercase text-slate-700 dark:text-slate-300">
+                    Chainage (KM)
+                  </Label>
+                  <Input
+                    className="h-8 font-mono text-xs rounded-[2px] bg-background"
+                    value={chainage}
+                    onChange={(e) => setChainage(e.target.value)}
+                  />
+                </div>
+
+                <div className="grid gap-1">
+                  <Label className="text-[11px] font-bold uppercase text-slate-700 dark:text-slate-300">
+                    Block Type
+                  </Label>
+                  <Select
+                    value={blockType}
+                    onValueChange={(v) => setBlockType(v as Requisition["blockType"])}
+                  >
+                    <SelectTrigger className="h-8 rounded-[2px] text-xs bg-background">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="rounded-[2px]">
+                      {["Traffic Block", "Power Block", "Integrated Block", "Shadow Block"].map(
+                        (b) => (
+                          <SelectItem key={b} value={b} className="text-xs">
+                            {b}
                           </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="grid gap-1">
-                    <Label className="text-[11px] font-bold uppercase text-slate-700 dark:text-slate-300">
-                      Chainage (KM)
-                    </Label>
-                    <Input
-                      className="h-8 font-mono text-xs rounded-[2px] bg-background"
-                      value={chainage}
-                      onChange={(e) => setChainage(e.target.value)}
-                    />
-                  </div>
+                        ),
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              {/* Row 3: Resources & Criticality Parameters */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3.5">
+                <div className="grid gap-1">
+                  <Label className="text-[11px] font-bold uppercase text-slate-700 dark:text-slate-300">
+                    Duration (Hrs)
+                  </Label>
+                  <Input
+                    className="h-8 font-mono text-xs rounded-[2px] bg-background"
+                    type="number"
+                    value={duration}
+                    onChange={(e) => setDuration(e.target.value)}
+                  />
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="grid gap-1">
-                    <Label className="text-[11px] font-bold uppercase text-slate-700 dark:text-slate-300">
-                      Block Type
-                    </Label>
-                    <Select
-                      value={blockType}
-                      onValueChange={(v) => setBlockType(v as Requisition["blockType"])}
-                    >
-                      <SelectTrigger className="h-8 rounded-[2px] text-xs bg-background">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent className="rounded-[2px]">
-                        {["Traffic Block", "Power Block", "Integrated Block", "Shadow Block"].map(
-                          (b) => (
-                            <SelectItem key={b} value={b} className="text-xs">
-                              {b}
-                            </SelectItem>
-                          ),
-                        )}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="grid gap-1">
-                    <Label className="text-[11px] font-bold uppercase text-slate-700 dark:text-slate-300">
-                      Duration (Hrs)
-                    </Label>
-                    <Input
-                      className="h-8 font-mono text-xs rounded-[2px] bg-background"
-                      type="number"
-                      value={duration}
-                      onChange={(e) => setDuration(e.target.value)}
-                    />
-                  </div>
+                <div className="grid gap-1">
+                  <Label className="text-[11px] font-bold uppercase text-slate-700 dark:text-slate-300">
+                    Crew Req.
+                  </Label>
+                  <Input
+                    className="h-8 font-mono text-xs rounded-[2px] bg-background"
+                    type="number"
+                    value={crew}
+                    onChange={(e) => setCrew(e.target.value)}
+                  />
                 </div>
 
-                <div className="grid grid-cols-3 gap-2">
-                  <div className="grid gap-1">
-                    <Label className="text-[10px] font-bold uppercase text-slate-700 dark:text-slate-300">
-                      Crew Req.
-                    </Label>
-                    <Input
-                      className="h-8 font-mono text-xs rounded-[2px] bg-background"
-                      type="number"
-                      value={crew}
-                      onChange={(e) => setCrew(e.target.value)}
-                    />
-                  </div>
-                  <div className="grid gap-1">
-                    <Label className="text-[10px] font-bold uppercase text-slate-700 dark:text-slate-300">
-                      Criticality
-                    </Label>
-                    <Select
-                      value={criticality}
-                      onValueChange={(v) => setCriticality(v as Requisition["criticality"])}
-                    >
-                      <SelectTrigger className="h-8 rounded-[2px] text-xs bg-background">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent className="rounded-[2px]">
-                        {["High", "Medium", "Low", "Critical"].map((c) => (
-                          <SelectItem key={c} value={c} className="text-xs">
-                            {c}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="grid gap-1">
-                    <Label className="text-[10px] font-bold uppercase text-slate-700 dark:text-slate-300">
-                      Days Overdue
-                    </Label>
-                    <Input
-                      className="h-8 text-xs rounded-[2px] bg-background"
-                      type="number"
-                      value={overdue}
-                      onChange={(e) => setOverdue(e.target.value)}
-                    />
-                  </div>
+                <div className="grid gap-1">
+                  <Label className="text-[11px] font-bold uppercase text-slate-700 dark:text-slate-300">
+                    Criticality
+                  </Label>
+                  <Select
+                    value={criticality}
+                    onValueChange={(v) => setCriticality(v as Requisition["criticality"])}
+                  >
+                    <SelectTrigger className="h-8 rounded-[2px] text-xs bg-background">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="rounded-[2px]">
+                      {["High", "Medium", "Low", "Critical"].map((c) => (
+                        <SelectItem key={c} value={c} className="text-xs">
+                          {c}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
 
-                <div className="flex items-center justify-between border border-border bg-slate-50 dark:bg-slate-800/60 p-2.5 rounded-[2px]">
+                <div className="grid gap-1">
+                  <Label className="text-[11px] font-bold uppercase text-slate-700 dark:text-slate-300">
+                    Days Overdue
+                  </Label>
+                  <Input
+                    className="h-8 text-xs rounded-[2px] bg-background"
+                    type="number"
+                    value={overdue}
+                    onChange={(e) => setOverdue(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              {/* Row 4: TSR Caution Risk & Live Criticality Index */}
+              <div className="pt-2 border-t border-border grid grid-cols-1 md:grid-cols-2 gap-3.5 items-stretch">
+                <div className="flex items-center justify-between border border-border bg-slate-50 dark:bg-slate-800/60 p-3 rounded-[2px]">
                   <div className="flex flex-col gap-0.5">
                     <Label className="text-xs font-bold cursor-pointer" htmlFor="tsr-toggle">
                       TSR Risk If Deferred
@@ -669,87 +743,92 @@ function RequestsPage() {
                   <Switch id="tsr-toggle" checked={tsr} onCheckedChange={setTsr} />
                 </div>
 
-                {/* Live Priority Score Tile */}
-                <div className="border border-border bg-slate-50 dark:bg-slate-800/80 p-3 rounded-[2px]">
+                <div className="border border-border bg-slate-50 dark:bg-slate-800/80 p-3 rounded-[2px] flex flex-col justify-center">
                   <div className="flex justify-between items-center mb-1.5">
                     <span className="text-[10px] font-bold uppercase text-slate-600 dark:text-slate-400">
                       Calculated Criticality Index
                     </span>
-                    <span className={`px-2 py-0.5 rounded-[2px] text-[10px] font-bold ${scoreBg}`}>
+                    <span className={`px-2 py-0.5 text-[9px] font-bold rounded-[2px] ${scoreBg}`}>
                       {scoreLabel}
                     </span>
                   </div>
                   <div className="flex items-center gap-3">
                     <div className="h-2 flex-1 rounded-[2px] bg-slate-200 dark:bg-slate-700 overflow-hidden">
                       <div
-                        className="h-full bg-[#003366] dark:bg-sky-400"
+                        className="h-full bg-[#003366] dark:bg-sky-400 transition-all"
                         style={{ width: `${currentScore}%` }}
                       />
                     </div>
-                    <span className="font-mono text-base font-bold text-slate-900 dark:text-slate-100">
+                    <span className="font-mono text-xs font-bold text-slate-900 dark:text-slate-100">
                       {currentScore}/100
                     </span>
                   </div>
                 </div>
+              </div>
 
+              {/* Action Toolbar */}
+              <div className="pt-2 border-t border-border flex flex-wrap items-center justify-end gap-3">
                 {role.id === "admin" ? (
-                  <div className="flex flex-col gap-2">
+                  <>
                     <Button
-                      className="w-full h-9 bg-slate-100 hover:bg-slate-200 text-slate-900 border border-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-100 dark:border-slate-700 font-bold text-xs rounded-[2px]"
+                      type="button"
+                      className="h-9 px-4 bg-slate-100 hover:bg-slate-200 text-slate-900 border border-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-100 dark:border-slate-700 font-bold text-xs rounded-[2px] cursor-pointer"
                       onClick={() => submit(false)}
                       disabled={isSubmitting}
                     >
                       {isSubmitting ? (
                         <>
-                          <RefreshCw className="mr-2 size-3.5 animate-spin" /> {t("Filing...", "दर्ज किया जा रहा है...")}
+                          <RefreshCw className="mr-1.5 size-3.5 animate-spin" /> {t("Filing...", "दर्ज किया जा रहा है...")}
                         </>
                       ) : (
                         <>
-                          <Send className="mr-2 size-3.5" /> {t("Submit Requisition", "मांग पत्र जमा करें")}
+                          <Send className="mr-1.5 size-3.5" /> {t("Submit Requisition", "मांग पत्र जमा करें")}
                         </>
                       )}
                     </Button>
                     <Button
-                      className="w-full h-9 bg-[#003366] hover:bg-[#002244] text-white font-bold text-xs rounded-[2px]"
+                      type="button"
+                      className="h-9 px-5 bg-[#003366] hover:bg-[#002244] text-white font-bold text-xs rounded-[2px] cursor-pointer shadow-xs"
                       onClick={() => submit(true)}
                       disabled={isSubmitting}
                     >
                       {isSubmitting ? (
                         <>
-                          <RefreshCw className="mr-2 size-3.5 animate-spin" /> {t("Optimizing...", "अनुकूलन जारी...")}
+                          <RefreshCw className="mr-1.5 size-3.5 animate-spin" /> {t("Optimizing...", "अनुकूलन जारी...")}
                         </>
                       ) : (
                         <>
-                          <Sparkles className="mr-2 size-3.5 text-amber-400" /> {t("Submit & Run IR-ABPS", "जमा करें और आईआर-एबीपीएस चलाएं")}
+                          <Sparkles className="mr-1.5 size-3.5 text-amber-400" /> {t("Submit & Run IR-ABPS", "जमा करें और चलाएं")}
                         </>
                       )}
                     </Button>
-                  </div>
+                  </>
                 ) : (
                   <Button
-                    className="w-full h-9 bg-[#003366] hover:bg-[#002244] text-white font-bold text-xs rounded-[2px]"
+                    type="button"
+                    className="h-9 px-6 bg-[#003366] hover:bg-[#002244] text-white font-bold text-xs rounded-[2px] cursor-pointer shadow-xs"
                     onClick={() => submit(false)}
                     disabled={isSubmitting}
                   >
                     {isSubmitting ? (
                       <>
-                        <RefreshCw className="mr-2 size-3.5 animate-spin" /> {t("Transmitting...", "प्रेषित किया जा रहा है...")}
+                        <RefreshCw className="mr-1.5 size-3.5 animate-spin" /> {t("Transmitting...", "प्रेषित किया जा रहा है...")}
                       </>
                     ) : (
                       <>
-                        <Send className="mr-2 size-3.5" /> {t("Submit Requisition", "मांग पत्र जमा करें")}
+                        <Send className="mr-1.5 size-3.5" /> {t("Submit Requisition", "मांग पत्र जमा करें")}
                       </>
                     )}
                   </Button>
                 )}
-              </CardContent>
-            </Card>
-          )}
-        </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
-        {/* RIGHT PANEL: REQUISITIONS LEDGER */}
-        <div className="space-y-4">
-          <Card className="border border-border bg-white dark:bg-slate-900 rounded-[2px] shadow-none flex flex-col">
+        {/* BOTTOM PANEL: REQUISITIONS LEDGER */}
+        <div className="w-full space-y-4">
+          <Card className="border border-border bg-white dark:bg-slate-900 rounded-[2px] shadow-xs flex flex-col">
             <CardHeader className="bg-slate-100 dark:bg-slate-900/80 p-3.5 border-b border-border">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
@@ -758,9 +837,22 @@ function RequestsPage() {
                     Departmental Maintenance Ledger
                   </CardTitle>
                 </div>
-                <span className="text-xs font-mono font-bold text-slate-700 dark:text-slate-300">
-                  {filtered.length} Requisitions Filtered
-                </span>
+                <div className="flex items-center gap-2.5">
+                  {!showForm && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 px-2.5 text-xs font-bold gap-1.5 border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-[#003366] dark:text-sky-400 cursor-pointer"
+                      onClick={() => setShowForm(true)}
+                    >
+                      <Plus className="size-3" />
+                      <span>{t("File New Requisition", "नया मांग पत्र")}</span>
+                    </Button>
+                  )}
+                  <span className="text-xs font-mono font-bold text-slate-700 dark:text-slate-300 shrink-0">
+                    {filtered.length} {t("Records", "रिकॉर्ड")}
+                  </span>
+                </div>
               </div>
 
               {/* Filter Controls Bar */}
@@ -801,16 +893,30 @@ function RequestsPage() {
             </CardHeader>
 
             <CardContent className="p-0 flex-1 overflow-x-auto">
-              <Table>
+              <Table className="w-full text-xs">
                 <TableHeader>
-                  <TableRow>
-                    <TableHead>Requisition ID / Asset</TableHead>
-                    <TableHead>Dept</TableHead>
-                    <TableHead>Section / Line</TableHead>
-                    <TableHead className="text-right">Duration</TableHead>
-                    <TableHead className="text-right">Score</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="text-right">Action</TableHead>
+                  <TableRow className="bg-slate-50 dark:bg-slate-900/60">
+                    <TableHead className="font-bold text-slate-700 dark:text-slate-300">
+                      {t("Requisition ID / Asset", "मांग पत्र / परिसंपत्ति")}
+                    </TableHead>
+                    <TableHead className="w-[70px] font-bold text-slate-700 dark:text-slate-300">
+                      {t("Dept", "विभाग")}
+                    </TableHead>
+                    <TableHead className="font-bold text-slate-700 dark:text-slate-300">
+                      {t("Section / Line", "खंड / लाइन")}
+                    </TableHead>
+                    <TableHead className="w-[90px] text-right font-bold text-slate-700 dark:text-slate-300">
+                      {t("Duration", "अवधि")}
+                    </TableHead>
+                    <TableHead className="w-[100px] text-right font-bold text-slate-700 dark:text-slate-300">
+                      {t("Score", "स्कोर")}
+                    </TableHead>
+                    <TableHead className="w-[140px] font-bold text-slate-700 dark:text-slate-300">
+                      {t("Status", "स्थिति")}
+                    </TableHead>
+                    <TableHead className="w-[170px] text-right font-bold text-slate-700 dark:text-slate-300">
+                      {t("Action", "कार्रवाई")}
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -848,20 +954,20 @@ function RequestsPage() {
                           <p className="font-semibold text-slate-800 dark:text-slate-200">{r.section}</p>
                           <p className="text-[10px] text-slate-500">{r.line} · {r.chainage}</p>
                         </TableCell>
-                        <TableCell className="text-xs font-mono text-right font-bold">
+                        <TableCell className="text-xs font-mono text-right font-bold whitespace-nowrap py-2">
                           {r.duration} hrs
                         </TableCell>
-                        <TableCell className="text-right">
+                        <TableCell className="text-right whitespace-nowrap py-2">
                           <span className={`border px-1.5 py-0.5 text-[9px] uppercase rounded-[2px] font-mono font-bold ${scrClass}`}>
                             {rScore} ({scrLabel})
                           </span>
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="whitespace-nowrap py-2">
                           <span className={`border px-1.5 py-0.5 text-[9px] uppercase rounded-[2px] font-semibold ${getStatusStyle(r.status)}`}>
                             {r.status}
                           </span>
                         </TableCell>
-                        <TableCell className="text-right">
+                        <TableCell className="text-right whitespace-nowrap py-2">
                           <div className="flex items-center justify-end gap-1.5">
                             <Button
                               size="sm"

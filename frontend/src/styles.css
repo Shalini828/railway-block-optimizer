@@ -233,6 +233,40 @@
   border-bottom: 2px solid #FF9933;
 }
 
+/* Data Table Scrollbar */
+.table-scrollbar {
+  scrollbar-width: thin !important;
+  -ms-overflow-style: auto !important;
+}
+
+.table-scrollbar::-webkit-scrollbar {
+  display: block !important;
+  height: 6px !important;
+  width: 6px !important;
+}
+
+.table-scrollbar::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 3px;
+}
+
+.dark .table-scrollbar::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.table-scrollbar::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+
+.dark .table-scrollbar::-webkit-scrollbar-thumb {
+  background: #475569;
+}
+
+.table-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
 .govt-table-zebra tr:nth-child(even) {
   background-color: rgba(0, 51, 102, 0.025);
 }
