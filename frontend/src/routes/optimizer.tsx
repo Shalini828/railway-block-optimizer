@@ -270,44 +270,70 @@ function OptimizerPage() {
   const pending = reqs.filter((r) => r.status === "Pending AI Scheduling");
 
   // Window A vs Window B Candidate Evaluator State
-  const [corridorsList, setCorridorsList] = useState<
-    { corridor_id: string; corridor_name: string }[]
-  >([]);
-  const [candCorridor, setCandCorridor] = useState("CORR-001");
-  const [candDate, setCandDate] = useState("2026-09-20");
+  const DEFAULT_CAND_CORRIDORS = [
+    { corridor_id: "C01", corridor_name: "New Delhi - Kanpur (NDLS-CNB)" },
+    { corridor_id: "C02", corridor_name: "Kanpur - Prayagraj (CNB-PRYJ)" },
+    { corridor_id: "C03", corridor_name: "Prayagraj - Pt. Deen Dayal Upadhyaya (PRYJ-DDU)" },
+    { corridor_id: "C04", corridor_name: "Ghaziabad - Moradabad (GZB-MB)" },
+    { corridor_id: "C05", corridor_name: "Agra Cantt - Jhansi (AGC-VGLB)" },
+  ];
+
+  const [corridorsList, setCorridorsList] = useState<{ corridor_id: string; corridor_name: string }[]>(
+    DEFAULT_CAND_CORRIDORS,
+  );
+  const [candCorridor, setCandCorridor] = useState("C01");
+  const [candDate, setCandDate] = useState(() => {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    return tomorrow.toISOString().split("T")[0];
+  });
   const [candStart, setCandStart] = useState("09:00");
   const [candEnd, setCandEnd] = useState("12:00");
-  const [recommendResult, setRecommendResult] = useState<Record<string, unknown> | null>(null);
+  const [recommendResult, setRecommendResult] = useState<Record<string, any> | null>(null);
   const [recommendLoading, setRecommendLoading] = useState(false);
   const [selectedCandidateIndex, setSelectedCandidateIndex] = useState(0);
 
-  const evaluateCandidateWindows = async () => {
+  const evaluateCandidateWindows = async (
+    overrideCorridor?: string,
+    overrideDate?: string,
+    overrideStart?: string,
+    overrideEnd?: string,
+    silent?: boolean,
+  ) => {
     setRecommendLoading(true);
     try {
+      const corr = overrideCorridor || candCorridor;
+      const d = overrideDate || candDate;
+      const s = overrideStart || candStart;
+      const e = overrideEnd || candEnd;
       const res = await apiFetch("/optimization/recommend-windows", {
         method: "POST",
         body: JSON.stringify({
-          corridor: candCorridor,
-          date: candDate,
-          start: candStart,
-          end: candEnd,
+          corridor: corr,
+          date: d,
+          start: s,
+          end: e,
         }),
       });
       if (!res.ok) {
         const err = (await res.json().catch(() => ({}))) as Record<string, string>;
         throw new Error(err.detail || err.message || "Failed to evaluate candidate windows");
       }
-      const data = (await res.json()) as Record<string, unknown>;
+      const data = (await res.json()) as Record<string, any>;
       setRecommendResult(data);
       setSelectedCandidateIndex(0);
-      toast.success(
-        t(
-          "Alternative candidate windows evaluated.",
-          "वैकल्पिक उम्मीदवार विंडो का मूल्यांकन किया गया।",
-        ),
-      );
+      if (!silent) {
+        toast.success(
+          t(
+            "Alternative candidate windows evaluated.",
+            "वैकल्पिक उम्मीदवार विंडो का मूल्यांकन किया गया।",
+          ),
+        );
+      }
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : "Candidate window evaluation failed");
+      if (!silent) {
+        toast.error(e instanceof Error ? e.message : "Candidate window evaluation failed");
+      }
     } finally {
       setRecommendLoading(false);
     }
@@ -319,10 +345,12 @@ function OptimizerPage() {
       .then((data) => {
         if (data?.corridors?.length) {
           setCorridorsList(data.corridors);
-          setCandCorridor(data.corridors[0].corridor_id);
         }
       })
       .catch(() => {});
+
+    // Automatically run initial evaluation for default window so the comparison is immediately visible and useful
+    void evaluateCandidateWindows("C01", undefined, "09:00", "12:00", true);
   }, []);
 
   useEffect(() => {
@@ -928,29 +956,44 @@ function OptimizerPage() {
         const activeCand =
           recommendResult?.recommended_windows?.[selectedCandidateIndex] ??
           recommendResult?.recommended_windows?.[0];
+        const reqWindow = recommendResult?.requested_window as Record<string, any> | undefined;
 
         return (
           <Card className="mb-6 border-2 border-[#003366] bg-white dark:bg-slate-900 rounded-[2px] shadow-none">
-            <CardHeader className="bg-[#003366] p-3 text-white border-b-2 border-[#FF9933] flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <Clock className="size-4 text-[#FF9933]" />
-                <CardTitle className="text-xs font-bold uppercase tracking-wider text-white">
-                  AI Decision Layer: Window A vs Window B Candidate Evaluator
-                </CardTitle>
+            <CardHeader className="bg-[#003366] p-3 text-white border-b-2 border-[#FF9933]">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <ArrowLeftRight className="size-4 text-[#FF9933]" />
+                  <CardTitle className="text-xs font-bold uppercase tracking-wider text-white">
+                    AI Decision Layer: Window A vs Window B Candidate Evaluator
+                  </CardTitle>
+                </div>
+                <span className="text-[10px] font-mono text-slate-300">
+                  POST /optimization/recommend-windows
+                </span>
               </div>
-              <span className="text-[10px] font-mono text-slate-300">
-                POST /optimization/recommend-windows
-              </span>
+              <p className="text-[11px] text-slate-200 mt-1">
+                {t(
+                  "Operational Purpose: Cross-checks your requested maintenance slot (Window A) against alternative corridor windows (Window B) to minimize passenger train delays, protect Special train punctuality, and balance freight demands.",
+                  "परिचालन उद्देश्य: यात्री ट्रेन की देरी को कम करने, विशेष ट्रेनों की समयबद्धता की रक्षा करने और माल ढुलाई की मांग को संतुलित करने के लिए आपके अनुरोधित रखरखाव स्लॉट (विंडो ए) की वैकल्पिक विंडो (विंडो बी) से तुलना करता है।",
+                )}
+              </p>
             </CardHeader>
 
             <CardContent className="p-4 space-y-4">
               {/* Corridor & Window Selection Controls */}
               <div className="flex flex-wrap items-end gap-3 bg-slate-50 dark:bg-slate-800/60 p-3 rounded-[2px] border border-border text-xs">
-                <div className="w-[180px]">
+                <div className="w-[200px]">
                   <label className="text-[10px] font-bold uppercase text-slate-500 block mb-1">
                     Corridor
                   </label>
-                  <Select value={candCorridor} onValueChange={setCandCorridor}>
+                  <Select
+                    value={candCorridor}
+                    onValueChange={(val) => {
+                      setCandCorridor(val);
+                      void evaluateCandidateWindows(val, candDate, candStart, candEnd, false);
+                    }}
+                  >
                     <SelectTrigger className="h-8 rounded-[2px] text-xs">
                       <SelectValue placeholder="Select Corridor" />
                     </SelectTrigger>
@@ -960,11 +1003,6 @@ function OptimizerPage() {
                           {c.corridor_id} – {c.corridor_name}
                         </SelectItem>
                       ))}
-                      {corridorsList.length === 0 && (
-                        <SelectItem value="CORR-001" className="text-xs">
-                          CORR-001
-                        </SelectItem>
-                      )}
                     </SelectContent>
                   </Select>
                 </div>
@@ -1010,7 +1048,7 @@ function OptimizerPage() {
                     onClick={() => void evaluateCandidateWindows()}
                     disabled={recommendLoading}
                     size="sm"
-                    className="bg-[#003366] hover:bg-[#002244] text-white font-bold h-8 text-xs rounded-[2px]"
+                    className="bg-[#003366] hover:bg-[#002244] text-white font-bold h-8 text-xs rounded-[2px] cursor-pointer"
                   >
                     {recommendLoading ? (
                       <>
@@ -1026,101 +1064,29 @@ function OptimizerPage() {
                 </div>
               </div>
 
-              {/* TRAFFIC IN WINDOW GRID */}
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-xs font-bold uppercase text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                    <Activity className="size-3.5 text-[#003366] dark:text-sky-400" />
-                    Traffic in Window: Corridor Analysis
-                  </h3>
-                  {/* Freight Pressure Chip */}
-                  <div className="flex items-center gap-1.5">
-                    <Badge
-                      variant="outline"
-                      className="border-amber-500 bg-amber-100 text-amber-900 font-bold uppercase text-[10px] dark:bg-amber-900/50 dark:text-amber-200"
-                    >
-                      Freight Pressure: {activeCand?.freight_pressure_level || "MEDIUM"}
-                    </Badge>
-                    <span className="text-[10px] text-slate-500 hidden sm:inline">
-                      • Forecast-based (hourly split is an estimate)
-                    </span>
-                  </div>
+              {/* LOADING STATE */}
+              {recommendLoading && (
+                <div className="p-8 text-center border-2 border-dashed border-[#003366]/40 rounded-[2px] bg-slate-50 dark:bg-slate-800/40">
+                  <RefreshCw className="size-6 text-[#003366] dark:text-sky-400 animate-spin mx-auto mb-2" />
+                  <p className="text-xs font-bold uppercase text-[#003366] dark:text-sky-400">
+                    Evaluating Candidate Windows for Corridor {candCorridor}...
+                  </p>
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    Scanning daily corridor schedules (05:00 to 23:00), evaluating Special train headway, and ranking optimal slots.
+                  </p>
                 </div>
-
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                  <div className="border border-border bg-slate-50 dark:bg-slate-800 p-2.5 rounded-[2px]">
-                    <span className="text-[10px] uppercase font-bold text-slate-500 block">
-                      Passenger / Express
-                    </span>
-                    <p className="font-mono text-base font-bold text-blue-700 dark:text-blue-400 mt-0.5">
-                      {activeCand?.conflicts_by_class?.passenger ?? 0}
-                      <span className="text-[10px] font-normal text-slate-500 ml-1">
-                        ({activeCand?.conflicts_by_class?.express ?? 0} Exp)
-                      </span>
-                    </p>
-                  </div>
-
-                  <div className="border border-border bg-slate-50 dark:bg-slate-800 p-2.5 rounded-[2px]">
-                    <span className="text-[10px] uppercase font-bold text-slate-500 block">
-                      Scheduled Goods
-                    </span>
-                    <p className="font-mono text-base font-bold text-amber-700 dark:text-amber-400 mt-0.5">
-                      {activeCand?.conflicts_by_class?.goods ?? 0}
-                    </p>
-                  </div>
-
-                  <div className="border border-border bg-slate-50 dark:bg-slate-800 p-2.5 rounded-[2px]">
-                    <span className="text-[10px] uppercase font-bold text-slate-500 block">
-                      Special Services
-                    </span>
-                    <p className="font-mono text-base font-bold text-purple-700 dark:text-purple-400 mt-0.5">
-                      {activeCand?.special_conflicts ?? 0}
-                    </p>
-                  </div>
-
-                  <div className="border border-border bg-slate-50 dark:bg-slate-800 p-2.5 rounded-[2px]">
-                    <span className="text-[10px] uppercase font-bold text-slate-500 block">
-                      Est. Delay Min
-                    </span>
-                    <p className="font-mono text-base font-bold text-slate-900 dark:text-slate-100 mt-0.5">
-                      {activeCand?.estimated_delay_min ?? 0} min
-                    </p>
-                  </div>
-                </div>
-
-                {/* List of Special Conflicts */}
-                <div className="mt-2.5">
-                  {(activeCand?.special_conflicts ?? 0) > 0 ? (
-                    <div className="p-2.5 border border-purple-400 bg-purple-50/80 dark:bg-purple-950/30 rounded-[2px] flex items-center justify-between text-xs">
-                      <div className="flex items-center gap-2">
-                        <Star className="size-4 text-purple-600 fill-amber-400 shrink-0" />
-                        <span className="text-purple-950 dark:text-purple-200 font-semibold">
-                          {activeCand.special_conflicts} Special train service(s) intersect with
-                          this maintenance window. Headway clearance required.
-                        </span>
-                      </div>
-                      <Badge className="bg-purple-700 text-white font-bold text-[10px]">
-                        CRITICAL HEADWAY
-                      </Badge>
-                    </div>
-                  ) : (
-                    <div className="p-2 border border-emerald-300 bg-emerald-50/50 dark:bg-emerald-950/20 rounded-[2px] flex items-center gap-2 text-xs text-emerald-800 dark:text-emerald-300">
-                      <CheckCircle2 className="size-3.5 text-emerald-600" />
-                      <span>Zero Special train conflicts detected in this time interval.</span>
-                    </div>
-                  )}
-                </div>
-              </div>
+              )}
 
               {/* WINDOW A VS WINDOW B COMPARISON VIEW */}
-              {recommendResult?.recommended_windows &&
+              {!recommendLoading &&
+                recommendResult?.recommended_windows &&
                 recommendResult.recommended_windows.length > 0 && (
-                  <div className="border-t border-border pt-4">
+                  <div className="space-y-4">
                     {/* AI Recommendation Driver Banner */}
-                    <div className="mb-4 p-3 rounded-[2px] border-2 border-emerald-500 bg-emerald-50/90 dark:bg-emerald-950/30 text-emerald-950 dark:text-emerald-200 text-xs">
+                    <div className="p-3 rounded-[2px] border-2 border-emerald-500 bg-emerald-50/90 dark:bg-emerald-950/30 text-emerald-950 dark:text-emerald-200 text-xs">
                       <div className="flex items-center gap-2 font-bold mb-1">
                         <Sparkles className="size-4 text-emerald-600" />
-                        <span>Recommendation Driver</span>
+                        <span>AI Recommendation Driver</span>
                       </div>
                       <p className="text-[11px] leading-relaxed font-medium">
                         {recommendResult.recommendation}
@@ -1129,9 +1095,9 @@ function OptimizerPage() {
 
                     {/* Candidate Selector Tabs */}
                     {recommendResult.recommended_windows.length > 1 && (
-                      <div className="flex items-center gap-1.5 mb-3 overflow-x-auto pb-1 text-xs">
-                        <span className="text-[10px] font-bold uppercase text-slate-500 mr-1">
-                          Alternative Candidates:
+                      <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
+                        <span className="text-[10px] font-bold uppercase text-slate-500 mr-1 shrink-0">
+                          Candidate Slots:
                         </span>
                         {(
                           recommendResult.recommended_windows as Array<{
@@ -1144,7 +1110,7 @@ function OptimizerPage() {
                             key={idx}
                             type="button"
                             onClick={() => setSelectedCandidateIndex(idx)}
-                            className={`px-2.5 py-1 rounded-[2px] text-xs font-mono font-bold border transition-colors ${
+                            className={`px-2.5 py-1 rounded-[2px] text-xs font-mono font-bold border transition-colors shrink-0 cursor-pointer ${
                               selectedCandidateIndex === idx
                                 ? "bg-[#003366] text-white border-[#003366]"
                                 : "bg-slate-100 text-slate-700 border-slate-300 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300"
@@ -1182,27 +1148,37 @@ function OptimizerPage() {
                           <div className="flex justify-between">
                             <span className="text-slate-500">Duration:</span>
                             <span className="font-mono font-bold">
-                              {recommendResult?.requested_window?.duration_minutes ?? 180} min
+                              {reqWindow?.duration_minutes ?? 180} min
                             </span>
                           </div>
                           <div className="flex justify-between">
-                            <span className="text-slate-500">Estimated Total Conflicts:</span>
-                            <span className="font-mono font-bold text-amber-700">
-                              {recommendResult?.requested_window?.train_conflicts ??
-                                activeCand?.train_conflicts ??
-                                "--"}
+                            <span className="text-slate-500">Train Schedule Conflicts:</span>
+                            <span className="font-mono font-bold text-amber-700 dark:text-amber-400">
+                              {reqWindow?.train_conflicts ?? "--"} trains
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-slate-500">Special Services Clashing:</span>
+                            <span className="font-mono font-bold text-purple-700 dark:text-purple-400">
+                              {reqWindow?.special_conflicts ?? 0}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-slate-500">Estimated Delay:</span>
+                            <span className="font-mono font-bold text-slate-800 dark:text-slate-200">
+                              {reqWindow?.estimated_delay_min ?? "--"} min
                             </span>
                           </div>
                           <div className="flex justify-between">
                             <span className="text-slate-500">Freight Pressure:</span>
                             <span className="font-mono font-bold uppercase">
-                              {activeCand?.freight_pressure_level || "MEDIUM"}
+                              {reqWindow?.freight_pressure_level || "MEDIUM"}
                             </span>
                           </div>
                           <div className="flex justify-between">
                             <span className="text-slate-500">Corridor Congestion:</span>
                             <span className="font-mono font-bold uppercase">
-                              {activeCand?.corridor_congestion || "MEDIUM"}
+                              {reqWindow?.corridor_congestion || "MEDIUM"}
                             </span>
                           </div>
                         </div>
@@ -1233,14 +1209,20 @@ function OptimizerPage() {
                           </div>
                           <div className="flex justify-between">
                             <span className="text-slate-500">Train Conflicts:</span>
-                            <span className="font-mono font-bold text-emerald-700">
+                            <span className="font-mono font-bold text-emerald-700 dark:text-emerald-400">
                               {activeCand?.train_conflicts} conflict(s)
                             </span>
                           </div>
                           <div className="flex justify-between">
                             <span className="text-slate-500">Special Clashes:</span>
-                            <span className="font-mono font-bold text-purple-700">
+                            <span className="font-mono font-bold text-purple-700 dark:text-purple-400">
                               {activeCand?.special_conflicts}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-slate-500">Estimated Delay:</span>
+                            <span className="font-mono font-bold text-slate-800 dark:text-slate-200">
+                              {activeCand?.estimated_delay_min ?? 0} min
                             </span>
                           </div>
                           <div className="flex justify-between">
@@ -1286,11 +1268,11 @@ function OptimizerPage() {
                                   setCandStart(activeCand.start.slice(0, 5));
                                   setCandEnd(activeCand.end.slice(0, 5));
                                   toast.success(
-                                    `Adopted Window B: ${activeCand.start.slice(0, 5)}–${activeCand.end.slice(0, 5)}`,
+                                    `Adopted Window B: ${activeCand.start.slice(0, 5)}–${activeCand.end.slice(0, 5)} as active interval`,
                                   );
                                 }
                               }}
-                              className="w-full bg-[#003366] hover:bg-[#002244] text-white text-xs font-bold h-8 rounded-[2px]"
+                              className="w-full bg-[#003366] hover:bg-[#002244] text-white text-xs font-bold h-8 rounded-[2px] cursor-pointer"
                             >
                               Adopt Window B as Active Interval
                             </Button>
@@ -1298,8 +1280,112 @@ function OptimizerPage() {
                         </div>
                       </div>
                     </div>
+
+                    {/* TRAFFIC IN WINDOW B GRID */}
+                    <div className="pt-3 border-t border-border">
+                      <div className="flex items-center justify-between mb-2">
+                        <h3 className="text-xs font-bold uppercase text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                          <Activity className="size-3.5 text-[#003366] dark:text-sky-400" />
+                          Traffic in Window B (Option {selectedCandidateIndex + 1}: {activeCand?.start?.slice(0, 5)}–{activeCand?.end?.slice(0, 5)})
+                        </h3>
+                        {/* Freight Pressure Chip */}
+                        <div className="flex items-center gap-1.5">
+                          <Badge
+                            variant="outline"
+                            className="border-amber-500 bg-amber-100 text-amber-900 font-bold uppercase text-[10px] dark:bg-amber-900/50 dark:text-amber-200"
+                          >
+                            Freight Pressure: {activeCand?.freight_pressure_level || "MEDIUM"}
+                          </Badge>
+                          <span className="text-[10px] text-slate-500 hidden sm:inline">
+                            • Forecast-based corridor split
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                        <div className="border border-border bg-slate-50 dark:bg-slate-800 p-2.5 rounded-[2px]">
+                          <span className="text-[10px] uppercase font-bold text-slate-500 block">
+                            Passenger / Express
+                          </span>
+                          <p className="font-mono text-base font-bold text-blue-700 dark:text-blue-400 mt-0.5">
+                            {activeCand?.conflicts_by_class?.passenger ?? 0}
+                            <span className="text-[10px] font-normal text-slate-500 ml-1">
+                              ({activeCand?.conflicts_by_class?.express ?? 0} Exp)
+                            </span>
+                          </p>
+                        </div>
+
+                        <div className="border border-border bg-slate-50 dark:bg-slate-800 p-2.5 rounded-[2px]">
+                          <span className="text-[10px] uppercase font-bold text-slate-500 block">
+                            Scheduled Goods
+                          </span>
+                          <p className="font-mono text-base font-bold text-amber-700 dark:text-amber-400 mt-0.5">
+                            {activeCand?.conflicts_by_class?.goods ?? 0}
+                          </p>
+                        </div>
+
+                        <div className="border border-border bg-slate-50 dark:bg-slate-800 p-2.5 rounded-[2px]">
+                          <span className="text-[10px] uppercase font-bold text-slate-500 block">
+                            Special Services
+                          </span>
+                          <p className="font-mono text-base font-bold text-purple-700 dark:text-purple-400 mt-0.5">
+                            {activeCand?.special_conflicts ?? 0}
+                          </p>
+                        </div>
+
+                        <div className="border border-border bg-slate-50 dark:bg-slate-800 p-2.5 rounded-[2px]">
+                          <span className="text-[10px] uppercase font-bold text-slate-500 block">
+                            Est. Delay Min
+                          </span>
+                          <p className="font-mono text-base font-bold text-slate-900 dark:text-slate-100 mt-0.5">
+                            {activeCand?.estimated_delay_min ?? 0} min
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* List of Special Conflicts */}
+                      <div className="mt-2.5">
+                        {(activeCand?.special_conflicts ?? 0) > 0 ? (
+                          <div className="p-2.5 border border-purple-400 bg-purple-50/80 dark:bg-purple-950/30 rounded-[2px] flex items-center justify-between text-xs">
+                            <div className="flex items-center gap-2">
+                              <Star className="size-4 text-purple-600 fill-amber-400 shrink-0" />
+                              <span className="text-purple-950 dark:text-purple-200 font-semibold">
+                                {activeCand.special_conflicts} Special train service(s) intersect with
+                                this maintenance window. Headway clearance required.
+                              </span>
+                            </div>
+                            <Badge className="bg-purple-700 text-white font-bold text-[10px]">
+                              CRITICAL HEADWAY
+                            </Badge>
+                          </div>
+                        ) : (
+                          <div className="p-2 border border-emerald-300 bg-emerald-50/50 dark:bg-emerald-950/20 rounded-[2px] flex items-center gap-2 text-xs text-emerald-800 dark:text-emerald-300">
+                            <CheckCircle2 className="size-3.5 text-emerald-600" />
+                            <span>Zero Special train conflicts detected in this time interval.</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 )}
+
+              {/* EMPTY CALLOUT IF NOT EVALUATED */}
+              {!recommendLoading && (!recommendResult?.recommended_windows || recommendResult.recommended_windows.length === 0) && (
+                <div className="p-6 text-center border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-[2px]">
+                  <p className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase">
+                    Ready to Evaluate Candidate Windows
+                  </p>
+                  <p className="text-[11px] text-slate-500 mt-1 max-w-md mx-auto">
+                    Select a corridor, date, and your proposed maintenance window, then click &quot;Compare Candidate Windows&quot; to discover conflict-free slots.
+                  </p>
+                  <Button
+                    onClick={() => void evaluateCandidateWindows()}
+                    className="mt-3 bg-[#003366] hover:bg-[#002244] text-white text-xs font-bold h-8 rounded-[2px]"
+                  >
+                    Compare Candidate Windows Now
+                  </Button>
+                </div>
+              )}
             </CardContent>
           </Card>
         );
