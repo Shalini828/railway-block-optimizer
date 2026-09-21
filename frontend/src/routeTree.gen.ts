@@ -15,10 +15,12 @@ import { Route as AnalyticsRouteImport } from './routes/analytics'
 import { Route as ConflictsRouteImport } from './routes/conflicts'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as EmergencyRouteImport } from './routes/emergency'
+import { Route as ImpactDnaRouteImport } from './routes/impact-dna'
 import { Route as MaintenanceTasksRouteImport } from './routes/maintenance-tasks'
 import { Route as OptimizerRouteImport } from './routes/optimizer'
 import { Route as PlannerRouteImport } from './routes/planner'
 import { Route as RequestsRouteImport } from './routes/requests'
+import { Route as SimulationRouteImport } from './routes/simulation'
 import { Route as SpecialTrainsRouteImport } from './routes/special-trains'
 
 const IndexRoute = IndexRouteImport.update({
@@ -51,6 +53,11 @@ const EmergencyRoute = EmergencyRouteImport.update({
   path: '/emergency',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ImpactDnaRoute = ImpactDnaRouteImport.update({
+  id: '/impact-dna',
+  path: '/impact-dna',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const MaintenanceTasksRoute = MaintenanceTasksRouteImport.update({
   id: '/maintenance-tasks',
   path: '/maintenance-tasks',
@@ -71,6 +78,11 @@ const RequestsRoute = RequestsRouteImport.update({
   path: '/requests',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SimulationRoute = SimulationRouteImport.update({
+  id: '/simulation',
+  path: '/simulation',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SpecialTrainsRoute = SpecialTrainsRouteImport.update({
   id: '/special-trains',
   path: '/special-trains',
@@ -84,10 +96,12 @@ export interface FileRoutesByFullPath {
   '/conflicts': typeof ConflictsRoute
   '/dashboard': typeof DashboardRoute
   '/emergency': typeof EmergencyRoute
+  '/impact-dna': typeof ImpactDnaRoute
   '/maintenance-tasks': typeof MaintenanceTasksRoute
   '/optimizer': typeof OptimizerRoute
   '/planner': typeof PlannerRoute
   '/requests': typeof RequestsRoute
+  '/simulation': typeof SimulationRoute
   '/special-trains': typeof SpecialTrainsRoute
 }
 export interface FileRoutesByTo {
@@ -97,10 +111,12 @@ export interface FileRoutesByTo {
   '/conflicts': typeof ConflictsRoute
   '/dashboard': typeof DashboardRoute
   '/emergency': typeof EmergencyRoute
+  '/impact-dna': typeof ImpactDnaRoute
   '/maintenance-tasks': typeof MaintenanceTasksRoute
   '/optimizer': typeof OptimizerRoute
   '/planner': typeof PlannerRoute
   '/requests': typeof RequestsRoute
+  '/simulation': typeof SimulationRoute
   '/special-trains': typeof SpecialTrainsRoute
 }
 export interface FileRoutesById {
@@ -111,10 +127,12 @@ export interface FileRoutesById {
   '/conflicts': typeof ConflictsRoute
   '/dashboard': typeof DashboardRoute
   '/emergency': typeof EmergencyRoute
+  '/impact-dna': typeof ImpactDnaRoute
   '/maintenance-tasks': typeof MaintenanceTasksRoute
   '/optimizer': typeof OptimizerRoute
   '/planner': typeof PlannerRoute
   '/requests': typeof RequestsRoute
+  '/simulation': typeof SimulationRoute
   '/special-trains': typeof SpecialTrainsRoute
 }
 export interface FileRouteTypes {
@@ -126,10 +144,12 @@ export interface FileRouteTypes {
     | '/conflicts'
     | '/dashboard'
     | '/emergency'
+    | '/impact-dna'
     | '/maintenance-tasks'
     | '/optimizer'
     | '/planner'
     | '/requests'
+    | '/simulation'
     | '/special-trains'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -139,10 +159,12 @@ export interface FileRouteTypes {
     | '/conflicts'
     | '/dashboard'
     | '/emergency'
+    | '/impact-dna'
     | '/maintenance-tasks'
     | '/optimizer'
     | '/planner'
     | '/requests'
+    | '/simulation'
     | '/special-trains'
   id:
     | '__root__'
@@ -152,10 +174,12 @@ export interface FileRouteTypes {
     | '/conflicts'
     | '/dashboard'
     | '/emergency'
+    | '/impact-dna'
     | '/maintenance-tasks'
     | '/optimizer'
     | '/planner'
     | '/requests'
+    | '/simulation'
     | '/special-trains'
   fileRoutesById: FileRoutesById
 }
@@ -166,10 +190,12 @@ export interface RootRouteChildren {
   ConflictsRoute: typeof ConflictsRoute
   DashboardRoute: typeof DashboardRoute
   EmergencyRoute: typeof EmergencyRoute
+  ImpactDnaRoute: typeof ImpactDnaRoute
   MaintenanceTasksRoute: typeof MaintenanceTasksRoute
   OptimizerRoute: typeof OptimizerRoute
   PlannerRoute: typeof PlannerRoute
   RequestsRoute: typeof RequestsRoute
+  SimulationRoute: typeof SimulationRoute
   SpecialTrainsRoute: typeof SpecialTrainsRoute
 }
 
@@ -217,6 +243,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof EmergencyRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/impact-dna': {
+      id: '/impact-dna'
+      path: '/impact-dna'
+      fullPath: '/impact-dna'
+      preLoaderRoute: typeof ImpactDnaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/maintenance-tasks': {
       id: '/maintenance-tasks'
       path: '/maintenance-tasks'
@@ -245,6 +278,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof RequestsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/simulation': {
+      id: '/simulation'
+      path: '/simulation'
+      fullPath: '/simulation'
+      preLoaderRoute: typeof SimulationRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/special-trains': {
       id: '/special-trains'
       path: '/special-trains'
@@ -262,10 +302,12 @@ const rootRouteChildren: RootRouteChildren = {
   ConflictsRoute: ConflictsRoute,
   DashboardRoute: DashboardRoute,
   EmergencyRoute: EmergencyRoute,
+  ImpactDnaRoute: ImpactDnaRoute,
   MaintenanceTasksRoute: MaintenanceTasksRoute,
   OptimizerRoute: OptimizerRoute,
   PlannerRoute: PlannerRoute,
   RequestsRoute: RequestsRoute,
+  SimulationRoute: SimulationRoute,
   SpecialTrainsRoute: SpecialTrainsRoute,
 }
 export const routeTree = rootRouteImport
