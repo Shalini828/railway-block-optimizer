@@ -58,21 +58,8 @@ cursor = connection.cursor()
 
 
 # ==========================================
-# DEVELOPMENT RESET
-# ==========================================
+# DEVELOPMENT RESET DISABLED: importing the optimizer must not mutate the database.
 
-cursor.execute("""
-    UPDATE block_requests
-    SET request_status = 'PENDING'
-    WHERE request_status = 'OPTIMIZED'
-""")
-
-connection.commit()
-
-print("DEVELOPMENT: OPTIMIZED requests reset to PENDING")
-
-
-# ==========================================
 # GET BLOCK REQUESTS + PRIORITY
 # ==========================================
 
@@ -148,15 +135,15 @@ cursor.execute("""
 
 request_status_counts = cursor.fetchall()
 
-print()
-print("REQUEST STATUS COUNTS:")
-print("--------------------------------")
+optimizer_log()
+optimizer_log("REQUEST STATUS COUNTS:")
+optimizer_log("--------------------------------")
 
 for status, count in request_status_counts:
-    print(f"{status}: {count}")
+    optimizer_log(f"{status}: {count}")
 
-print("--------------------------------")
-print()
+optimizer_log("--------------------------------")
+optimizer_log()
 
 
 # ==========================================
@@ -435,7 +422,7 @@ def generate_7_day_planning(
 
         except Exception as exc:
 
-            print(
+            optimizer_log(
                 "7-DAY GOODS FORECAST ERROR:",
                 corridor_id,
                 planning_date,
@@ -704,7 +691,7 @@ def generate_30_day_maintenance_intelligence(
 
         except Exception as exc:
 
-            print(
+            optimizer_log(
                 "30-DAY ASSET RISK ERROR:",
                 task_id,
                 exc
@@ -762,7 +749,7 @@ def generate_30_day_maintenance_intelligence(
 
         except Exception as exc:
 
-            print(
+            optimizer_log(
                 "30-DAY GOODS ERROR:",
                 corridor,
                 requested_date,
@@ -1111,7 +1098,7 @@ def simulate_what_if_windows(
 
     except Exception as exc:
 
-        print(
+        optimizer_log(
             "WHAT-IF CURRENT WINDOW ERROR:",
             exc
         )
@@ -1192,7 +1179,7 @@ def simulate_what_if_windows(
 
         except Exception as exc:
 
-            print(
+            optimizer_log(
                 "WHAT-IF CANDIDATE ERROR:",
                 candidate_start,
                 candidate_end,
@@ -1369,7 +1356,7 @@ def optimize_emergency_block(
     try:
         asset_risk = calculate_asset_risk_for_task(task_id)
     except Exception as exc:
-        print("EMERGENCY ASSET RISK ERROR:", exc)
+        optimizer_log("EMERGENCY ASSET RISK ERROR:", exc)
         asset_risk = 0.0
 
     cursor.execute(
@@ -1532,7 +1519,7 @@ def optimize_emergency_block(
 
         except Exception as exc:
 
-            print(
+            optimizer_log(
                 "EMERGENCY TRAFFIC ML ERROR:",
                 exc
             )
@@ -1555,7 +1542,7 @@ def optimize_emergency_block(
 
         except Exception as exc:
 
-            print(
+            optimizer_log(
                 "EMERGENCY GOODS ML ERROR:",
                 exc
             )
@@ -1742,7 +1729,7 @@ def score_candidate_window(
 
         except Exception as exc:
 
-            print(
+            optimizer_log(
                 "CANDIDATE ASSET RISK ERROR:",
                 task_id,
                 exc
@@ -1820,7 +1807,7 @@ def score_candidate_window(
 
     except Exception as exc:
 
-        print(
+        optimizer_log(
             "CANDIDATE TRAFFIC ML ERROR:",
             exc
         )
@@ -1843,7 +1830,7 @@ def score_candidate_window(
 
     except Exception as exc:
 
-        print(
+        optimizer_log(
             "CANDIDATE GOODS ML ERROR:",
             exc
         )
@@ -2079,78 +2066,161 @@ for request in requests:
             }
         )
 
-print("GROUPS CREATED:", len(groups))
+optimizer_log("GROUPS CREATED:", len(groups))
 
 
 # ==========================================
 # SHADOW BLOCK OPPORTUNITIES
 # ==========================================
 
-def find_shadow_block_opportunities(blocks):
-    """Find advisory opportunities from finalized optimized blocks."""
-    opportunities=[]
-    seen=set()
-    shadow_max_gap=360
-    shadow_max_duration=MAX_BLOCK_DURATION+240
-    for i in range(len(blocks)):
-        for j in range(i+1,len(blocks)):
-            first, second = blocks[i], blocks[j]
-            if first.get("corridor") != second.get("corridor") or first.get("date") != second.get("date"):
+def find_shadow_block_opportunities(groups):
+    """
+    Find near-miss maintenance consolidation opportunities.
+
+    Shadow blocks are advisory only. They do NOT modify the
+    optimized schedule or the existing grouping logic.
+
+    A pair is reported when:
+    - both groups use the same corridor and date
+    - their task sets are different
+    - they do not already overlap
+    - their gap is slightly larger than the normal consolidation
+      limit but still within a reasonable coordination window
+    - the combined window is within the shadow duration limit
+
+    Group requests are database tuples, so request[0] is the
+    request_id and request[5]/request[6] are start/end times.
+    """
+
+    opportunities = []
+    seen = set()
+
+    # Normal grouping allows a 15-minute gap.
+    # Shadow blocks intentionally look a little farther ahead.
+    shadow_max_gap = 60
+    shadow_max_duration = MAX_BLOCK_DURATION + 120
+
+    for i in range(len(groups)):
+
+        for j in range(i + 1, len(groups)):
+
+            first = groups[i]
+            second = groups[j]
+
+            if first["corridor"] != second["corridor"]:
                 continue
-            first_tasks=first.get("tasks",[]) or []
-            second_tasks=second.get("tasks",[]) or []
-            first_task_ids=[t[1] for t in first_tasks if len(t)>1]
-            second_task_ids=[t[1] for t in second_tasks if len(t)>1]
-            if not first_task_ids or not second_task_ids or set(first_task_ids)&set(second_task_ids):
+
+            if first["date"] != second["date"]:
                 continue
-            first_start=time_to_minutes(first["start"]); first_end=time_to_minutes(first["end"])
-            second_start=time_to_minutes(second["start"]); second_end=time_to_minutes(second["end"])
-            if not (first_end<=second_start or second_end<=first_start):
+
+            # Requests are database tuples.
+            first_task_ids = [
+                request[1]
+                for request in first["requests"]
+            ]
+
+            second_task_ids = [
+                request[1]
+                for request in second["requests"]
+            ]
+
+            if set(first_task_ids) & set(second_task_ids):
                 continue
-            if first_end<=second_start:
-                earlier,later=first,second; gap_minutes=second_start-first_end
+
+            first_start = time_to_minutes(first["start"])
+            first_end = time_to_minutes(first["end"])
+            second_start = time_to_minutes(second["start"])
+            second_end = time_to_minutes(second["end"])
+
+            # Ignore overlapping groups.
+            if not (first_end <= second_start or second_end <= first_start):
+                continue
+
+            if first_end <= second_start:
+                earlier = first
+                later = second
+                gap_minutes = second_start - first_end
             else:
-                earlier,later=second,first; gap_minutes=first_start-second_end
-            if gap_minutes<=MAX_CONSOLIDATION_GAP or gap_minutes>shadow_max_gap:
+                earlier = second
+                later = first
+                gap_minutes = first_start - second_end
+
+            # Normal optimizer already handles gaps up to this limit.
+            if gap_minutes <= MAX_CONSOLIDATION_GAP:
                 continue
-            combined_start=min(time_to_minutes(earlier["start"]),time_to_minutes(later["start"]))
-            combined_end=max(time_to_minutes(earlier["end"]),time_to_minutes(later["end"]))
-            combined_duration=combined_end-combined_start
-            if combined_duration>shadow_max_duration:
+
+            # Shadow only looks one extra consolidation window ahead.
+            if gap_minutes > shadow_max_gap:
                 continue
-            key=(str(first["corridor"]),str(first["date"]),tuple(sorted(first_task_ids+second_task_ids)))
+
+            combined_start = min(
+                time_to_minutes(earlier["start"]),
+                time_to_minutes(later["start"])
+            )
+
+            combined_end = max(
+                time_to_minutes(earlier["end"]),
+                time_to_minutes(later["end"])
+            )
+
+            combined_duration = combined_end - combined_start
+
+            if combined_duration > shadow_max_duration:
+                continue
+
+            task_pair = tuple(sorted(
+                first_task_ids + second_task_ids
+            ))
+
+            key = (
+                str(first["corridor"]),
+                str(first["date"]),
+                task_pair,
+            )
+
             if key in seen:
                 continue
+
             seen.add(key)
-            gap_score=max(0.0,100.0*(1.0-gap_minutes/shadow_max_gap))
-            duration_score=max(0.0,100.0*(1.0-combined_duration/shadow_max_duration))
-            opportunities.append({
-                "corridor":first["corridor"],"date":first["date"],
-                "base_tasks":first_task_ids,"candidate_tasks":second_task_ids,
-                "base_window":{"start":str(first["start"]),"end":str(first["end"])},
-                "candidate_window":{"start":str(second["start"]),"end":str(second["end"])},
-                "gap_minutes":round(gap_minutes,2),
-                "combined_duration_minutes":round(combined_duration,2),
-                "shadow_score":round(gap_score*0.65+duration_score*0.35,2),
-                "reason":"Nearby finalized maintenance blocks on the same corridor could be coordinated as an advisory shadow maintenance opportunity."
-            })
-    opportunities.sort(key=lambda x:x["shadow_score"],reverse=True)
-    return opportunities[:10]
+
+            opportunities.append(
+                {
+                    "corridor": first["corridor"],
+                    "date": first["date"],
+                    "base_tasks": first_task_ids,
+                    "candidate_tasks": second_task_ids,
+                    "base_window": {
+                        "start": str(first["start"]),
+                        "end": str(first["end"]),
+                    },
+                    "candidate_window": {
+                        "start": str(second["start"]),
+                        "end": str(second["end"]),
+                    },
+                    "gap_minutes": round(
+                        gap_minutes,
+                        2
+                    ),
+                    "combined_duration_minutes": round(
+                        combined_duration,
+                        2
+                    ),
+                    "reason": (
+                        "Nearby maintenance blocks are outside the normal "
+                        "consolidation gap but could be coordinated as a "
+                        "shadow maintenance opportunity."
+                    ),
+                }
+            )
+
+    return opportunities
 
 
-shadow_block_opportunities = []
+shadow_block_opportunities = find_shadow_block_opportunities(groups)
 
-print(
-    "SHADOW BLOCK OPPORTUNITIES:",
-    len(shadow_block_opportunities)
-)
-
-
-# Shadow analysis runs on finalized optimized blocks.
-shadow_block_opportunities = find_shadow_block_opportunities(optimized_blocks)
 optimizer_log(
     "SHADOW BLOCK OPPORTUNITIES:",
-    len(shadow_block_opportunities),
+    len(shadow_block_opportunities)
 )
 
 
@@ -2374,7 +2444,7 @@ block_number = 1
 
 for group in groups:
 
-    print("PROCESSING GROUP:", group["corridor"], group["date"])
+    optimizer_log("PROCESSING GROUP:", group["corridor"], group["date"])
 
     corridor = group["corridor"]
     block_date = group["date"]
@@ -2407,8 +2477,8 @@ for group in groups:
         search_after_minutes=120
     )
 
-    print()
-    print(
+    optimizer_log()
+    optimizer_log(
         "CANDIDATE WINDOWS:",
         corridor,
         block_date
@@ -2504,8 +2574,8 @@ for group in groups:
 
     candidate_results = []
 
-    print()
-    print(
+    optimizer_log()
+    optimizer_log(
         "CANDIDATE WINDOWS:",
         corridor,
         block_date
@@ -2542,7 +2612,7 @@ for group in groups:
 
         except Exception as exc:
 
-            print(
+            optimizer_log(
                 "CANDIDATE SCORING ERROR:",
                 exc
             )
@@ -2553,7 +2623,7 @@ for group in groups:
             result
         )
 
-        print(
+        optimizer_log(
             f"  {str(result['start'])[:5]}-"
             f"{str(result['end'])[:5]} "
             f"| conflicts={result['conflict_count']} "
@@ -2569,7 +2639,7 @@ for group in groups:
 
     if not candidate_results:
 
-        print(
+        optimizer_log(
             "NO FEASIBLE CANDIDATE:",
             corridor,
             block_date
@@ -2749,65 +2819,65 @@ for group in groups:
 
     )
 
-    print()
-    print(
+    optimizer_log()
+    optimizer_log(
         "AI SELECTED WINDOW:",
         str(start_time)[:5],
         "-",
         str(end_time)[:5]
     )
 
-    print(
+    optimizer_log(
         "AI SCORE:",
         candidate_optimization_score
     )
 
-    print(
+    optimizer_log(
         "TRAIN CONFLICTS:",
         len(train_conflicts)
     )
 
-    print(
+    optimizer_log(
         "TRAFFIC IMPACT:",
         traffic_impact_score
     )
 
-    print(
+    optimizer_log(
         "GOODS IMPACT:",
         goods_impact_score
     )
 
-    print()
-    print("WHY THIS WINDOW?")
-    print("--------------------------------------")
+    optimizer_log()
+    optimizer_log("WHY THIS WINDOW?")
+    optimizer_log("--------------------------------------")
 
     for reason in ai_explanation["reasons"]:
-        print("[OK]", reason)
+        optimizer_log("[OK]", reason)
 
-    print(
+    optimizer_log(
         "Candidates evaluated:",
         ai_explanation["candidate_count"]
     )
 
-    print(
+    optimizer_log(
         "Requested window score:",
         ai_explanation["requested_window_score"]
     )
 
-    print(
+    optimizer_log(
         "Selected window score:",
         ai_explanation["selected_score"]
     )
 
-    print(
+    optimizer_log(
         "Score improvement:",
         ai_explanation["score_delta_vs_requested"]
     )
 
-    print("Top alternatives:")
+    optimizer_log("Top alternatives:")
 
     for alternative in ai_explanation["alternatives"]:
-        print(
+        optimizer_log(
             f"  {alternative['start']}-"
             f"{alternative['end']} "
             f"| score={alternative['score']} "
@@ -2816,7 +2886,7 @@ for group in groups:
             f"| goods={alternative['goods_impact']}"
         )
 
-    print("--------------------------------------")
+    optimizer_log("--------------------------------------")
 
     # ======================================
     # TRAIN IMPACT SCORE
@@ -2983,7 +3053,7 @@ for group in groups:
             asset_risks.append(risk)
 
         except Exception as exc:
-            print(
+            optimizer_log(
                 "ASSET RISK ERROR:",
                 task_id,
                 exc
@@ -3106,7 +3176,7 @@ for group in groups:
         )
 
     except Exception as exc:
-        print(
+        optimizer_log(
             "TRAFFIC ML ERROR:",
             exc
         )
@@ -3126,7 +3196,7 @@ for group in groups:
         )
 
     except Exception as exc:
-        print(
+        optimizer_log(
             "GOODS ML ERROR:",
             exc
         )
@@ -3291,9 +3361,9 @@ for block in optimized_blocks:
         )
 
         department_count = cursor.fetchone()[0]
-        print("DEPARTMENT COUNT:", department_count)
+        optimizer_log("DEPARTMENT COUNT:", department_count)
 
-    print(
+    optimizer_log(
         "BEFORE INSERT:",
         block["block_id"],
         "CORRIDOR =", block["corridor"],
@@ -3361,7 +3431,7 @@ for block in optimized_blocks:
         )
     )
 
-    print("OPTIMIZED BLOCK INSERTED:", block["block_id"])
+    optimizer_log("OPTIMIZED BLOCK INSERTED:", block["block_id"])
 
 
     # ======================================
@@ -3453,23 +3523,23 @@ connection.commit()
 # DISPLAY
 # ==========================================
 
-print()
-print("==============================================================")
-print("                 BLOCK OPTIMIZER V2")
-print("==============================================================")
-print()
+optimizer_log()
+optimizer_log("==============================================================")
+optimizer_log("                 BLOCK OPTIMIZER V2")
+optimizer_log("==============================================================")
+optimizer_log()
 
-print(
+optimizer_log(
     f"Requests processed : {len(requests)}"
 )
 
-print(
+optimizer_log(
     f"Blocks generated   : {len(optimized_blocks)}"
 )
 
-print()
+optimizer_log()
 
-print(
+optimizer_log(
     f"{'BLOCK':<25}"
     f"{'CORRIDOR':<10}"
     f"{'TIME':<20}"
@@ -3478,12 +3548,12 @@ print(
     f"TRAIN IMPACT"
 )
 
-print("-" * 90)
+optimizer_log("-" * 90)
 
 
 for block in optimized_blocks:
 
-    print(
+    optimizer_log(
         f"{block['block_id']:<25}"
         f"{block['corridor']:<10}"
         f"{str(block['start'])[:5]}-"
@@ -3498,10 +3568,10 @@ for block in optimized_blocks:
 # FINAL AI EXPLANATION SUMMARY
 # ==========================================
 
-print()
-print("==============================================================")
-print("                 AI EXPLAINABILITY")
-print("==============================================================")
+optimizer_log()
+optimizer_log("==============================================================")
+optimizer_log("                 AI EXPLAINABILITY")
+optimizer_log("==============================================================")
 
 for block in optimized_blocks:
 
@@ -3510,25 +3580,25 @@ for block in optimized_blocks:
         {}
     )
 
-    print()
-    print(
+    optimizer_log()
+    optimizer_log(
         f"{block['block_id']} | "
         f"{block['corridor']} | "
         f"{explanation.get('selected_window', 'N/A')}"
     )
 
-    print(
+    optimizer_log(
         f"AI SCORE: "
         f"{explanation.get('selected_score', block.get('optimization_score', 0))}"
     )
 
-    print("WHY:")
+    optimizer_log("WHY:")
 
     for reason in explanation.get(
         "reasons",
         []
     ):
-        print("  [OK]", reason)
+        optimizer_log("  [OK]", reason)
 
     alternatives = explanation.get(
         "alternatives",
@@ -3536,69 +3606,69 @@ for block in optimized_blocks:
     )
 
     if alternatives:
-        print("ALTERNATIVES:")
+        optimizer_log("ALTERNATIVES:")
 
         for alternative in alternatives:
-            print(
+            optimizer_log(
                 f"  {alternative['start']}-"
                 f"{alternative['end']} "
                 f"| score={alternative['score']} "
                 f"| conflicts={alternative['conflicts']}"
             )
 
-print()
-print("==============================================================")
-print("              OPTIMIZATION COMPLETE")
-print("==============================================================")
+optimizer_log()
+optimizer_log("==============================================================")
+optimizer_log("              OPTIMIZATION COMPLETE")
+optimizer_log("==============================================================")
 
 # ==========================================
 # TEST 30-DAY MAINTENANCE INTELLIGENCE
 # ==========================================
 
 try:
-    print()
-    print("==========================================")
-    print("30-DAY MAINTENANCE INTELLIGENCE TEST")
-    print("==========================================")
+    optimizer_log()
+    optimizer_log("==========================================")
+    optimizer_log("30-DAY MAINTENANCE INTELLIGENCE TEST")
+    optimizer_log("==========================================")
 
     maintenance_30_result = generate_30_day_maintenance_intelligence(
         start_date=datetime(2026, 9, 1).date(),
         corridor_id="C02",
     )
 
-    print(
+    optimizer_log(
         "CORRIDOR:",
         maintenance_30_result["corridor"]
     )
 
-    print(
+    optimizer_log(
         "START DATE:",
         maintenance_30_result["start_date"]
     )
 
-    print(
+    optimizer_log(
         "END DATE:",
         maintenance_30_result["end_date"]
     )
 
-    print(
+    optimizer_log(
         "TOTAL TASKS:",
         maintenance_30_result["total_tasks"]
     )
 
-    print(
+    optimizer_log(
         "CRITICAL TASKS:",
         maintenance_30_result["critical_tasks"]
     )
 
-    print(
+    optimizer_log(
         "HIGH PRIORITY TASKS:",
         maintenance_30_result["high_priority_tasks"]
     )
 
     for task in maintenance_30_result["tasks"]:
 
-        print(
+        optimizer_log(
             f"{task['task_id']} | "
             f"{task['corridor']} | "
             f"{task['requested_date']} | "
@@ -3610,19 +3680,19 @@ try:
             f"level={task['urgency_level']}"
         )
 
-    print(
+    optimizer_log(
         "HIGHEST PRIORITY TASK:",
         maintenance_30_result["highest_priority_task"]
     )
 
-    print("==========================================")
+    optimizer_log("==========================================")
 except Exception as exc:
-    print("30-day maintenance test error/skipped:", exc)
+    optimizer_log("30-day maintenance test error/skipped:", exc)
 
 try:
-    print("\n" + "=" * 60)
-    print("EMERGENCY BLOCK OPTIMIZATION TEST")
-    print("=" * 60)
+    optimizer_log("\n" + "=" * 60)
+    optimizer_log("EMERGENCY BLOCK OPTIMIZATION TEST")
+    optimizer_log("=" * 60)
 
     emergency_result = optimize_emergency_block(
         task_id="T-AUTO-0001",
@@ -3632,29 +3702,29 @@ try:
         requested_end="13:00:00",
     )
 
-    print("TASK:", emergency_result["task_id"])
-    print("CORRIDOR:", emergency_result["corridor_id"])
-    print(
+    optimizer_log("TASK:", emergency_result["task_id"])
+    optimizer_log("CORRIDOR:", emergency_result["corridor_id"])
+    optimizer_log(
         "REQUESTED WINDOW:",
         emergency_result["requested_window"]
     )
 
-    print(
+    optimizer_log(
         "CANDIDATES EVALUATED:",
         emergency_result["candidates_evaluated"]
     )
 
-    print(
+    optimizer_log(
         "BEST EMERGENCY WINDOW:",
         emergency_result["best_window"]
     )
 
-    print("\nALTERNATIVES:")
+    optimizer_log("\nALTERNATIVES:")
 
     for alternative in emergency_result["alternatives"]:
-        print(alternative)
+        optimizer_log(alternative)
 except Exception as exc:
-    print("Emergency test error/skipped:", exc)
+    optimizer_log("Emergency test error/skipped:", exc)
 
 try:
     cursor.close()
