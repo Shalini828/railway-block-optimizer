@@ -3,8 +3,8 @@ from datetime import datetime, date
 from pathlib import Path
 import os
 
-import psycopg2
-from psycopg2.extras import RealDictCursor
+import psycopg
+from psycopg.rows import dict_row
 from dotenv import load_dotenv
 
 from auth.security import get_current_user, require_permission, CurrentUser
@@ -35,18 +35,19 @@ def get_db_connection():
     railway_block_planning database configuration.
 
     Supports either DATABASE_URL or individual DB_* variables.
+    Uses psycopg v3.
     """
 
     database_url = os.getenv("DATABASE_URL")
 
     try:
         if database_url:
-            return psycopg2.connect(database_url)
+            return psycopg.connect(database_url)
 
-        return psycopg2.connect(
+        return psycopg.connect(
             host=os.getenv("DB_HOST", "localhost"),
             port=os.getenv("DB_PORT", "5432"),
-            database=os.getenv("DB_NAME", "railway_block_planning"),
+            dbname=os.getenv("DB_NAME", "railway_block_planning"),
             user=os.getenv("DB_USER", "postgres"),
             password=os.getenv("DB_PASSWORD"),
         )
@@ -54,7 +55,7 @@ def get_db_connection():
     except Exception as exc:
         raise HTTPException(
             status_code=500,
-            detail=f"Database connection failed: {str(exc)}"
+            detail=f"Database connection failed: {str(exc)}",
         )
 
 
@@ -125,7 +126,7 @@ def get_dashboard_kpis(user: CurrentUser = Depends(get_current_user)):
         # 1. OVERALL ASSET AVAILABILITY
         # ====================================================
 
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with conn.cursor(row_factory=dict_row) as cur:
 
             if user.scope != "network":
                 cur.execute("""
@@ -188,7 +189,7 @@ def get_dashboard_kpis(user: CurrentUser = Depends(get_current_user)):
         # 2. OPTIMIZED BLOCKS
         # ====================================================
 
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with conn.cursor(row_factory=dict_row) as cur:
 
             cur.execute("""
                 SELECT
@@ -226,7 +227,7 @@ def get_dashboard_kpis(user: CurrentUser = Depends(get_current_user)):
         # 3. BLOCK REQUESTS
         # ====================================================
 
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with conn.cursor(row_factory=dict_row) as cur:
 
             where_clause = ""
             params = ()
@@ -320,7 +321,7 @@ def get_dashboard_kpis(user: CurrentUser = Depends(get_current_user)):
         # 5. OPTIMIZATION HISTORY
         # ====================================================
 
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with conn.cursor(row_factory=dict_row) as cur:
 
             cur.execute("""
                 SELECT
@@ -384,7 +385,7 @@ def get_dashboard_kpis(user: CurrentUser = Depends(get_current_user)):
         # Uses actual trains + optimized blocks.
         # ====================================================
 
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with conn.cursor(row_factory=dict_row) as cur:
 
             if user.scope != "network":
                 relevant_corridors = get_relevant_corridor_ids(cur, user.dept)
@@ -435,7 +436,7 @@ def get_dashboard_kpis(user: CurrentUser = Depends(get_current_user)):
             )
 
             # Add pressure if optimized blocks exist.
-            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            with conn.cursor(row_factory=dict_row) as cur:
 
                 cur.execute("""
                     SELECT
@@ -508,7 +509,7 @@ def get_dashboard_kpis(user: CurrentUser = Depends(get_current_user)):
 
         urgent_risks = []
 
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with conn.cursor(row_factory=dict_row) as cur:
 
             if user.scope != "network":
                 cur.execute("""
@@ -642,7 +643,7 @@ def get_dashboard_kpis(user: CurrentUser = Depends(get_current_user)):
 
         if len(urgent_risks) < 3:
 
-            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            with conn.cursor(row_factory=dict_row) as cur:
 
                 cur.execute("""
                     SELECT
@@ -727,7 +728,7 @@ def get_dashboard_kpis(user: CurrentUser = Depends(get_current_user)):
         # 9. TRAIN FORECAST
         # ====================================================
 
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with conn.cursor(row_factory=dict_row) as cur:
 
             cur.execute("""
                 SELECT
@@ -809,7 +810,7 @@ def get_dashboard_kpis(user: CurrentUser = Depends(get_current_user)):
         department_kpis = None
         if user.scope != "network":
             clean_dept = user.dept.upper()
-            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            with conn.cursor(row_factory=dict_row) as cur:
                 cur.execute("""
                     SELECT COUNT(*) AS count
                     FROM public.maintenance_tasks
