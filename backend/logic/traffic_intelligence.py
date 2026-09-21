@@ -374,23 +374,22 @@ def load_traffic_for_day(
     try:
         cursor.execute("""
             SELECT
-                special_train_id,
+                special_id,
                 train_number,
                 train_name,
-                special_type,
+                event_name,
+                event_type,
                 corridor_id,
                 service_date,
-                arrival_time,
                 departure_time,
+                arrival_time,
                 direction,
                 operational_priority,
-                expected_passengers,
-                reason,
-                active
+                status
             FROM special_train_services
             WHERE corridor_id = %s
               AND service_date = %s
-              AND active = TRUE
+              AND status = 'SCHEDULED'
         """, (corridor_id, target_date))
 
         spec_rows = cursor.fetchall()
@@ -398,21 +397,25 @@ def load_traffic_for_day(
 
         for r in spec_rows:
             row = dict(zip(spec_cols, r))
-            canonical, spec_type, _ = normalize_train_type(row["special_type"])
+
+            raw_type = row["event_type"] or row["event_name"] or "SPECIAL"
+
+            canonical, spec_type, _ = normalize_train_type(raw_type)
+
             profile = build_constraint_profile(
-                raw_type=row["special_type"] or "SPECIAL",
+                raw_type=raw_type,
                 row_priority=row["operational_priority"],
-                expected_passengers=row.get("expected_passengers"),
                 source="special_train_services"
             )
+
             specials_list.append({
-                "id": row["special_train_id"],
-                "train_id": row["special_train_id"],
+                "id": row["special_id"],
+                "train_id": row["special_id"],
                 "train_number": row["train_number"],
                 "train_name": row["train_name"],
                 "train_type": canonical,
-                "raw_train_type": row["special_type"],
-                "special_type": spec_type or row["special_type"],
+                "raw_train_type": raw_type,
+                "special_type": spec_type or raw_type,
                 "traffic_class": profile["traffic_class"],
                 "corridor_id": row["corridor_id"],
                 "date": str(row["service_date"]),
@@ -420,12 +423,12 @@ def load_traffic_for_day(
                 "departure_time": row["departure_time"],
                 "direction": row.get("direction"),
                 "operational_priority": profile["operational_priority"],
-                "expected_passengers": row.get("expected_passengers") or 0,
-                "reason": row.get("reason"),
+                "expected_passengers": 0,
                 "source": "special_train_services",
                 "active": True,
                 "constraint_profile": profile,
             })
+
     except Exception as e:
         logger.warning(f"Could not load special_train_services: {e}")
 
@@ -438,6 +441,12 @@ def load_traffic_for_day(
     for s in specials_list:
         key = s["train_number"] or s["id"]
         deduped[key] = s
+
+    
+
+    print("TRAFFIC DEBUG:", corridor_id, target_date)
+    print("TRAINS LOADED:", trains_list)
+    print("SPECIALS LOADED:", specials_list)
 
     return list(deduped.values())
 
@@ -741,3 +750,32 @@ def evaluate_window(
         "start_hour": start_hour,
     }
 
+if __name__ == "__main__":
+    import psycopg
+    import os
+    from dotenv import load_dotenv
+
+    load_dotenv()
+
+    conn = psycopg.connect(
+        host=os.getenv("DB_HOST"),
+        port=os.getenv("DB_PORT"),
+        dbname=os.getenv("DB_NAME"),
+        user=os.getenv("DB_USER"),
+        password=os.getenv("DB_PASSWORD")
+    )
+
+    with conn.cursor() as cur:
+        result = evaluate_window(
+            cur,
+            "C01",
+            "2026-08-28",
+            "10:00:00",
+            "11:00:00"
+        )
+
+        print("\n===== WINDOW CONFLICT TEST =====")
+        print("Conflicts:", result.get("conflicts"))
+        print("Total delay:", result.get("total_estimated_delay"))
+
+    conn.close()

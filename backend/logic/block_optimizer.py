@@ -3239,6 +3239,8 @@ for group in groups:
 
             "optimization_score": optimization_score,
 
+            "train_impact_score": train_impact_score,
+
             "tasks": group["requests"],
 
             "train_conflicts": train_conflicts,
@@ -3406,6 +3408,25 @@ for block in optimized_blocks:
     # ======================================
     # BLOCK <-> TRAIN
     # ======================================
+    # Remove old train-impact records for this block
+    # ======================================
+    # BLOCK <-> TRAIN
+    # ======================================
+
+    # Remove old train-impact records for this block
+    print(
+    "TRAIN CONFLICT DEBUG:",
+    block["block_id"],
+    block["train_conflicts"]
+)
+    
+    cursor.execute(
+        """
+        DELETE FROM block_train_impact
+        WHERE block_id = %s
+        """,
+        (block["block_id"],)
+    )
 
     for train in block["train_conflicts"]:
 
@@ -3428,7 +3449,6 @@ for block in optimized_blocks:
                 5
             )
         )
-
 # ==========================================
 # SAVE
 # ==========================================

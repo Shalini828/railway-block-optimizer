@@ -74,7 +74,7 @@ type ConflictItem = {
   id: string;
   block: OptimizedBlock;
   train: TrainConflict | null;
-  severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
+  severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "CLEAR";
   isConflict: boolean;
 };
 
@@ -146,7 +146,7 @@ function ConflictsPage() {
           id: `OK-${b.block_id}`,
           block: b,
           train: null,
-          severity: "LOW",
+          severity: "CLEAR",          
           isConflict: false
         });
       }
@@ -276,6 +276,7 @@ function ConflictsPage() {
   };
 
   const getSeverityBadge = (sev: string) => {
+    if (sev === "CLEAR") return "bg-emerald-100 text-emerald-900 border-emerald-300 font-bold";
     if (sev === "CRITICAL") return "bg-red-100 text-red-900 border-red-300 font-bold";
     if (sev === "HIGH") return "bg-amber-100 text-amber-900 border-amber-300 font-bold";
     if (sev === "MEDIUM") return "bg-blue-100 text-blue-900 border-blue-300 font-bold";
