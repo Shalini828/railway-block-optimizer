@@ -1,18 +1,6 @@
-"""
-Special Train Services Management Routes.
-IR-ABPS Block Planning Engine.
-
-Provides:
-- GET /special-trains/ (filtered, corridor-scoped for department roles)
-- GET /special-trains/{id}
-- POST /special-trains/ (creates with date-range expansion, validation, audit)
-- PUT /special-trains/{id} (updates with validation, audit)
-- PATCH /special-trains/{id}/active (soft toggle activate/deactivate, audit)
-- GET /special-trains/{id}/impact (human-in-the-loop impact review and shift recommendation)
-"""
-
 from typing import Optional, List, Dict, Any
 from datetime import datetime, date, time, timedelta
+
 import psycopg
 from fastapi import APIRouter, HTTPException, Depends, Query, status
 from pydantic import BaseModel, Field
@@ -22,34 +10,41 @@ from auth.security import get_current_user, require_permission, CurrentUser
 from auth.scoping import get_relevant_corridor_ids
 from auth.audit import record_audit
 from logic.traffic_intelligence import (
-    normalize_train_type,
     windows_overlap,
     time_to_minutes,
     minutes_to_time_str,
-    build_constraint_profile,
     load_traffic_for_day,
 )
 
 router = APIRouter(
     prefix="/special-trains",
-    tags=["Special Trains"]
+    tags=["Special Trains"],
 )
 
-VALID_SPECIAL_TYPES = {"FESTIVAL", "HOLIDAY", "EVENT", "MILITARY", "RELIEF", "SEASONAL", "OTHER"}
+VALID_SPECIAL_TYPES = {
+    "FESTIVAL",
+    "HOLIDAY",
+    "EVENT",
+    "MILITARY",
+    "RELIEF",
+    "SEASONAL",
+    "OTHER",
+}
+
 VALID_DIRECTIONS = {"UP", "DOWN"}
 
 
 class SpecialTrainCreateSchema(BaseModel):
-    train_number: str = Field(..., min_length=1, max_length=20)
+    train_number: str = Field(..., min_length=1, max_length=30)
     train_name: str = Field(..., min_length=1, max_length=150)
-    special_type: str = Field(..., description="FESTIVAL, HOLIDAY, EVENT, MILITARY, RELIEF, SEASONAL, OTHER")
-    corridor_id: str = Field(..., min_length=1, max_length=20)
-    service_date: Optional[str] = Field(None, description="Single service date YYYY-MM-DD")
-    service_date_from: Optional[str] = Field(None, description="Start date for range expansion YYYY-MM-DD")
-    service_date_to: Optional[str] = Field(None, description="End date for range expansion YYYY-MM-DD")
-    arrival_time: str = Field(..., description="HH:MM:SS or HH:MM")
-    departure_time: str = Field(..., description="HH:MM:SS or HH:MM")
-    direction: str = Field("UP", description="UP or DOWN")
+    special_type: str
+    corridor_id: str
+    service_date: Optional[str] = None
+    service_date_from: Optional[str] = None
+    service_date_to: Optional[str] = None
+    arrival_time: str
+    departure_time: str
+    direction: str = "UP"
     operational_priority: int = Field(4, ge=1, le=5)
     expected_passengers: int = Field(0, ge=0)
     reason: Optional[str] = None
@@ -59,8 +54,8 @@ class SpecialTrainCreateSchema(BaseModel):
 
 
 class SpecialTrainUpdateSchema(BaseModel):
-    train_number: Optional[str] = Field(None, min_length=1, max_length=20)
-    train_name: Optional[str] = Field(None, min_length=1, max_length=150)
+    train_number: Optional[str] = None
+    train_name: Optional[str] = None
     special_type: Optional[str] = None
     corridor_id: Optional[str] = None
     service_date: Optional[str] = None
@@ -79,100 +74,150 @@ class ActiveToggleSchema(BaseModel):
     active: bool
 
 
-def _parse_time(t_val: Any) -> time:
-    if isinstance(t_val, time):
-        return t_val
-    t_str = str(t_val).strip()
-    if len(t_str) == 5:
-        t_str += ":00"
-    return datetime.strptime(t_str[:8], "%H:%M:%S").time()
+def _parse_time(value):
+    if isinstance(value, time):
+        return value
+
+    value = str(value).strip()
+
+    if len(value) == 5:
+        value += ":00"
+
+    return datetime.strptime(value[:8], "%H:%M:%S").time()
 
 
-def _parse_date(d_val: Any) -> date:
-    if isinstance(d_val, (date, datetime)):
-        return d_val if isinstance(d_val, date) else d_val.date()
-    return datetime.strptime(str(d_val)[:10], "%Y-%m-%d").date()
+def _parse_date(value):
+    if isinstance(value, date):
+        return value
+
+    return datetime.strptime(str(value)[:10], "%Y-%m-%d").date()
 
 
-def _generate_special_train_id(cur: Any) -> str:
-    """Generates an ID like SPL-0001 using the sequence, with fallback."""
+def _generate_special_id(cur):
+    cur.execute("""
+        SELECT special_id
+        FROM special_train_services
+        WHERE special_id LIKE 'SP-AUTO-%'
+        ORDER BY special_id DESC
+        LIMIT 1
+    """)
+
+    row = cur.fetchone()
+
+    if not row:
+        return "SP-AUTO-001"
+
     try:
-        cur.execute("SELECT nextval('special_train_seq')")
-        val = cur.fetchone()[0]
-        return f"SPL-{val:04d}"
+        number = int(row[0].split("-")[-1]) + 1
     except Exception:
-        # Fallback if sequence is missing in old schema
-        cur.execute("""
-            SELECT special_train_id
-            FROM special_train_services
-            WHERE special_train_id LIKE 'SPL-%'
-            ORDER BY special_train_id DESC
-            LIMIT 1
-        """)
-        last = cur.fetchone()
-        if last and last[0]:
-            try:
-                num = int(last[0].split("-")[1]) + 1
-                return f"SPL-{num:04d}"
-            except Exception:
-                pass
-        return f"SPL-{int(datetime.now().timestamp()) % 10000:04d}"
+        number = 1
+
+    return f"SP-AUTO-{number:03d}"
+
+
+def _format_special(row):
+    """
+    Convert current DB schema into the response schema
+    expected by the existing frontend.
+    """
+
+    (
+        special_id,
+        train_number,
+        train_name,
+        event_name,
+        event_type,
+        corridor_id,
+        service_date,
+        departure_time,
+        arrival_time,
+        direction,
+        operational_priority,
+        status_value,
+    ) = row
+
+    return {
+        "special_train_id": special_id,
+        "train_number": train_number,
+        "train_name": train_name,
+
+        # Frontend-compatible aliases
+        "special_type": event_type or "OTHER",
+        "corridor_id": corridor_id,
+        "service_date": str(service_date),
+
+        "arrival_time": str(arrival_time) if arrival_time else None,
+        "departure_time": str(departure_time) if departure_time else None,
+
+        "direction": direction,
+        "operational_priority": operational_priority,
+
+        # These aren't stored in current DB schema
+        "expected_passengers": 0,
+        "reason": event_name,
+        "active": status_value == "SCHEDULED",
+
+        "origin_station": None,
+        "destination_station": None,
+        "created_by": None,
+        "created_at": None,
+        "updated_at": None,
+    }
 
 
 # ============================================================
-# 1. LIST SPECIAL TRAINS (GET /special-trains)
+# GET ALL SPECIAL TRAINS
 # ============================================================
 
-@router.get("/", dependencies=[Depends(require_permission("special_trains.view"))])
+@router.get(
+    "/",
+    dependencies=[Depends(require_permission("special_trains.view"))],
+)
 def get_special_trains(
     corridor_id: Optional[str] = Query(None),
     from_date: Optional[str] = Query(None, alias="from"),
     to_date: Optional[str] = Query(None, alias="to"),
     active: Optional[bool] = Query(None),
-    user: CurrentUser = Depends(get_current_user)
-) -> Dict[str, Any]:
-    """
-    List special trains with filtering by corridor, date range, and active status.
-    Scoped by corridor for department roles.
-    """
+    user: CurrentUser = Depends(get_current_user),
+):
+
     with psycopg.connect(**DB_CONFIG) as conn:
         with conn.cursor() as cur:
+
             allowed_corridors = None
+
             if user.scope != "network":
-                allowed_corridors = get_relevant_corridor_ids(cur, user.dept)
+                allowed_corridors = get_relevant_corridor_ids(
+                    cur,
+                    user.dept,
+                )
+
                 if not allowed_corridors:
                     return {
                         "status": "success",
                         "total_count": 0,
                         "special_trains": [],
-                        "scope": user.scope,
-                        "department": user.dept,
                     }
 
             query = """
                 SELECT
-                    special_train_id,
+                    special_id,
                     train_number,
                     train_name,
-                    special_type,
+                    event_name,
+                    event_type,
                     corridor_id,
                     service_date,
-                    arrival_time,
                     departure_time,
+                    arrival_time,
                     direction,
                     operational_priority,
-                    expected_passengers,
-                    reason,
-                    active,
-                    origin_station,
-                    destination_station,
-                    created_by,
-                    created_at,
-                    updated_at
+                    status
                 FROM special_train_services
                 WHERE 1=1
             """
-            params: List[Any] = []
+
+            params = []
 
             if allowed_corridors is not None:
                 query += " AND corridor_id = ANY(%s)"
@@ -191,207 +236,248 @@ def get_special_trains(
                 params.append(_parse_date(to_date))
 
             if active is not None:
-                query += " AND active = %s"
-                params.append(active)
+                if active:
+                    query += " AND status = 'SCHEDULED'"
+                else:
+                    query += " AND status <> 'SCHEDULED'"
 
-            query += " ORDER BY service_date ASC, departure_time ASC"
+            query += """
+                ORDER BY service_date ASC,
+                         departure_time ASC
+            """
 
             cur.execute(query, params)
-            rows = cur.fetchall()
-            cols = [d[0] for d in cur.description]
 
-            items = []
-            for r in rows:
-                item = dict(zip(cols, r))
-                item["service_date"] = str(item["service_date"])
-                item["arrival_time"] = str(item["arrival_time"]) if item["arrival_time"] else None
-                item["departure_time"] = str(item["departure_time"]) if item["departure_time"] else None
-                item["created_at"] = str(item["created_at"]) if item["created_at"] else None
-                item["updated_at"] = str(item["updated_at"]) if item["updated_at"] else None
-                items.append(item)
+            rows = cur.fetchall()
+
+            items = [
+                _format_special(row)
+                for row in rows
+            ]
 
             return {
                 "status": "success",
                 "total_count": len(items),
-                "special_trains": items
+                "special_trains": items,
             }
 
 
 # ============================================================
-# 2. GET SPECIAL TRAIN BY ID (GET /special-trains/{id})
+# GET ONE SPECIAL TRAIN
 # ============================================================
 
-@router.get("/{special_train_id}", dependencies=[Depends(require_permission("special_trains.view"))])
+@router.get(
+    "/{special_train_id}",
+    dependencies=[Depends(require_permission("special_trains.view"))],
+)
 def get_special_train(
     special_train_id: str,
-    user: CurrentUser = Depends(get_current_user)
-) -> Dict[str, Any]:
-    """Retrieve single special train by ID."""
+    user: CurrentUser = Depends(get_current_user),
+):
+
     with psycopg.connect(**DB_CONFIG) as conn:
         with conn.cursor() as cur:
+
             cur.execute("""
                 SELECT
-                    special_train_id,
+                    special_id,
                     train_number,
                     train_name,
-                    special_type,
+                    event_name,
+                    event_type,
                     corridor_id,
                     service_date,
-                    arrival_time,
                     departure_time,
+                    arrival_time,
                     direction,
                     operational_priority,
-                    expected_passengers,
-                    reason,
-                    active,
-                    origin_station,
-                    destination_station,
-                    created_by,
-                    created_at,
-                    updated_at
+                    status
                 FROM special_train_services
-                WHERE special_train_id = %s
+                WHERE special_id = %s
             """, (special_train_id,))
-            row = cur.fetchone()
-            if not row:
-                raise HTTPException(status_code=404, detail=f"Special train {special_train_id} not found")
 
-            cols = [d[0] for d in cur.description]
-            item = dict(zip(cols, row))
+            row = cur.fetchone()
+
+            if not row:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Special train {special_train_id} not found",
+                )
 
             if user.scope != "network":
-                allowed = get_relevant_corridor_ids(cur, user.dept)
-                if item["corridor_id"] not in allowed:
-                    raise HTTPException(status_code=403, detail="Corridor outside department operational scope")
+                allowed = get_relevant_corridor_ids(
+                    cur,
+                    user.dept,
+                )
 
-            item["service_date"] = str(item["service_date"])
-            item["arrival_time"] = str(item["arrival_time"]) if item["arrival_time"] else None
-            item["departure_time"] = str(item["departure_time"]) if item["departure_time"] else None
-            item["created_at"] = str(item["created_at"]) if item["created_at"] else None
-            item["updated_at"] = str(item["updated_at"]) if item["updated_at"] else None
+                if row[5] not in allowed:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Corridor outside department scope",
+                    )
 
             return {
                 "status": "success",
-                "special_train": item
+                "special_train": _format_special(row),
             }
 
 
 # ============================================================
-# 3. CREATE SPECIAL TRAIN(S) (POST /special-trains)
+# CREATE SPECIAL TRAIN
 # ============================================================
 
-@router.post("/", dependencies=[Depends(require_permission("special_trains.manage"))], status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/",
+    dependencies=[Depends(require_permission("special_trains.manage"))],
+    status_code=status.HTTP_201_CREATED,
+)
 def create_special_train(
     payload: SpecialTrainCreateSchema,
-    user: CurrentUser = Depends(get_current_user)
-) -> Dict[str, Any]:
-    """
-    Create one or more special trains. If date range given, expands to one entry per day.
-    Performs duplicate checks and validation against corridors, priority, and special types.
-    """
+    user: CurrentUser = Depends(get_current_user),
+):
+
     with psycopg.connect(**DB_CONFIG) as conn:
         with conn.cursor() as cur:
-            # 1. Validate corridor
-            cur.execute("SELECT corridor_id FROM corridors WHERE corridor_id = %s", (payload.corridor_id,))
-            if not cur.fetchone():
-                raise HTTPException(status_code=400, detail=f"Corridor '{payload.corridor_id}' does not exist")
 
-            # 2. Validate special type
-            spec_type = payload.special_type.strip().upper()
-            if spec_type not in VALID_SPECIAL_TYPES:
+            # Validate corridor
+            cur.execute(
+                "SELECT corridor_id FROM corridors WHERE corridor_id = %s",
+                (payload.corridor_id,),
+            )
+
+            if not cur.fetchone():
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Invalid special_type '{payload.special_type}'. Must be one of: {sorted(list(VALID_SPECIAL_TYPES))}"
+                    detail=f"Corridor '{payload.corridor_id}' does not exist",
                 )
 
-            # 3. Validate direction
-            dir_val = payload.direction.strip().upper()
-            if dir_val not in VALID_DIRECTIONS:
-                raise HTTPException(status_code=400, detail=f"Invalid direction '{payload.direction}'. Must be UP or DOWN")
+            event_type = payload.special_type.strip().upper()
 
-            # 4. Parse times
+            if event_type not in VALID_SPECIAL_TYPES:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid special_type '{payload.special_type}'",
+                )
+
+            direction = payload.direction.strip().upper()
+
+            if direction not in VALID_DIRECTIONS:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Direction must be UP or DOWN",
+                )
+
             try:
-                arr_t = _parse_time(payload.arrival_time)
-                dep_t = _parse_time(payload.departure_time)
-            except Exception as e:
-                raise HTTPException(status_code=400, detail=f"Invalid time format: {e}")
+                arrival = _parse_time(payload.arrival_time)
+                departure = _parse_time(payload.departure_time)
+            except Exception:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid time format. Use HH:MM or HH:MM:SS",
+                )
 
-            # 5. Expand date range
-            dates_to_insert: List[date] = []
+            # Dates
+            dates = []
+
             if payload.service_date_from and payload.service_date_to:
-                start_d = _parse_date(payload.service_date_from)
-                end_d = _parse_date(payload.service_date_to)
-                if end_d < start_d:
-                    raise HTTPException(status_code=400, detail="service_date_to cannot be before service_date_from")
-                curr = start_d
-                while curr <= end_d:
-                    dates_to_insert.append(curr)
-                    curr += timedelta(days=1)
-            elif payload.service_date:
-                dates_to_insert.append(_parse_date(payload.service_date))
-            else:
-                raise HTTPException(status_code=400, detail="Must provide either 'service_date' or 'service_date_from' and 'service_date_to'")
 
-            # 6. Duplicate check across all dates
-            train_num = payload.train_number.strip()
-            for d in dates_to_insert:
+                start = _parse_date(payload.service_date_from)
+                end = _parse_date(payload.service_date_to)
+
+                if end < start:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="service_date_to cannot be before service_date_from",
+                    )
+
+                current = start
+
+                while current <= end:
+                    dates.append(current)
+                    current += timedelta(days=1)
+
+            elif payload.service_date:
+
+                dates.append(
+                    _parse_date(payload.service_date)
+                )
+
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Provide service_date or service_date_from/service_date_to",
+                )
+
+            created_ids = []
+
+            for service_date in dates:
+
+                # Duplicate check
                 cur.execute("""
-                    SELECT special_train_id
+                    SELECT special_id
                     FROM special_train_services
                     WHERE train_number = %s
                       AND corridor_id = %s
                       AND service_date = %s
-                """, (train_num, payload.corridor_id, d))
-                dup = cur.fetchone()
-                if dup:
+                """, (
+                    payload.train_number.strip(),
+                    payload.corridor_id,
+                    service_date,
+                ))
+
+                if cur.fetchone():
                     raise HTTPException(
                         status_code=400,
-                        detail=f"Special train {train_num} already exists on corridor {payload.corridor_id} for date {d} ({dup[0]})"
+                        detail=(
+                            f"Train {payload.train_number} already exists "
+                            f"on {service_date}"
+                        ),
                     )
 
-            # 7. Insert each date
-            created_ids: List[str] = []
-            for d in dates_to_insert:
-                new_id = _generate_special_train_id(cur)
+                special_id = _generate_special_id(cur)
+
+                status_value = (
+                    "SCHEDULED"
+                    if payload.active
+                    else "INACTIVE"
+                )
+
                 cur.execute("""
                     INSERT INTO special_train_services (
-                        special_train_id,
+                        special_id,
                         train_number,
                         train_name,
-                        special_type,
+                        event_name,
+                        event_type,
                         corridor_id,
                         service_date,
-                        arrival_time,
                         departure_time,
+                        arrival_time,
                         direction,
                         operational_priority,
-                        expected_passengers,
-                        reason,
-                        active,
-                        origin_station,
-                        destination_station,
-                        created_by
+                        status
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (
+                        %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s,
+                        %s, %s
+                    )
                 """, (
-                    new_id,
-                    train_num,
+                    special_id,
+                    payload.train_number.strip(),
                     payload.train_name.strip(),
-                    spec_type,
-                    payload.corridor_id,
-                    d,
-                    arr_t,
-                    dep_t,
-                    dir_val,
-                    payload.operational_priority,
-                    payload.expected_passengers,
                     payload.reason,
-                    payload.active,
-                    payload.origin_station,
-                    payload.destination_station,
-                    f"{user.role_id}:{user.name}"
+                    event_type,
+                    payload.corridor_id,
+                    service_date,
+                    departure,
+                    arrival,
+                    direction,
+                    payload.operational_priority * 20,
+                    status_value,
                 ))
-                created_ids.append(new_id)
+
+                created_ids.append(special_id)
 
                 record_audit(
                     actor_role=user.role_id,
@@ -400,51 +486,60 @@ def create_special_train(
                     path="/special-trains",
                     action="CREATE_SPECIAL_TRAIN",
                     target_type="special_train",
-                    target_id=new_id,
+                    target_id=special_id,
                     outcome="SUCCESS",
                     detail={
-                        "train_number": train_num,
+                        "train_number": payload.train_number,
                         "corridor_id": payload.corridor_id,
-                        "service_date": str(d),
-                        "special_type": spec_type,
-                        "priority": payload.operational_priority,
-                    }
+                        "service_date": str(service_date),
+                        "event_type": event_type,
+                    },
                 )
 
             conn.commit()
 
             return {
                 "status": "success",
-                "message": f"Successfully created {len(created_ids)} special train service(s)",
+                "message": (
+                    f"Successfully created "
+                    f"{len(created_ids)} special train service(s)"
+                ),
                 "created_count": len(created_ids),
-                "created_ids": created_ids
+                "created_ids": created_ids,
             }
 
 
 # ============================================================
-# 4. UPDATE SPECIAL TRAIN (PUT /special-trains/{id})
+# UPDATE
 # ============================================================
 
-@router.put("/{special_train_id}", dependencies=[Depends(require_permission("special_trains.manage"))])
+@router.put(
+    "/{special_train_id}",
+    dependencies=[Depends(require_permission("special_trains.manage"))],
+)
 def update_special_train(
     special_train_id: str,
     payload: SpecialTrainUpdateSchema,
-    user: CurrentUser = Depends(get_current_user)
-) -> Dict[str, Any]:
-    """Update details of an existing special train."""
+    user: CurrentUser = Depends(get_current_user),
+):
+
     with psycopg.connect(**DB_CONFIG) as conn:
         with conn.cursor() as cur:
+
             cur.execute("""
-                SELECT special_train_id, train_number, corridor_id, service_date
+                SELECT special_id
                 FROM special_train_services
-                WHERE special_train_id = %s
+                WHERE special_id = %s
             """, (special_train_id,))
-            existing = cur.fetchone()
-            if not existing:
-                raise HTTPException(status_code=404, detail=f"Special train {special_train_id} not found")
+
+            if not cur.fetchone():
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Special train {special_train_id} not found",
+                )
 
             updates = []
-            params: List[Any] = []
+            params = []
 
             if payload.train_number is not None:
                 updates.append("train_number = %s")
@@ -455,16 +550,31 @@ def update_special_train(
                 params.append(payload.train_name.strip())
 
             if payload.special_type is not None:
-                st = payload.special_type.strip().upper()
-                if st not in VALID_SPECIAL_TYPES:
-                    raise HTTPException(status_code=400, detail=f"Invalid special_type '{payload.special_type}'")
-                updates.append("special_type = %s")
-                params.append(st)
+
+                value = payload.special_type.strip().upper()
+
+                if value not in VALID_SPECIAL_TYPES:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Invalid special_type",
+                    )
+
+                updates.append("event_type = %s")
+                params.append(value)
 
             if payload.corridor_id is not None:
-                cur.execute("SELECT corridor_id FROM corridors WHERE corridor_id = %s", (payload.corridor_id,))
+
+                cur.execute(
+                    "SELECT corridor_id FROM corridors WHERE corridor_id = %s",
+                    (payload.corridor_id,),
+                )
+
                 if not cur.fetchone():
-                    raise HTTPException(status_code=400, detail=f"Corridor '{payload.corridor_id}' does not exist")
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Corridor does not exist",
+                    )
+
                 updates.append("corridor_id = %s")
                 params.append(payload.corridor_id)
 
@@ -481,44 +591,52 @@ def update_special_train(
                 params.append(_parse_time(payload.departure_time))
 
             if payload.direction is not None:
-                d_val = payload.direction.strip().upper()
-                if d_val not in VALID_DIRECTIONS:
-                    raise HTTPException(status_code=400, detail="Direction must be UP or DOWN")
+
+                direction = payload.direction.strip().upper()
+
+                if direction not in VALID_DIRECTIONS:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Direction must be UP or DOWN",
+                    )
+
                 updates.append("direction = %s")
-                params.append(d_val)
+                params.append(direction)
 
             if payload.operational_priority is not None:
                 updates.append("operational_priority = %s")
                 params.append(payload.operational_priority)
 
-            if payload.expected_passengers is not None:
-                updates.append("expected_passengers = %s")
-                params.append(payload.expected_passengers)
-
             if payload.reason is not None:
-                updates.append("reason = %s")
+                updates.append("event_name = %s")
                 params.append(payload.reason)
 
-            if payload.origin_station is not None:
-                updates.append("origin_station = %s")
-                params.append(payload.origin_station)
-
-            if payload.destination_station is not None:
-                updates.append("destination_station = %s")
-                params.append(payload.destination_station)
-
             if payload.active is not None:
-                updates.append("active = %s")
-                params.append(payload.active)
+                updates.append("status = %s")
+                params.append(
+                    "SCHEDULED"
+                    if payload.active
+                    else "INACTIVE"
+                )
 
             if not updates:
-                return {"status": "success", "message": "No changes provided"}
+                return {
+                    "status": "success",
+                    "message": "No changes provided",
+                }
 
             updates.append("updated_at = CURRENT_TIMESTAMP")
-            sql = f"UPDATE special_train_services SET {', '.join(updates)} WHERE special_train_id = %s"
+
             params.append(special_train_id)
 
-            cur.execute(sql, params)
+            query = f"""
+                UPDATE special_train_services
+                SET {", ".join(updates)}
+                WHERE special_id = %s
+            """
+
+            cur.execute(query, params)
+
             conn.commit()
 
             record_audit(
@@ -530,118 +648,165 @@ def update_special_train(
                 target_type="special_train",
                 target_id=special_train_id,
                 outcome="SUCCESS",
-                detail={"updated_fields": list(payload.model_dump(exclude_unset=True).keys())}
+                detail={
+                    "updated_fields":
+                        list(
+                            payload.model_dump(
+                                exclude_unset=True
+                            ).keys()
+                        )
+                },
             )
 
             return {
                 "status": "success",
-                "message": f"Special train {special_train_id} updated successfully"
+                "message": (
+                    f"Special train {special_train_id} "
+                    "updated successfully"
+                ),
             }
 
 
 # ============================================================
-# 5. SOFT TOGGLE ACTIVE (PATCH /special-trains/{id}/active)
+# ACTIVE / INACTIVE
 # ============================================================
 
-@router.patch("/{special_train_id}/active", dependencies=[Depends(require_permission("special_trains.manage"))])
-def toggle_special_train_active(
+@router.patch(
+    "/{special_train_id}/active",
+    dependencies=[Depends(require_permission("special_trains.manage"))],
+)
+def toggle_special_train(
     special_train_id: str,
     payload: ActiveToggleSchema,
-    user: CurrentUser = Depends(get_current_user)
-) -> Dict[str, Any]:
-    """
-    Soft activate or deactivate a special train service.
-    No hard-delete endpoint exists to preserve audit and operational history.
-    """
+    user: CurrentUser = Depends(get_current_user),
+):
+
     with psycopg.connect(**DB_CONFIG) as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT active FROM special_train_services WHERE special_train_id = %s", (special_train_id,))
-            row = cur.fetchone()
-            if not row:
-                raise HTTPException(status_code=404, detail=f"Special train {special_train_id} not found")
+
+            cur.execute("""
+                SELECT special_id
+                FROM special_train_services
+                WHERE special_id = %s
+            """, (special_train_id,))
+
+            if not cur.fetchone():
+                raise HTTPException(
+                    status_code=404,
+                    detail="Special train not found",
+                )
+
+            new_status = (
+                "SCHEDULED"
+                if payload.active
+                else "INACTIVE"
+            )
 
             cur.execute("""
                 UPDATE special_train_services
-                SET active = %s,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE special_train_id = %s
-            """, (payload.active, special_train_id))
+                SET status = %s
+                WHERE special_id = %s
+            """, (
+                new_status,
+                special_train_id,
+            ))
+
             conn.commit()
 
-            action_name = "ACTIVATE_SPECIAL_TRAIN" if payload.active else "DEACTIVATE_SPECIAL_TRAIN"
             record_audit(
                 actor_role=user.role_id,
                 actor_name=user.name,
                 method="PATCH",
                 path=f"/special-trains/{special_train_id}/active",
-                action=action_name,
+                action=(
+                    "ACTIVATE_SPECIAL_TRAIN"
+                    if payload.active
+                    else "DEACTIVATE_SPECIAL_TRAIN"
+                ),
                 target_type="special_train",
                 target_id=special_train_id,
                 outcome="SUCCESS",
-                detail={"active": payload.active}
+                detail={"active": payload.active},
             )
 
             return {
                 "status": "success",
-                "message": f"Special train {special_train_id} active status set to {payload.active}",
                 "special_train_id": special_train_id,
-                "active": payload.active
+                "active": payload.active,
             }
 
 
 # ============================================================
-# 6. HUMAN-IN-THE-LOOP IMPACT ANALYSIS & RECOMMENDED SHIFT
+# IMPACT ANALYSIS
 # ============================================================
 
-@router.get("/{special_train_id}/impact", dependencies=[Depends(require_permission("special_trains.view"))])
+@router.get(
+    "/{special_train_id}/impact",
+    dependencies=[Depends(require_permission("special_trains.view"))],
+)
 def get_special_train_impact(
     special_train_id: str,
-    user: CurrentUser = Depends(get_current_user)
-) -> Dict[str, Any]:
-    """
-    Evaluates impact of a special train on planned maintenance blocks and pending requests.
-    Suggests non-conflicting time shifts.
-    IMPORTANT: This endpoint DOES NOT auto-move or modify any blocks. Human controllers
-    retain full review authority.
-    """
+    user: CurrentUser = Depends(get_current_user),
+):
+
     with psycopg.connect(**DB_CONFIG) as conn:
         with conn.cursor() as cur:
+
             cur.execute("""
                 SELECT
-                    special_train_id,
+                    special_id,
                     train_number,
                     train_name,
-                    special_type,
+                    event_name,
+                    event_type,
                     corridor_id,
                     service_date,
                     arrival_time,
                     departure_time,
                     operational_priority,
-                    expected_passengers,
-                    active
+                    status
                 FROM special_train_services
-                WHERE special_train_id = %s
+                WHERE special_id = %s
             """, (special_train_id,))
+
             sp = cur.fetchone()
+
             if not sp:
-                raise HTTPException(status_code=404, detail=f"Special train {special_train_id} not found")
+                raise HTTPException(
+                    status_code=404,
+                    detail="Special train not found",
+                )
 
             (
-                s_id, t_num, t_name, s_type, corr_id, s_date,
-                arr_t, dep_t, prio, pax, is_active
+                s_id,
+                train_number,
+                train_name,
+                event_name,
+                event_type,
+                corridor_id,
+                service_date,
+                arrival_time,
+                departure_time,
+                priority,
+                train_status,
             ) = sp
 
-            if not arr_t or not dep_t:
-                return {
-                    "status": "success",
-                    "special_train_id": s_id,
-                    "has_times": False,
-                    "overlapping_blocks": [],
-                    "overlapping_requests": [],
-                    "recommended_shift": None
-                }
+            if user.scope != "network":
+                allowed = get_relevant_corridor_ids(
+                    cur,
+                    user.dept,
+                )
 
-            # 1. Overlapping optimized blocks on same corridor and date
+                if corridor_id not in allowed:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Corridor outside department scope",
+                    )
+
+            # ------------------------------------------------
+            # BLOCK CONFLICTS
+            # ------------------------------------------------
+
             cur.execute("""
                 SELECT
                     block_id,
@@ -656,21 +821,31 @@ def get_special_train_impact(
                 FROM optimized_blocks
                 WHERE corridor_id = %s
                   AND block_date = %s
-            """, (corr_id, s_date))
+            """, (
+                corridor_id,
+                service_date,
+            ))
+
             block_rows = cur.fetchall()
 
             overlapping_blocks = []
+
             for b in block_rows:
-                b_start = b[3]
-                b_end = b[4]
-                overlaps, overlap_min = windows_overlap(arr_t, dep_t, b_start, b_end)
+
+                overlaps, overlap_min = windows_overlap(
+                    departure_time,
+                     arrival_time,
+                    b[3],
+                    b[4],
+                )
+
                 if overlaps:
                     overlapping_blocks.append({
                         "block_id": b[0],
                         "corridor_id": b[1],
                         "block_date": str(b[2]),
-                        "start_time": str(b_start),
-                        "end_time": str(b_end),
+                        "start_time": str(b[3]),
+                        "end_time": str(b[4]),
                         "duration_min": b[5],
                         "overlap_minutes": overlap_min,
                         "utilization_percent": float(b[6] or 0),
@@ -678,7 +853,10 @@ def get_special_train_impact(
                         "optimization_score": float(b[8] or 0),
                     })
 
-            # 2. Overlapping pending block requests
+            # ------------------------------------------------
+            # PENDING REQUEST CONFLICTS
+            # ------------------------------------------------
+
             cur.execute("""
                 SELECT
                     request_id,
@@ -693,14 +871,24 @@ def get_special_train_impact(
                 WHERE corridor_id = %s
                   AND requested_date = %s
                   AND request_status = 'PENDING'
-            """, (corr_id, s_date))
-            req_rows = cur.fetchall()
+            """, (
+                corridor_id,
+                service_date,
+            ))
+
+            request_rows = cur.fetchall()
 
             overlapping_requests = []
-            for r in req_rows:
-                r_start = r[5]
-                r_end = r[6]
-                overlaps, overlap_min = windows_overlap(arr_t, dep_t, r_start, r_end)
+
+            for r in request_rows:
+
+                overlaps, overlap_min = windows_overlap(
+                    arrival_time,
+                    departure_time,
+                    r[5],
+                    r[6],
+                )
+
                 if overlaps:
                     overlapping_requests.append({
                         "request_id": r[0],
@@ -708,58 +896,99 @@ def get_special_train_impact(
                         "team_id": r[2],
                         "corridor_id": r[3],
                         "requested_date": str(r[4]),
-                        "requested_start": str(r_start),
-                        "requested_end": str(r_end),
+                        "requested_start": str(r[5]),
+                        "requested_end": str(r[6]),
                         "requested_duration_min": r[7],
                         "overlap_minutes": overlap_min,
                     })
 
-            # 3. Recommended shift calculation (find candidate alternative slots on that day)
-            day_traffic = load_traffic_for_day(cur, corr_id, s_date)
-            # Find an alternate window that minimizes overlap with traffic
-            s_arr_min = time_to_minutes(arr_t)
-            s_dep_min = time_to_minutes(dep_t)
-            if s_dep_min <= s_arr_min:
-                s_dep_min += 1440
-            train_span = s_dep_min - s_arr_min
+            # ------------------------------------------------
+            # SHIFT RECOMMENDATION
+            # ------------------------------------------------
 
             recommended_shift = None
-            if overlapping_blocks or overlapping_requests:
-                # Test shifting the affected block window by -120, -60, +60, +120, +180 minutes
-                best_candidate = None
+
+            if overlapping_blocks:
+
+                traffic = load_traffic_for_day(
+                    cur,
+                    corridor_id,
+                    service_date,
+                )
+
                 lowest_conflicts = 999
+                best_candidate = None
 
-                for b in overlapping_blocks:
-                    b_start_min = time_to_minutes(datetime.strptime(b["start_time"][:8], "%H:%M:%S").time())
-                    b_dur = b["duration_min"]
+                for block in overlapping_blocks:
 
-                    for offset in [-180, -120, -60, 60, 120, 180, 240]:
-                        cand_start = (b_start_min + offset) % 1440
-                        cand_end = cand_start + b_dur
+                    start_min = time_to_minutes(
+                        block["start_time"]
+                    )
 
-                        # Count traffic collisions in shifted candidate
-                        collisions = 0
-                        for item in day_traffic:
-                            arr = item.get("arrival_time")
-                            dep = item.get("departure_time")
-                            if arr and dep:
-                                over, _ = windows_overlap(
-                                    minutes_to_time_str(cand_start),
-                                    minutes_to_time_str(cand_end),
-                                    arr, dep
-                                )
-                                if over:
-                                    collisions += 1
+                    duration = block["duration_min"]
 
-                        if collisions < lowest_conflicts:
-                            lowest_conflicts = collisions
+                    for offset in [
+                        -180,
+                        -120,
+                        -60,
+                        60,
+                        120,
+                        180,
+                        240,
+                    ]:
+
+                        candidate_start = (
+                            start_min + offset
+                        ) % 1440
+
+                        candidate_end = (
+                            candidate_start + duration
+                        )
+
+                        conflicts = 0
+
+                        for train in traffic:
+
+                            arr = train.get("arrival_time")
+                            dep = train.get("departure_time")
+
+                            if not arr or not dep:
+                                continue
+
+                            overlap, _ = windows_overlap(
+                                minutes_to_time_str(candidate_start),
+                                minutes_to_time_str(candidate_end),
+                                arr,
+                                dep,
+                            )
+
+                            if overlap:
+                                conflicts += 1
+
+                        if conflicts < lowest_conflicts:
+
+                            lowest_conflicts = conflicts
+
                             best_candidate = {
-                                "block_id": b["block_id"],
+                                "block_id": block["block_id"],
                                 "shift_offset_min": offset,
-                                "proposed_start": minutes_to_time_str(cand_start),
-                                "proposed_end": minutes_to_time_str(cand_end),
-                                "expected_train_conflicts": collisions,
-                                "rationale": f"Shifting block {b['block_id']} by {offset:+d} min eliminates Special train conflict with {t_num} ({collisions} passenger/goods conflicts remaining)."
+                                "proposed_start":
+                                    minutes_to_time_str(
+                                        candidate_start
+                                    ),
+                                "proposed_end":
+                                    minutes_to_time_str(
+                                        candidate_end
+                                    ),
+                                "expected_train_conflicts":
+                                    conflicts,
+                                "rationale": (
+                                    f"Shift block "
+                                    f"{block['block_id']} "
+                                    f"by {offset:+d} minutes "
+                                    f"to reduce conflict with "
+                                    f"{train_number}."
+                                ),
                             }
 
                 recommended_shift = best_candidate
@@ -767,21 +996,29 @@ def get_special_train_impact(
             return {
                 "status": "success",
                 "special_train_id": s_id,
-                "train_number": t_num,
-                "train_name": t_name,
-                "special_type": s_type,
-                "corridor_id": corr_id,
-                "service_date": str(s_date),
-                "arrival_time": str(arr_t),
-                "departure_time": str(dep_t),
-                "operational_priority": prio,
-                "expected_passengers": pax,
-                "active": is_active,
-                "has_conflicts": bool(overlapping_blocks or overlapping_requests),
-                "overlapping_blocks_count": len(overlapping_blocks),
-                "overlapping_blocks": overlapping_blocks,
-                "overlapping_requests_count": len(overlapping_requests),
-                "overlapping_requests": overlapping_requests,
-                "recommended_shift": recommended_shift,
-                "workflow_note": "AI advisory only. Block shifts require Chief Controller review and Admin authorization."
+                "train_number": train_number,
+                "train_name": train_name,
+                "special_type": event_type,
+                "corridor_id": corridor_id,
+                "service_date": str(service_date),
+                "arrival_time": str(arrival_time),
+                "departure_time": str(departure_time),
+                "operational_priority": priority,
+                "expected_passengers": 0,
+                "active": train_status == "SCHEDULED",
+                "has_conflicts": bool(
+                    overlapping_blocks or overlapping_requests
+                ),
+                "overlapping_blocks_count":
+                    len(overlapping_blocks),
+                "overlapping_blocks":
+                    overlapping_blocks,
+                "overlapping_requests_count":
+                    len(overlapping_requests),
+                "overlapping_requests":
+                    overlapping_requests,
+                "recommended_shift":
+                    recommended_shift,
+                "workflow_note":
+                    "AI advisory only. Block shifts require Chief Controller review and Admin authorization.",
             }
