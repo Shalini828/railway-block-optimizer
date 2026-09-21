@@ -126,8 +126,9 @@ ROLE_TABLE: Dict[str, Dict[str, Any]] = {
             "requests.create",
             "requests.edit",
             "requests.cancel",
-            # Optimizer (read-only view)
+            # Optimizer (view & what-if simulation)
             "optimizer.view",
+            "optimizer.simulate",
             # Planner (own blocks, request change)
             "planner.view",
             "planner.request_change",

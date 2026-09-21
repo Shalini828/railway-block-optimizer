@@ -29,6 +29,7 @@ import {
   ArrowLeftRight,
   Star,
   Check,
+  Network,
 } from "lucide-react";
 import { toast } from "sonner";
 import { deptColor, PageHeader } from "@/components/AppShell";
@@ -194,10 +195,9 @@ async function fetchSavedOptimization(): Promise<OptimizationApiResponse | null>
   const payload = await response.json();
   const savedBlocks = (payload.blocks ?? []) as SavedPlanBlock[];
 
-  const savedShadowOpportunities =
-    (payload.shadow_block_opportunities ?? []) as NonNullable<
-      OptimizationApiResponse["shadow_block_opportunities"]
-    >;
+  const savedShadowOpportunities = (payload.shadow_block_opportunities ?? []) as NonNullable<
+    OptimizationApiResponse["shadow_block_opportunities"]
+  >;
 
   if (payload.status !== "success" || savedBlocks.length === 0) {
     return null;
@@ -270,12 +270,14 @@ function OptimizerPage() {
   const pending = reqs.filter((r) => r.status === "Pending AI Scheduling");
 
   // Window A vs Window B Candidate Evaluator State
-  const [corridorsList, setCorridorsList] = useState<{ corridor_id: string; corridor_name: string }[]>([]);
+  const [corridorsList, setCorridorsList] = useState<
+    { corridor_id: string; corridor_name: string }[]
+  >([]);
   const [candCorridor, setCandCorridor] = useState("CORR-001");
   const [candDate, setCandDate] = useState("2026-09-20");
   const [candStart, setCandStart] = useState("09:00");
   const [candEnd, setCandEnd] = useState("12:00");
-  const [recommendResult, setRecommendResult] = useState<any>(null);
+  const [recommendResult, setRecommendResult] = useState<Record<string, unknown> | null>(null);
   const [recommendLoading, setRecommendLoading] = useState(false);
   const [selectedCandidateIndex, setSelectedCandidateIndex] = useState(0);
 
@@ -292,15 +294,20 @@ function OptimizerPage() {
         }),
       });
       if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
+        const err = (await res.json().catch(() => ({}))) as Record<string, string>;
         throw new Error(err.detail || err.message || "Failed to evaluate candidate windows");
       }
-      const data = await res.json();
+      const data = (await res.json()) as Record<string, unknown>;
       setRecommendResult(data);
       setSelectedCandidateIndex(0);
-      toast.success(t("Alternative candidate windows evaluated.", "वैकल्पिक उम्मीदवार विंडो का मूल्यांकन किया गया।"));
-    } catch (e: any) {
-      toast.error(e.message || "Candidate window evaluation failed");
+      toast.success(
+        t(
+          "Alternative candidate windows evaluated.",
+          "वैकल्पिक उम्मीदवार विंडो का मूल्यांकन किया गया।",
+        ),
+      );
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Candidate window evaluation failed");
     } finally {
       setRecommendLoading(false);
     }
@@ -335,7 +342,6 @@ function OptimizerPage() {
     };
 
     void restoreSavedPlan();
-    
 
     return () => {
       cancelled = true;
@@ -455,7 +461,7 @@ function OptimizerPage() {
               Array.isArray(saved.blocks) &&
               saved.blocks.length > 0
             ) {
-              const blocks = saved.blocks.map((block: any) => ({
+              const blocks = (saved.blocks as Array<Record<string, unknown>>).map((block) => ({
                 block_id: String(block.block_id ?? ""),
                 corridor: String(block.corridor ?? block.corridor_id ?? ""),
                 date: String(block.date ?? block.block_date ?? ""),
@@ -475,18 +481,12 @@ function OptimizerPage() {
                 blocks_generated: blocks.length,
                 blocks,
                 run_metrics: {
-                  total_block_minutes: blocks.reduce((sum: number, b: any) => sum + b.duration, 0),
+                  total_block_minutes: blocks.reduce((sum, b) => sum + b.duration, 0),
                   average_utilization:
-                    blocks.reduce((sum: number, b: any) => sum + b.utilization, 0) / blocks.length,
+                    blocks.reduce((sum, b) => sum + b.utilization, 0) / blocks.length,
                   average_optimization_score: 0,
-                  total_train_impact: blocks.reduce(
-                    (sum: number, b: any) => sum + b.train_impact,
-                    0,
-                  ),
-                  total_train_conflicts: blocks.reduce(
-                    (sum: number, b: any) => sum + b.train_conflicts,
-                    0,
-                  ),
+                  total_train_impact: blocks.reduce((sum, b) => sum + b.train_impact, 0),
+                  total_train_conflicts: blocks.reduce((sum, b) => sum + b.train_conflicts, 0),
                 },
               };
             }
@@ -648,6 +648,17 @@ function OptimizerPage() {
                 )}
               </Button>
             </Can>
+            <Button
+              asChild
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs font-bold border-[#003366] text-[#003366] dark:border-sky-400 dark:text-sky-300 hover:bg-[#003366]/10 rounded-[2px]"
+            >
+              <Link to="/impact-dna">
+                <Network className="mr-1.5 size-3.5 text-[#FF9933]" />
+                {t("Railway Impact DNA", "रेलवे प्रभाव डीएनए")}
+              </Link>
+            </Button>
           </div>
         }
       />
@@ -1007,7 +1018,8 @@ function OptimizerPage() {
                       </>
                     ) : (
                       <>
-                        <ArrowLeftRight className="mr-1.5 size-3.5 text-[#FF9933]" /> Compare Candidate Windows
+                        <ArrowLeftRight className="mr-1.5 size-3.5 text-[#FF9933]" /> Compare
+                        Candidate Windows
                       </>
                     )}
                   </Button>
@@ -1083,7 +1095,8 @@ function OptimizerPage() {
                       <div className="flex items-center gap-2">
                         <Star className="size-4 text-purple-600 fill-amber-400 shrink-0" />
                         <span className="text-purple-950 dark:text-purple-200 font-semibold">
-                          {activeCand.special_conflicts} Special train service(s) intersect with this maintenance window. Headway clearance required.
+                          {activeCand.special_conflicts} Special train service(s) intersect with
+                          this maintenance window. Headway clearance required.
                         </span>
                       </div>
                       <Badge className="bg-purple-700 text-white font-bold text-[10px]">
@@ -1100,178 +1113,193 @@ function OptimizerPage() {
               </div>
 
               {/* WINDOW A VS WINDOW B COMPARISON VIEW */}
-              {recommendResult?.recommended_windows && recommendResult.recommended_windows.length > 0 && (
-                <div className="border-t border-border pt-4">
-                  {/* AI Recommendation Driver Banner */}
-                  <div className="mb-4 p-3 rounded-[2px] border-2 border-emerald-500 bg-emerald-50/90 dark:bg-emerald-950/30 text-emerald-950 dark:text-emerald-200 text-xs">
-                    <div className="flex items-center gap-2 font-bold mb-1">
-                      <Sparkles className="size-4 text-emerald-600" />
-                      <span>Recommendation Driver</span>
+              {recommendResult?.recommended_windows &&
+                recommendResult.recommended_windows.length > 0 && (
+                  <div className="border-t border-border pt-4">
+                    {/* AI Recommendation Driver Banner */}
+                    <div className="mb-4 p-3 rounded-[2px] border-2 border-emerald-500 bg-emerald-50/90 dark:bg-emerald-950/30 text-emerald-950 dark:text-emerald-200 text-xs">
+                      <div className="flex items-center gap-2 font-bold mb-1">
+                        <Sparkles className="size-4 text-emerald-600" />
+                        <span>Recommendation Driver</span>
+                      </div>
+                      <p className="text-[11px] leading-relaxed font-medium">
+                        {recommendResult.recommendation}
+                      </p>
                     </div>
-                    <p className="text-[11px] leading-relaxed font-medium">
-                      {recommendResult.recommendation}
-                    </p>
-                  </div>
 
-                  {/* Candidate Selector Tabs */}
-                  {recommendResult.recommended_windows.length > 1 && (
-                    <div className="flex items-center gap-1.5 mb-3 overflow-x-auto pb-1 text-xs">
-                      <span className="text-[10px] font-bold uppercase text-slate-500 mr-1">
-                        Alternative Candidates:
-                      </span>
-                      {recommendResult.recommended_windows.map((cand: any, idx: number) => (
-                        <button
-                          key={idx}
-                          type="button"
-                          onClick={() => setSelectedCandidateIndex(idx)}
-                          className={`px-2.5 py-1 rounded-[2px] text-xs font-mono font-bold border transition-colors ${
-                            selectedCandidateIndex === idx
-                              ? "bg-[#003366] text-white border-[#003366]"
-                              : "bg-slate-100 text-slate-700 border-slate-300 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300"
-                          }`}
-                        >
-                          Option {idx + 1}: {cand.start.slice(0, 5)}–{cand.end.slice(0, 5)} ({cand.optimization_score} pts)
-                        </button>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Side-by-Side Comparison Cards */}
-                  <div className="grid md:grid-cols-2 gap-4">
-                    {/* WINDOW A (Baseline / Requested Window) */}
-                    <div className="border border-border bg-slate-50 dark:bg-slate-800/40 p-3.5 rounded-[2px]">
-                      <div className="flex justify-between items-center mb-3 pb-2 border-b border-border">
-                        <Badge variant="outline" className="border-slate-400 font-bold uppercase text-[10px]">
-                          Window A (Requested Baseline)
-                        </Badge>
-                        <span className="font-mono font-bold text-xs text-slate-700 dark:text-slate-300">
-                          {candStart} – {candEnd}
+                    {/* Candidate Selector Tabs */}
+                    {recommendResult.recommended_windows.length > 1 && (
+                      <div className="flex items-center gap-1.5 mb-3 overflow-x-auto pb-1 text-xs">
+                        <span className="text-[10px] font-bold uppercase text-slate-500 mr-1">
+                          Alternative Candidates:
                         </span>
-                      </div>
-                      <div className="space-y-2 text-xs">
-                        <div className="flex justify-between">
-                          <span className="text-slate-500">Corridor / Date:</span>
-                          <span className="font-mono font-bold">{candCorridor} · {candDate}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-slate-500">Duration:</span>
-                          <span className="font-mono font-bold">
-                            {recommendResult?.requested_window?.duration_minutes ?? 180} min
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-slate-500">Estimated Total Conflicts:</span>
-                          <span className="font-mono font-bold text-amber-700">
-                            {recommendResult?.requested_window?.train_conflicts ?? activeCand?.train_conflicts ?? "--"}
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-slate-500">Freight Pressure:</span>
-                          <span className="font-mono font-bold uppercase">
-                            {activeCand?.freight_pressure_level || "MEDIUM"}
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-slate-500">Corridor Congestion:</span>
-                          <span className="font-mono font-bold uppercase">
-                            {activeCand?.corridor_congestion || "MEDIUM"}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* WINDOW B (AI Recommended Candidate) */}
-                    <div className="border-2 border-[#003366] bg-blue-50/40 dark:bg-slate-800/70 p-3.5 rounded-[2px]">
-                      <div className="flex justify-between items-center mb-3 pb-2 border-b border-border">
-                        <div className="flex items-center gap-1.5">
-                          <Badge className="bg-[#003366] text-white font-bold uppercase text-[10px]">
-                            Window B (Option {selectedCandidateIndex + 1})
-                          </Badge>
-                          <span className="text-[10px] text-emerald-700 dark:text-emerald-400 font-bold">
-                            ★ RECOMMENDED
-                          </span>
-                        </div>
-                        <span className="font-mono font-bold text-xs text-[#003366] dark:text-sky-400">
-                          {activeCand?.start?.slice(0, 5)} – {activeCand?.end?.slice(0, 5)}
-                        </span>
-                      </div>
-
-                      <div className="space-y-2 text-xs">
-                        <div className="flex justify-between">
-                          <span className="text-slate-500">Optimization Score:</span>
-                          <span className="font-mono font-extrabold text-sm text-emerald-700 dark:text-emerald-400">
-                            {activeCand?.optimization_score} / 100
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-slate-500">Train Conflicts:</span>
-                          <span className="font-mono font-bold text-emerald-700">
-                            {activeCand?.train_conflicts} conflict(s)
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-slate-500">Special Clashes:</span>
-                          <span className="font-mono font-bold text-purple-700">
-                            {activeCand?.special_conflicts}
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-slate-500">Freight Pressure:</span>
-                          <span className="font-mono font-bold uppercase">
-                            {activeCand?.freight_pressure_level}
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-slate-500">Risk Assessment:</span>
-                          <Badge
-                            variant="outline"
-                            className={`text-[10px] font-bold ${
-                              activeCand?.risk_level === "LOW"
-                                ? "border-emerald-400 text-emerald-800"
-                                : activeCand?.risk_level === "MEDIUM"
-                                ? "border-amber-400 text-amber-800"
-                                : "border-red-400 text-red-800"
+                        {(
+                          recommendResult.recommended_windows as Array<{
+                            start: string;
+                            end: string;
+                            optimization_score: number | string;
+                          }>
+                        ).map((cand, idx: number) => (
+                          <button
+                            key={idx}
+                            type="button"
+                            onClick={() => setSelectedCandidateIndex(idx)}
+                            className={`px-2.5 py-1 rounded-[2px] text-xs font-mono font-bold border transition-colors ${
+                              selectedCandidateIndex === idx
+                                ? "bg-[#003366] text-white border-[#003366]"
+                                : "bg-slate-100 text-slate-700 border-slate-300 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300"
                             }`}
                           >
-                            {activeCand?.risk_level}
+                            Option {idx + 1}: {cand.start.slice(0, 5)}–{cand.end.slice(0, 5)} (
+                            {cand.optimization_score} pts)
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Side-by-Side Comparison Cards */}
+                    <div className="grid md:grid-cols-2 gap-4">
+                      {/* WINDOW A (Baseline / Requested Window) */}
+                      <div className="border border-border bg-slate-50 dark:bg-slate-800/40 p-3.5 rounded-[2px]">
+                        <div className="flex justify-between items-center mb-3 pb-2 border-b border-border">
+                          <Badge
+                            variant="outline"
+                            className="border-slate-400 font-bold uppercase text-[10px]"
+                          >
+                            Window A (Requested Baseline)
                           </Badge>
+                          <span className="font-mono font-bold text-xs text-slate-700 dark:text-slate-300">
+                            {candStart} – {candEnd}
+                          </span>
+                        </div>
+                        <div className="space-y-2 text-xs">
+                          <div className="flex justify-between">
+                            <span className="text-slate-500">Corridor / Date:</span>
+                            <span className="font-mono font-bold">
+                              {candCorridor} · {candDate}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-slate-500">Duration:</span>
+                            <span className="font-mono font-bold">
+                              {recommendResult?.requested_window?.duration_minutes ?? 180} min
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-slate-500">Estimated Total Conflicts:</span>
+                            <span className="font-mono font-bold text-amber-700">
+                              {recommendResult?.requested_window?.train_conflicts ??
+                                activeCand?.train_conflicts ??
+                                "--"}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-slate-500">Freight Pressure:</span>
+                            <span className="font-mono font-bold uppercase">
+                              {activeCand?.freight_pressure_level || "MEDIUM"}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-slate-500">Corridor Congestion:</span>
+                            <span className="font-mono font-bold uppercase">
+                              {activeCand?.corridor_congestion || "MEDIUM"}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* WINDOW B (AI Recommended Candidate) */}
+                      <div className="border-2 border-[#003366] bg-blue-50/40 dark:bg-slate-800/70 p-3.5 rounded-[2px]">
+                        <div className="flex justify-between items-center mb-3 pb-2 border-b border-border">
+                          <div className="flex items-center gap-1.5">
+                            <Badge className="bg-[#003366] text-white font-bold uppercase text-[10px]">
+                              Window B (Option {selectedCandidateIndex + 1})
+                            </Badge>
+                            <span className="text-[10px] text-emerald-700 dark:text-emerald-400 font-bold">
+                              ★ RECOMMENDED
+                            </span>
+                          </div>
+                          <span className="font-mono font-bold text-xs text-[#003366] dark:text-sky-400">
+                            {activeCand?.start?.slice(0, 5)} – {activeCand?.end?.slice(0, 5)}
+                          </span>
                         </div>
 
-                        {activeCand?.reasons && activeCand.reasons.length > 0 && (
-                          <div className="pt-2 border-t border-border/60">
-                            <span className="text-[10px] font-bold uppercase text-slate-500 block mb-1">
-                              AI Decision Reasons:
+                        <div className="space-y-2 text-xs">
+                          <div className="flex justify-between">
+                            <span className="text-slate-500">Optimization Score:</span>
+                            <span className="font-mono font-extrabold text-sm text-emerald-700 dark:text-emerald-400">
+                              {activeCand?.optimization_score} / 100
                             </span>
-                            <ul className="text-[11px] list-disc list-inside text-slate-700 dark:text-slate-300 space-y-0.5">
-                              {activeCand.reasons.map((r: string, idx: number) => (
-                                <li key={idx}>{r}</li>
-                              ))}
-                            </ul>
                           </div>
-                        )}
+                          <div className="flex justify-between">
+                            <span className="text-slate-500">Train Conflicts:</span>
+                            <span className="font-mono font-bold text-emerald-700">
+                              {activeCand?.train_conflicts} conflict(s)
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-slate-500">Special Clashes:</span>
+                            <span className="font-mono font-bold text-purple-700">
+                              {activeCand?.special_conflicts}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-slate-500">Freight Pressure:</span>
+                            <span className="font-mono font-bold uppercase">
+                              {activeCand?.freight_pressure_level}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-slate-500">Risk Assessment:</span>
+                            <Badge
+                              variant="outline"
+                              className={`text-[10px] font-bold ${
+                                activeCand?.risk_level === "LOW"
+                                  ? "border-emerald-400 text-emerald-800"
+                                  : activeCand?.risk_level === "MEDIUM"
+                                    ? "border-amber-400 text-amber-800"
+                                    : "border-red-400 text-red-800"
+                              }`}
+                            >
+                              {activeCand?.risk_level}
+                            </Badge>
+                          </div>
 
-                        <div className="pt-2">
-                          <Button
-                            size="sm"
-                            onClick={() => {
-                              if (activeCand?.start && activeCand?.end) {
-                                setCandStart(activeCand.start.slice(0, 5));
-                                setCandEnd(activeCand.end.slice(0, 5));
-                                toast.success(
-                                  `Adopted Window B: ${activeCand.start.slice(0, 5)}–${activeCand.end.slice(0, 5)}`,
-                                );
-                              }
-                            }}
-                            className="w-full bg-[#003366] hover:bg-[#002244] text-white text-xs font-bold h-8 rounded-[2px]"
-                          >
-                            Adopt Window B as Active Interval
-                          </Button>
+                          {activeCand?.reasons && activeCand.reasons.length > 0 && (
+                            <div className="pt-2 border-t border-border/60">
+                              <span className="text-[10px] font-bold uppercase text-slate-500 block mb-1">
+                                AI Decision Reasons:
+                              </span>
+                              <ul className="text-[11px] list-disc list-inside text-slate-700 dark:text-slate-300 space-y-0.5">
+                                {activeCand.reasons.map((r: string, idx: number) => (
+                                  <li key={idx}>{r}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+
+                          <div className="pt-2">
+                            <Button
+                              size="sm"
+                              onClick={() => {
+                                if (activeCand?.start && activeCand?.end) {
+                                  setCandStart(activeCand.start.slice(0, 5));
+                                  setCandEnd(activeCand.end.slice(0, 5));
+                                  toast.success(
+                                    `Adopted Window B: ${activeCand.start.slice(0, 5)}–${activeCand.end.slice(0, 5)}`,
+                                  );
+                                }
+                              }}
+                              className="w-full bg-[#003366] hover:bg-[#002244] text-white text-xs font-bold h-8 rounded-[2px]"
+                            >
+                              Adopt Window B as Active Interval
+                            </Button>
+                          </div>
                         </div>
                       </div>
                     </div>
                   </div>
-                </div>
-              )}
+                )}
             </CardContent>
           </Card>
         );
@@ -1279,29 +1307,29 @@ function OptimizerPage() {
 
       {/* SHADOW BLOCK OPPORTUNITIES */}
       <div className="mb-6 border-2 border-[#003366] bg-white dark:bg-slate-900 rounded-[2px]">
-          <div className="flex items-center justify-between px-5 py-4 border-b border-[#003366] bg-slate-100 dark:bg-slate-800">
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-[#003366] dark:text-sky-400 text-lg">◈</span>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-[#003366] bg-slate-100 dark:bg-slate-800">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-[#003366] dark:text-sky-400 text-lg">◈</span>
 
-                <h2 className="font-mono font-bold text-sm uppercase tracking-wider text-[#003366] dark:text-sky-400">
-                  Shadow Block Opportunities
-                </h2>
-              </div>
-
-              <p className="text-[10px] text-slate-500 mt-1 uppercase tracking-wide">
-                AI-identified opportunities for combining nearby maintenance windows
-              </p>
+              <h2 className="font-mono font-bold text-sm uppercase tracking-wider text-[#003366] dark:text-sky-400">
+                Shadow Block Opportunities
+              </h2>
             </div>
 
-            <span className="border border-emerald-300 bg-emerald-100 text-emerald-800 px-3 py-1 text-[10px] font-bold uppercase">
-              {shadowBlockOpportunities.length} Opportunities
-            </span>
+            <p className="text-[10px] text-slate-500 mt-1 uppercase tracking-wide">
+              AI-identified opportunities for combining nearby maintenance windows
+            </p>
           </div>
 
-          {shadowBlockOpportunities.length > 0 ? (
-            <div className="p-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-              {shadowBlockOpportunities.map((opportunity, index) => (
+          <span className="border border-emerald-300 bg-emerald-100 text-emerald-800 px-3 py-1 text-[10px] font-bold uppercase">
+            {shadowBlockOpportunities.length} Opportunities
+          </span>
+        </div>
+
+        {shadowBlockOpportunities.length > 0 ? (
+          <div className="p-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+            {shadowBlockOpportunities.map((opportunity, index) => (
               <div
                 key={`${opportunity.corridor}-${opportunity.date}-${index}`}
                 className="border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-4 rounded-[2px]"
@@ -1385,22 +1413,22 @@ function OptimizerPage() {
                   </div>
                 </div>
               </div>
-              ))}
+            ))}
+          </div>
+        ) : (
+          <div className="p-5">
+            <div className="border border-dashed border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 p-5 text-center rounded-[2px]">
+              <p className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-200">
+                No Shadow Block Opportunities Identified
+              </p>
+              <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-1">
+                The AI optimizer did not find another nearby maintenance window that can be combined
+                within the configured corridor, time-gap, and block-duration limits.
+              </p>
             </div>
-          ) : (
-            <div className="p-5">
-              <div className="border border-dashed border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 p-5 text-center rounded-[2px]">
-                <p className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-200">
-                  No Shadow Block Opportunities Identified
-                </p>
-                <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-1">
-                  The AI optimizer did not find another nearby maintenance window that can be
-                  combined within the configured corridor, time-gap, and block-duration limits.
-                </p>
-              </div>
-            </div>
-          )}
-        </div>
+          </div>
+        )}
+      </div>
 
       {/* GENERATED OPTIMIZED BLOCKS GRID */}
       {apiData && apiData.blocks && apiData.blocks.length > 0 && (
@@ -1629,12 +1657,25 @@ function OptimizerPage() {
                       </div>
                     </div>
                   )}
+
+                  <div className="pt-2.5 border-t border-border flex justify-end">
+                    <Button
+                      asChild
+                      variant="outline"
+                      size="sm"
+                      className="w-full text-xs font-bold border-[#003366] text-[#003366] dark:border-sky-400 dark:text-sky-300 hover:bg-[#003366]/10 rounded-[2px]"
+                    >
+                      <Link to="/impact-dna" search={{ blockId: b.block_id }}>
+                        <Network className="mr-1.5 size-3.5 text-[#FF9933]" />
+                        {t("Trace Impact DNA →", "प्रभाव डीएनए ट्रेस करें →")}
+                      </Link>
+                    </Button>
+                  </div>
                 </CardContent>
               </Card>
             ))}
-
-        </div>
           </div>
+        </div>
       )}
 
       {/* AI Recommendation Drawer */}
