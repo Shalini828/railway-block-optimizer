@@ -5,13 +5,11 @@ import sys
 import time
 import psycopg
 import os
-
+import io
+from contextlib import redirect_stdout
 from dotenv import load_dotenv
 
-import logic.block_optimizer as block_optimizer
-
 from auth.security import require_permission
-
 
 load_dotenv()
 
@@ -471,17 +469,22 @@ def run_optimization():
 
         module_name = "logic.block_optimizer"
 
-        if module_name in sys.modules:
+        # Run the optimizer silently.
+        # The optimizer still executes normally, but its internal
+        # print() statements are hidden from the terminal.
+        with redirect_stdout(io.StringIO()):
 
-            optimizer = importlib.reload(
-                sys.modules[module_name]
-            )
+            if module_name in sys.modules:
 
-        else:
+                optimizer = importlib.reload(
+                    sys.modules[module_name]
+                )
 
-            optimizer = importlib.import_module(
-                module_name
-            )
+            else:
+
+                optimizer = importlib.import_module(
+                    module_name
+                )
 
 
         # --------------------------------------------------

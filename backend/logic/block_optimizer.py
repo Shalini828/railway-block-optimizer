@@ -1,5 +1,15 @@
 import sys
 import os
+
+VERBOSE_OPTIMIZER_LOGS = os.getenv(
+    "VERBOSE_OPTIMIZER_LOGS",
+    "false"
+).lower() == "true"
+
+
+def optimizer_log(*args, **kwargs):
+    if VERBOSE_OPTIMIZER_LOGS:
+        print(*args, **kwargs)
 from datetime import datetime, timedelta
 
 sys.path.append(
