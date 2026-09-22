@@ -2,7 +2,6 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useState, useEffect, useMemo } from "react";
 import {
   SlidersHorizontal,
-  BrainCircuit,
   Calendar,
   Clock,
   CheckCircle2,
@@ -57,7 +56,7 @@ import { useLanguage } from "@/context/LanguageContext";
 export const Route = createFileRoute("/simulation")({
   head: () => ({
     meta: [
-      { title: "AI What-If Simulation | IR-ABPS Operations Sandbox" },
+      { title: "What-If Simulation | IR-ABPS Operations Sandbox" },
       {
         name: "description",
         content:
@@ -417,7 +416,7 @@ export function WhatIfSimulationPage() {
           <div className="flex flex-wrap items-center gap-2 mb-1.5">
             <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-[2px] text-[11px] font-bold uppercase tracking-wider bg-[#003366] text-white">
               <SlidersHorizontal className="size-3.5 text-[#FF9933]" />
-              AI WHAT-IF SIMULATION
+              WHAT-IF SIMULATION
             </span>
             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-[2px] text-[10px] font-mono font-bold bg-amber-100 text-amber-900 border border-amber-300 dark:bg-amber-950/70 dark:text-amber-300 dark:border-amber-800">
               <ShieldCheck className="size-3 text-amber-700 dark:text-amber-400" />
@@ -425,7 +424,7 @@ export function WhatIfSimulationPage() {
             </span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900 dark:text-slate-100">
-            {t("AI What-If Simulation", "एआई व्हाट-इफ़ सिमुलेशन")}
+            {t("What-If Simulation", "व्हाट-इफ़ सिमुलेशन")}
           </h1>
           <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-400 mt-1 max-w-3xl">
             {t(
@@ -706,10 +705,10 @@ export function WhatIfSimulationPage() {
                   disabled={simulating}
                   className="flex-1 h-10 bg-[#003366] hover:bg-[#002244] text-white font-bold rounded-[2px] cursor-pointer shadow-xs"
                 >
-                  <BrainCircuit className="size-4 mr-2 text-[#FF9933]" />
+                  <SlidersHorizontal className="size-4 mr-2 text-[#FF9933]" />
                   {simulating
                     ? t("Simulating...", "सिमुलेशन जारी...")
-                    : t("Run AI Simulation", "एआई सिमुलेशन चलाएं")}
+                    : t("Run Simulation", "सिमुलेशन चलाएं")}
                 </Button>
 
                 <Button
@@ -749,15 +748,15 @@ export function WhatIfSimulationPage() {
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
                   {t(
-                    "Configure your proposed corridor, date, time window, and click 'Run AI Simulation' to evaluate predicted operational impact against the current schedule.",
-                    "वर्तमान शेड्यूल के विरुद्ध अनुमानित परिचालन प्रभाव का मूल्यांकन करने के लिए अपना प्रस्तावित कॉरिडोर, तिथि, समय विंडो कॉन्फ़िगर करें और 'एआई सिमुलेशन चलाएं' पर क्लिक करें।",
+                    "Configure your proposed corridor, date, time window, and click 'Run Simulation' to evaluate predicted operational impact against the current schedule.",
+                    "वर्तमान शेड्यूल के विरुद्ध अनुमानित परिचालन प्रभाव का मूल्यांकन करने के लिए अपना प्रस्तावित कॉरिडोर, तिथि, समय विंडो कॉन्फ़िगर करें और 'सिमुलेशन चलाएं' पर क्लिक करें।",
                   )}
                 </p>
                 <Button
                   onClick={handleRunSimulation}
                   className="mt-2 h-9 bg-[#003366] hover:bg-[#002244] text-white text-xs font-bold rounded-[2px]"
                 >
-                  <BrainCircuit className="size-3.5 mr-1.5 text-[#FF9933]" />
+                  <SlidersHorizontal className="size-3.5 mr-1.5 text-[#FF9933]" />
                   {t("Run Quick Scenario on Corridor C02", "कॉरिडोर C02 पर त्वरित परिदृश्य चलाएं")}
                 </Button>
               </div>
@@ -771,8 +770,8 @@ export function WhatIfSimulationPage() {
                 <div>
                   <h3 className="text-sm font-extrabold text-[#003366] dark:text-sky-400 uppercase tracking-wider">
                     {t(
-                      "Evaluating AI What-If Scenario...",
-                      "एआई व्हाट-इफ़ परिदृश्य का मूल्यांकन किया जा रहा है...",
+                      "Evaluating What-If Scenario...",
+                      "व्हाट-इफ़ परिदृश्य का मूल्यांकन किया जा रहा है...",
                     )}
                   </h3>
                   <p className="text-xs text-slate-500 mt-1">
@@ -788,7 +787,7 @@ export function WhatIfSimulationPage() {
 
           {simulationResult && !simulating && (
             <>
-              {/* 6. AI DECISION SUMMARY (PROMINENT ASSESSMENT) */}
+              {/* 6. SCENARIO DECISION SUMMARY (PROMINENT ASSESSMENT) */}
               <div
                 className={`p-4 sm:p-5 rounded-[2px] border-2 shadow-sm ${
                   simulationResult.ai_assessment.is_what_if_better
@@ -805,7 +804,7 @@ export function WhatIfSimulationPage() {
                     )}
                     <div>
                       <span className="text-[10px] font-mono font-extrabold uppercase tracking-wider">
-                        {t("AI ASSESSMENT & DECISION ENGINE", "एआई मूल्यांकन एवं निर्णय इंजन")}
+                        {t("SCENARIO ASSESSMENT & DECISION ENGINE", "परिदृश्य मूल्यांकन एवं निर्णय इंजन")}
                       </span>
                       <h2 className="text-base font-extrabold tracking-tight">
                         {simulationResult.ai_assessment.recommended_scenario === "WHAT-IF SCENARIO"
@@ -1107,7 +1106,7 @@ export function WhatIfSimulationPage() {
                 </CardContent>
               </Card>
 
-              {/* 4. AI IMPACT BREAKDOWN (4 COMPACT CARDS) */}
+              {/* 4. SCENARIO IMPACT BREAKDOWN (4 COMPACT CARDS) */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 {/* TRAFFIC IMPACT CARD */}
                 <Card className="border border-slate-300 dark:border-slate-800 rounded-[2px] shadow-xs">

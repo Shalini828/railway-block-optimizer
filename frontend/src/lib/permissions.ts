@@ -85,8 +85,8 @@ export const ADMIN_CONTROL_NAV: NavSection[] = [
       },
       {
         to: "/simulation",
-        labelEn: "AI What-If Simulation",
-        labelHi: "एआई व्हाट-इफ़ सिमुलेशन",
+        labelEn: "What-If Simulation",
+        labelHi: "व्हाट-इफ़ सिमुलेशन",
         icon: SlidersHorizontal,
         badge: "Sim",
         badgeTone: "bg-[#003366] text-white",
@@ -174,8 +174,8 @@ export const ENGINEERING_NAV: NavSection[] = [
       },
       {
         to: "/simulation",
-        labelEn: "AI What-If Simulation",
-        labelHi: "एआई व्हाट-इफ़ सिमुलेशन",
+        labelEn: "What-If Simulation",
+        labelHi: "व्हाट-इफ़ सिमुलेशन",
         icon: SlidersHorizontal,
         badge: "Sim",
         badgeTone: "bg-[#003366] text-white",

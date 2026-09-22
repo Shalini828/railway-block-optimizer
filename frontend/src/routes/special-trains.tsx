@@ -235,13 +235,10 @@ function SpecialTrainsPage() {
       params.append("active", "false");
     }
 
-    const queryStr = params.toString()
-      ? `?${params.toString()}`
-      : "";
+    const qs = params.toString();
+    const endpoint = qs ? `/special-trains/?${qs}` : "/special-trains/";
 
-    const response = await apiFetch(
-      `/special-trains/${queryStr}`
-    );
+    const response = await apiFetch(endpoint);
 
     if (!response.ok) {
       throw new Error(

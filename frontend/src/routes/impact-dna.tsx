@@ -19,7 +19,6 @@ import {
   ChevronRight,
   RefreshCw,
   Eye,
-  SlidersHorizontal,
   Flame,
   Activity,
   Milestone,
@@ -121,8 +120,11 @@ interface NetworkNode {
   sublabel: string;
   x: number;
   y: number;
+  width?: number;
+  height?: number;
   stage: number; // 1 to 6
   icon: string;
+  dept?: string;
   status?: "normal" | "warning" | "critical" | "active";
   details?: Record<string, string | number>;
 }
@@ -133,6 +135,174 @@ interface NetworkEdge {
   label?: string;
   stage: number; // activated at this stage
   dashed?: boolean;
+}
+
+// Helper to compute port-anchored geometric paths for railway topology edges
+function getEdgeGeometry(source: NetworkNode, target: NetworkNode) {
+  const sw = (source.width || 215) / 2;
+  const sh = (source.height || 60) / 2;
+  const tw = (target.width || 215) / 2;
+  const th = (target.height || 60) / 2;
+
+  // 1. Asset -> Block (Smooth horizontal S-curve)
+  if (source.id.startsWith("asset-") && target.id === "node-block") {
+    const sx = source.x + sw;
+    const sy = source.y;
+    const tx = target.x - tw;
+    const ty = target.y;
+    const midX = (sx + tx) / 2;
+    const midY = (sy + ty) / 2;
+    return {
+      d: `M ${sx} ${sy} C ${midX} ${sy}, ${midX} ${ty}, ${tx} ${ty}`,
+      midX: midX - 10,
+      midY,
+      sourcePoint: { x: sx, y: sy },
+      targetPoint: { x: tx, y: ty },
+    };
+  }
+
+  // 2. Train Express (Top) -> Block (Straight vertical)
+  if (source.id === "train-express" && target.id === "node-block") {
+    const sx = source.x;
+    const sy = source.y + sh;
+    const tx = target.x;
+    const ty = target.y - th;
+    return {
+      d: `M ${sx} ${sy} L ${tx} ${ty}`,
+      midX: sx,
+      midY: (sy + ty) / 2,
+      sourcePoint: { x: sx, y: sy },
+      targetPoint: { x: tx, y: ty },
+    };
+  }
+
+  // 3. Block -> Train Right (Straight horizontal)
+  if (source.id === "node-block" && target.id === "train-right") {
+    const sx = source.x + sw;
+    const sy = source.y;
+    const tx = target.x - tw;
+    const ty = target.y;
+    return {
+      d: `M ${sx} ${sy} L ${tx} ${ty}`,
+      midX: (sx + tx) / 2,
+      midY: sy,
+      sourcePoint: { x: sx, y: sy },
+      targetPoint: { x: tx, y: ty },
+    };
+  }
+
+  // 4. Block -> Corridor (Vertical Spine)
+  if (source.id === "node-block" && target.id === "node-corridor") {
+    const sx = source.x;
+    const sy = source.y + sh;
+    const tx = target.x;
+    const ty = target.y - th;
+    return {
+      d: `M ${sx} ${sy} L ${tx} ${ty}`,
+      midX: sx,
+      midY: (sy + ty) / 2,
+      sourcePoint: { x: sx, y: sy },
+      targetPoint: { x: tx, y: ty },
+    };
+  }
+
+  // 5. Corridor -> Passenger (Left bifurcation curve)
+  if (source.id === "node-corridor" && target.id === "node-passenger") {
+    const sx = source.x;
+    const sy = source.y + sh;
+    const tx = target.x;
+    const ty = target.y - th;
+    const midX = (sx + tx) / 2;
+    const midY = (sy + ty) / 2;
+    return {
+      d: `M ${sx} ${sy} C ${sx} ${sy + 35}, ${tx} ${ty - 35}, ${tx} ${ty}`,
+      midX,
+      midY,
+      sourcePoint: { x: sx, y: sy },
+      targetPoint: { x: tx, y: ty },
+    };
+  }
+
+  // 6. Corridor -> Freight (Right bifurcation curve)
+  if (source.id === "node-corridor" && target.id === "node-freight") {
+    const sx = source.x;
+    const sy = source.y + sh;
+    const tx = target.x;
+    const ty = target.y - th;
+    const midX = (sx + tx) / 2;
+    const midY = (sy + ty) / 2;
+    return {
+      d: `M ${sx} ${sy} C ${sx} ${sy + 35}, ${tx} ${ty - 35}, ${tx} ${ty}`,
+      midX,
+      midY,
+      sourcePoint: { x: sx, y: sy },
+      targetPoint: { x: tx, y: ty },
+    };
+  }
+
+  // 7. Passenger -> Downstream (Straight vertical)
+  if (source.id === "node-passenger" && target.id === "node-downstream") {
+    const sx = source.x;
+    const sy = source.y + sh;
+    const tx = target.x;
+    const ty = target.y - th;
+    return {
+      d: `M ${sx} ${sy} L ${tx} ${ty}`,
+      midX: sx,
+      midY: (sy + ty) / 2,
+      sourcePoint: { x: sx, y: sy },
+      targetPoint: { x: tx, y: ty },
+    };
+  }
+
+  // 8. Freight -> Network (Straight vertical)
+  if (source.id === "node-freight" && target.id === "node-network") {
+    const sx = source.x;
+    const sy = source.y + sh;
+    const tx = target.x;
+    const ty = target.y - th;
+    return {
+      d: `M ${sx} ${sy} L ${tx} ${ty}`,
+      midX: sx,
+      midY: (sy + ty) / 2,
+      sourcePoint: { x: sx, y: sy },
+      targetPoint: { x: tx, y: ty },
+    };
+  }
+
+  // 9. Downstream <-> Network (Horizontal Sync)
+  if (source.id === "node-downstream" && target.id === "node-network") {
+    const sx = source.x + sw;
+    const sy = source.y;
+    const tx = target.x - tw;
+    const ty = target.y;
+    return {
+      d: `M ${sx} ${sy} L ${tx} ${ty}`,
+      midX: (sx + tx) / 2,
+      midY: sy,
+      sourcePoint: { x: sx, y: sy },
+      targetPoint: { x: tx, y: ty },
+    };
+  }
+
+  // General fallback with port boundary clipping
+  const dx = target.x - source.x;
+  const dy = target.y - source.y;
+  const isHorizontal = Math.abs(dx) > Math.abs(dy);
+  const sx = isHorizontal ? (dx > 0 ? source.x + sw : source.x - sw) : source.x;
+  const sy = isHorizontal ? source.y : dy > 0 ? source.y + sh : source.y - sh;
+  const tx = isHorizontal ? (dx > 0 ? target.x - tw : target.x + tw) : target.x;
+  const ty = isHorizontal ? target.y : dy > 0 ? target.y - th : target.y + th;
+  const midX = (sx + tx) / 2;
+  const midY = (sy + ty) / 2;
+
+  return {
+    d: `M ${sx} ${sy} Q ${midX} ${midY} ${tx} ${ty}`,
+    midX,
+    midY,
+    sourcePoint: { x: sx, y: sy },
+    targetPoint: { x: tx, y: ty },
+  };
 }
 
 function RailwayImpactDnaPage() {
@@ -651,18 +821,16 @@ function RailwayImpactDnaPage() {
   // Construct Network Nodes & Edges dynamically based on selected block & perspective lens
   const { nodes, edges } = useMemo(() => {
     const b = selectedBlock;
-    const isMaintenanceLens = activeLens === "maintenance";
-    const isTrafficLens = activeLens === "traffic";
     const isFieldLens = activeLens === "field";
 
-    // Center coordinates
-    const centerX = 560;
-    const centerY = 240;
+    // Center coordinates in a 1200 x 640 widescreen topology
+    const centerX = 600;
+    const centerY = 210;
 
     const n: NetworkNode[] = [];
     const e: NetworkEdge[] = [];
 
-    // 1. Central Node: Maintenance Block
+    // 1. Central Node: Maintenance Block (Illuminated Core Command)
     n.push({
       id: "node-block",
       type: "block",
@@ -670,6 +838,8 @@ function RailwayImpactDnaPage() {
       sublabel: `${b.corridor_id} • ${b.start_time}–${b.end_time}`,
       x: centerX,
       y: centerY,
+      width: 250,
+      height: 78,
       stage: 1,
       icon: "wrench",
       status: "active",
@@ -683,7 +853,7 @@ function RailwayImpactDnaPage() {
       },
     });
 
-    // 2. Upstream / Inputs: Critical Assets (Left column)
+    // 2. Upstream / Inputs: Critical Assets (Left column, balanced vertical distribution)
     const assetCount = Math.min(b.asset_count, 4);
     const assetTasks = b.tasks.length
       ? b.tasks
@@ -691,7 +861,7 @@ function RailwayImpactDnaPage() {
           {
             task_id: "ASSET-01",
             department: "TMS",
-            task_type: "IMR Rail Fracture",
+            task_type: "IMR Rail Fracture Flaw",
             description: "USFD Class flaw",
             priority: 92,
             chainage: "KM 380/02",
@@ -699,7 +869,7 @@ function RailwayImpactDnaPage() {
           {
             task_id: "ASSET-02",
             department: "TDMS",
-            task_type: "OHE Mast 112",
+            task_type: "OHE Mast 112 Dropper",
             description: "Hot spot dropper 118°C",
             priority: 85,
             chainage: "KM 381/04",
@@ -707,7 +877,7 @@ function RailwayImpactDnaPage() {
           {
             task_id: "ASSET-03",
             department: "SMMS",
-            task_type: "Point Machine 119",
+            task_type: "Point Machine 119 Interlock",
             description: "Interlock overhaul",
             priority: 76,
             chainage: "KM 382/00",
@@ -715,24 +885,30 @@ function RailwayImpactDnaPage() {
           {
             task_id: "ASSET-04",
             department: "TMS",
-            task_type: "Ballast Bed 1147",
+            task_type: "Deep Screening Ballast Bed",
             description: "Unevenness tamping",
             priority: 68,
             chainage: "KM 383/05",
           },
         ];
 
+    const assetSpacing = assetCount <= 1 ? 0 : Math.min(88, 270 / (assetCount - 1));
+    const startY = assetCount <= 1 ? centerY : centerY - ((assetCount - 1) * assetSpacing) / 2;
+
     assetTasks.slice(0, assetCount).forEach((task, idx) => {
-      const assetY = 110 + idx * 85;
+      const assetY = startY + idx * assetSpacing;
       const assetId = `asset-${idx}`;
       n.push({
         id: assetId,
         type: "asset",
-        label: task.task_type.length > 24 ? task.task_type.slice(0, 22) + "..." : task.task_type,
+        label: task.task_type.length > 22 ? task.task_type.slice(0, 20) + "..." : task.task_type,
         sublabel: `${task.department} • ${task.chainage || "KM 380"}`,
-        x: 180,
+        x: 175,
         y: assetY,
+        width: 215,
+        height: 62,
         stage: 2,
+        dept: task.department,
         icon: "alert",
         status: task.priority > 80 ? "critical" : "warning",
         details: {
@@ -746,20 +922,22 @@ function RailwayImpactDnaPage() {
       e.push({
         from: assetId,
         to: "node-block",
-        label: task.department,
+        label: `${task.department} DEFECT`,
         stage: 2,
       });
     });
 
     // 3. Train Movements: Top / Right Branches
-    // Express Train (Top)
+    // Express Train (Top - Path Intersect)
     n.push({
       id: "train-express",
       type: "train",
       label: "12951 Mumbai Rajdhani",
       sublabel: "Express • Overlap 15 min",
       x: centerX,
-      y: 80,
+      y: 65,
+      width: 230,
+      height: 56,
       stage: 3,
       icon: "train",
       status: "warning",
@@ -773,19 +951,21 @@ function RailwayImpactDnaPage() {
     e.push({
       from: "train-express",
       to: "node-block",
-      label: "Path Intersect",
+      label: "PATH INTERSECT",
       stage: 3,
       dashed: true,
     });
 
-    // Scheduled Train Movement (Right)
+    // Scheduled Train Movement (Right - Headway Clearance)
     n.push({
       id: "train-right",
       type: "train",
-      label: "22435 Vande Bharat / Express",
+      label: "22435 Vande Bharat Exp",
       sublabel: "Cleared on Up Main line",
-      x: 940,
-      y: 240,
+      x: 1010,
+      y: centerY,
+      width: 220,
+      height: 60,
       stage: 3,
       icon: "train",
       status: "normal",
@@ -798,20 +978,21 @@ function RailwayImpactDnaPage() {
     e.push({
       from: "node-block",
       to: "train-right",
-      label: "Headway Clearance",
+      label: "HEADWAY CLEAR",
       stage: 3,
     });
 
     // 4. Local Corridor (Spine Below Block)
-    const corridorY = 370;
     n.push({
       id: "node-corridor",
       type: "corridor",
       label: `Corridor ${b.corridor_id}`,
       sublabel:
-        b.corridor_name.length > 32 ? b.corridor_name.slice(0, 30) + "..." : b.corridor_name,
+        b.corridor_name.length > 30 ? b.corridor_name.slice(0, 28) + "..." : b.corridor_name,
       x: centerX,
-      y: corridorY,
+      y: 345,
+      width: 230,
+      height: 62,
       stage: 3,
       icon: "corridor",
       status: "normal",
@@ -825,20 +1006,20 @@ function RailwayImpactDnaPage() {
     e.push({
       from: "node-block",
       to: "node-corridor",
-      label: "Line Possession",
+      label: "LINE POSSESSION",
       stage: 3,
     });
 
     // 5. Bifurcation: Passenger vs Freight Flows
-    const paxY = 465;
-    const freightY = 465;
     n.push({
       id: "node-passenger",
       type: "train",
       label: "Passenger Traffic Flow",
       sublabel: `${b.passenger_movements_count} Trains • 1 Caution Order`,
-      x: 370,
-      y: paxY,
+      x: 380,
+      y: 470,
+      width: 220,
+      height: 60,
       stage: 4,
       icon: "train",
       status: "normal",
@@ -850,7 +1031,7 @@ function RailwayImpactDnaPage() {
     e.push({
       from: "node-corridor",
       to: "node-passenger",
-      label: "Timetable Slack",
+      label: "TIMETABLE SLACK",
       stage: 4,
     });
 
@@ -859,8 +1040,10 @@ function RailwayImpactDnaPage() {
       type: "freight",
       label: "Freight Rake Pressure",
       sublabel: `Index ${b.freight_pressure_score} • Coal & Container`,
-      x: 750,
-      y: freightY,
+      x: 820,
+      y: 470,
+      width: 220,
+      height: 60,
       stage: 4,
       icon: "freight",
       status: b.freight_pressure_score > 20 ? "critical" : "warning",
@@ -873,20 +1056,21 @@ function RailwayImpactDnaPage() {
     e.push({
       from: "node-corridor",
       to: "node-freight",
-      label: "Loop Regulated",
+      label: "LOOP REGULATED",
       stage: 4,
     });
 
     // 6. Downstream Corridors & Network Pressure
-    const downY = 550;
     const downName = b.downstream_names[0] || "C05 Prayagraj – DDU Corridor";
     n.push({
       id: "node-downstream",
       type: "downstream",
-      label: downName.length > 26 ? downName.slice(0, 24) + "..." : downName,
+      label: downName.length > 24 ? downName.slice(0, 22) + "..." : downName,
       sublabel: "Downstream Headway Buffer",
-      x: 370,
-      y: downY,
+      x: 380,
+      y: 575,
+      width: 220,
+      height: 56,
       stage: 5,
       icon: "corridor",
       status: "normal",
@@ -899,7 +1083,7 @@ function RailwayImpactDnaPage() {
     e.push({
       from: "node-passenger",
       to: "node-downstream",
-      label: "Corridor Handover",
+      label: "CORRIDOR HANDOVER",
       stage: 5,
     });
 
@@ -908,8 +1092,10 @@ function RailwayImpactDnaPage() {
       type: "network",
       label: "Network Operational Pressure",
       sublabel: `Risk Level: ${b.network_pressure} (${b.severity_level})`,
-      x: 750,
-      y: downY,
+      x: 820,
+      y: 575,
+      width: 220,
+      height: 56,
       stage: 6,
       icon: "network",
       status:
@@ -930,7 +1116,7 @@ function RailwayImpactDnaPage() {
     e.push({
       from: "node-freight",
       to: "node-network",
-      label: "Siding Queue",
+      label: "SIDING QUEUE",
       stage: 6,
     });
 
@@ -938,7 +1124,7 @@ function RailwayImpactDnaPage() {
     e.push({
       from: "node-downstream",
       to: "node-network",
-      label: "Division Boundary Sync",
+      label: "DIVISION SYNC",
       stage: 6,
       dashed: true,
     });
@@ -970,36 +1156,6 @@ function RailwayImpactDnaPage() {
               <Radio className="size-3 text-[#FF9933] animate-pulse" />
               {t("LIVE CAUSAL ENGINE", "सक्रिय कारणात्मक इंजन")}
             </Badge>
-
-            {/* Role Perspective Lens Switcher */}
-            <Select
-              value={activeLens}
-              onValueChange={(val) => {
-                if (val) setActiveLens(val as NonNullable<ImpactDnaSearchParams["lens"]>);
-              }}
-            >
-              <SelectTrigger className="h-9 w-[210px] text-xs font-bold border-slate-300 dark:border-slate-700 bg-background rounded-[2px]">
-                <SlidersHorizontal className="size-3.5 mr-1.5 text-[#003366] dark:text-sky-400" />
-                <SelectValue placeholder="Operational Lens" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="senior_officer" className="text-xs font-semibold">
-                  Senior Officer (Full Impact)
-                </SelectItem>
-                <SelectItem value="planning" className="text-xs font-semibold">
-                  Planning (Window / Slack)
-                </SelectItem>
-                <SelectItem value="maintenance" className="text-xs font-semibold">
-                  Maintenance (Asset Focus)
-                </SelectItem>
-                <SelectItem value="traffic" className="text-xs font-semibold">
-                  Traffic (Train / Corridor)
-                </SelectItem>
-                <SelectItem value="field" className="text-xs font-semibold">
-                  Field Team (Safety Clear)
-                </SelectItem>
-              </SelectContent>
-            </Select>
           </div>
         }
       />
@@ -1196,457 +1352,653 @@ function RailwayImpactDnaPage() {
         </div>
       </div>
 
-      {/* MAIN TWO-COLUMN WORKSPACE: 2. NETWORK CANVAS + 4. IMPACT DNA PANEL */}
-      <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
-        {/* 2. NETWORK VISUALIZATION CANVAS (COL 8/12) */}
-        <div className="xl:col-span-8 space-y-4">
-          <Card className="border-2 border-[#003366] bg-[#07111e] text-slate-100 rounded-[2px] overflow-hidden shadow-md">
-            <CardHeader className="bg-[#001f3f] px-5 py-3.5 border-b border-slate-800 flex flex-row items-center justify-between">
-              <div>
-                <CardTitle className="text-sm font-extrabold uppercase tracking-wider text-white flex items-center gap-2">
-                  <Network className="size-4 text-[#FF9933]" />
-                  {t("OPERATIONAL CAUSAL NETWORK CANVAS", "परिचालन कारणात्मक नेटवर्क कैनवास")}
-                </CardTitle>
-                <CardDescription className="text-[11px] text-slate-300">
-                  {t(
-                    "Digital Twin Railway Topology • Click any node to inspect operational parameters",
-                    "डिजिटल ट्विन रेलवे टोपोलॉजी • परिचालन मापदंडों का निरीक्षण करने के लिए किसी भी नोड पर क्लिक करें",
-                  )}
-                </CardDescription>
-              </div>
+      {/* 2. FULL-WIDTH NETWORK VISUALIZATION CANVAS */}
+      <div className="space-y-4">
+        <Card className="border-2 border-[#003366] bg-[#07111e] text-slate-100 rounded-[2px] overflow-hidden shadow-lg">
+          <CardHeader className="bg-[#001f3f] px-5 py-3.5 border-b border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <CardTitle className="text-sm font-extrabold uppercase tracking-wider text-white flex items-center gap-2">
+                <Network className="size-4 text-[#FF9933]" />
+                {t("OPERATIONAL CAUSAL NETWORK CANVAS", "परिचालन कारणात्मक नेटवर्क कैनवास")}
+              </CardTitle>
+              <CardDescription className="text-[11px] text-slate-300 mt-0.5">
+                {t(
+                  "Digital Twin Railway Topology • Live Cascade Flow • Click any node to inspect parameters",
+                  "डिजिटल ट्विन रेलवे टोपोलॉजी • लाइव कैस्केड फ्लो • मापदंडों का निरीक्षण करने के लिए किसी भी नोड पर क्लिक करें",
+                )}
+              </CardDescription>
+            </div>
 
-              {/* Canvas Legend */}
-              <div className="hidden sm:flex items-center gap-3 text-[10px] font-bold uppercase">
-                <span className="flex items-center gap-1 text-amber-400">
-                  <span className="size-2 rounded-full bg-amber-400" /> 🔧 Block
-                </span>
-                <span className="flex items-center gap-1 text-red-400">
-                  <span className="size-2 rounded-full bg-red-400" /> 🔴 Asset
-                </span>
-                <span className="flex items-center gap-1 text-emerald-400">
-                  <span className="size-2 rounded-full bg-emerald-400" /> 🟢 Train
-                </span>
-                <span className="flex items-center gap-1 text-purple-400">
-                  <span className="size-2 rounded-full bg-purple-400" /> 🟣 Freight
-                </span>
-                <span className="flex items-center gap-1 text-sky-400">
-                  <span className="size-2 rounded-full bg-sky-400" /> 🔵 Corridor
-                </span>
-              </div>
-            </CardHeader>
+            {/* Canvas Legend & Controls */}
+            <div className="flex flex-wrap items-center gap-3 text-[10px] font-bold uppercase">
+              <span className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-amber-950/40 border border-amber-500/30 text-amber-300">
+                <span className="size-2 rounded-full bg-[#FF9933] shadow-[0_0_6px_#FF9933]" /> 🔧
+                Block
+              </span>
+              <span className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-red-950/40 border border-red-500/30 text-red-300">
+                <span className="size-2 rounded-full bg-red-500 shadow-[0_0_6px_#ef4444]" /> 🔴
+                Asset
+              </span>
+              <span className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-emerald-950/40 border border-emerald-500/30 text-emerald-300">
+                <span className="size-2 rounded-full bg-emerald-500 shadow-[0_0_6px_#10b981]" /> 🟢
+                Train
+              </span>
+              <span className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-purple-950/40 border border-purple-500/30 text-purple-300">
+                <span className="size-2 rounded-full bg-purple-400 shadow-[0_0_6px_#c084fc]" /> 🟣
+                Freight
+              </span>
+              <span className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-sky-950/40 border border-sky-500/30 text-sky-300">
+                <span className="size-2 rounded-full bg-sky-400 shadow-[0_0_6px_#38bdf8]" /> 🔵
+                Corridor
+              </span>
+              <span className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-amber-950/40 border border-amber-500/30 text-amber-300">
+                <span className="size-2 rounded-full bg-amber-400 shadow-[0_0_6px_#f59e0b]" /> 🟠
+                Pressure
+              </span>
+            </div>
+          </CardHeader>
 
-            {/* Interactive SVG Railway Canvas */}
-            <div className="relative w-full aspect-[16/9] min-h-[480px] bg-[#050b14] overflow-hidden">
-              {/* Radar Grid Background */}
-              <svg className="absolute inset-0 w-full h-full pointer-events-none opacity-20">
-                <defs>
-                  <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
-                    <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#38bdf8" strokeWidth="0.5" />
-                  </pattern>
-                </defs>
-                <rect width="100%" height="100%" fill="url(#grid)" />
-              </svg>
+          {/* Interactive SVG Railway Canvas (Expansive Widescreen) */}
+          <div className="relative w-full aspect-[16/8.5] min-h-[580px] lg:min-h-[640px] bg-gradient-to-b from-[#040a16] via-[#071324] to-[#040914] overflow-hidden select-none">
+            {/* Radar Grid & Concentric Track Sleeper Background */}
+            <svg className="absolute inset-0 w-full h-full pointer-events-none opacity-25">
+              <defs>
+                <pattern id="radarGrid" width="48" height="48" patternUnits="userSpaceOnUse">
+                  <path
+                    d="M 48 0 L 0 0 0 48"
+                    fill="none"
+                    stroke="#0284c7"
+                    strokeWidth="0.5"
+                    strokeOpacity="0.4"
+                  />
+                </pattern>
+              </defs>
+              <rect width="100%" height="100%" fill="url(#radarGrid)" />
+              {/* Concentric radar range rings centered on the main block node (600, 210) */}
+              <circle
+                cx="50%"
+                cy="33%"
+                r="130"
+                fill="none"
+                stroke="#0284c7"
+                strokeWidth="0.75"
+                strokeDasharray="3,6"
+                opacity="0.3"
+              />
+              <circle
+                cx="50%"
+                cy="33%"
+                r="260"
+                fill="none"
+                stroke="#0284c7"
+                strokeWidth="0.75"
+                strokeDasharray="4,8"
+                opacity="0.2"
+              />
+              <circle
+                cx="50%"
+                cy="33%"
+                r="400"
+                fill="none"
+                stroke="#0284c7"
+                strokeWidth="0.75"
+                strokeDasharray="6,12"
+                opacity="0.15"
+              />
+            </svg>
 
-              {/* Primary SVG Railway Topology Graph */}
-              <svg
-                viewBox="0 0 1120 620"
-                className="w-full h-full select-none"
-                style={{ filter: "drop-shadow(0 0 12px rgba(0,0,0,0.5))" }}
-              >
-                {/* Railway Track Cross-Ties (Background sleepers decoration) */}
-                <defs>
-                  {/* Linear gradients for glowing tracks */}
-                  <linearGradient id="trackGlow" x1="0%" y1="0%" x2="100%" y2="100%">
-                    <stop offset="0%" stopColor="#0284c7" stopOpacity="0.8" />
-                    <stop offset="100%" stopColor="#38bdf8" stopOpacity="0.2" />
-                  </linearGradient>
+            {/* Primary SVG Railway Topology Graph */}
+            <svg
+              viewBox="0 0 1200 640"
+              className="w-full h-full select-none"
+              style={{ filter: "drop-shadow(0 0 16px rgba(0,0,0,0.6))" }}
+            >
+              <defs>
+                {/* Glow & Card Gradients */}
+                <linearGradient id="cardGradient" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#0d1b2f" />
+                  <stop offset="100%" stopColor="#060c18" />
+                </linearGradient>
 
-                  <linearGradient id="activeGlow" x1="0%" y1="0%" x2="100%" y2="0%">
-                    <stop offset="0%" stopColor="#FF9933" />
-                    <stop offset="100%" stopColor="#f59e0b" />
-                  </linearGradient>
+                <linearGradient id="blockCardGradient" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#1e1808" />
+                  <stop offset="100%" stopColor="#09101d" />
+                </linearGradient>
 
-                  {/* Marker arrows for edges */}
-                  <marker
-                    id="arrow"
-                    viewBox="0 0 10 10"
-                    refX="8"
-                    refY="5"
-                    markerWidth="6"
-                    markerHeight="6"
-                    orient="auto-start-reverse"
-                  >
-                    <path d="M 0 1 L 10 5 L 0 9 z" fill="#38bdf8" />
-                  </marker>
+                <radialGradient id="blockAura" cx="50%" cy="50%" r="50%">
+                  <stop offset="0%" stopColor="#FF9933" stopOpacity="0.28" />
+                  <stop offset="60%" stopColor="#0284c7" stopOpacity="0.08" />
+                  <stop offset="100%" stopColor="#050b14" stopOpacity="0" />
+                </radialGradient>
 
-                  <marker
-                    id="arrow-active"
-                    viewBox="0 0 10 10"
-                    refX="8"
-                    refY="5"
-                    markerWidth="6"
-                    markerHeight="6"
-                    orient="auto-start-reverse"
-                  >
-                    <path d="M 0 1 L 10 5 L 0 9 z" fill="#FF9933" />
-                  </marker>
-                </defs>
+                {/* Marker arrows for edges */}
+                <marker
+                  id="arrow-default"
+                  viewBox="0 0 10 10"
+                  refX="8"
+                  refY="5"
+                  markerWidth="5"
+                  markerHeight="5"
+                  orient="auto-start-reverse"
+                >
+                  <path d="M 0 1.5 L 9 5 L 0 8.5 z" fill="#334155" />
+                </marker>
 
-                {/* 1. RENDER EDGES / TRACKS */}
-                {edges.map((edge, idx) => {
-                  const source = nodes.find((n) => n.id === edge.from);
-                  const target = nodes.find((n) => n.id === edge.to);
-                  if (!source || !target) return null;
+                <marker
+                  id="arrow-active"
+                  viewBox="0 0 10 10"
+                  refX="8"
+                  refY="5"
+                  markerWidth="5"
+                  markerHeight="5"
+                  orient="auto-start-reverse"
+                >
+                  <path d="M 0 1.5 L 9 5 L 0 8.5 z" fill="#FF9933" />
+                </marker>
 
-                  const isEdgeActive = activeStage >= edge.stage;
-                  const strokeColor = isEdgeActive ? "#FF9933" : "#334155";
-                  const markerId = isEdgeActive ? "url(#arrow-active)" : "url(#arrow)";
+                <marker
+                  id="arrow-emerald"
+                  viewBox="0 0 10 10"
+                  refX="8"
+                  refY="5"
+                  markerWidth="5"
+                  markerHeight="5"
+                  orient="auto-start-reverse"
+                >
+                  <path d="M 0 1.5 L 9 5 L 0 8.5 z" fill="#10b981" />
+                </marker>
 
-                  // Curved quadratic path for smooth railway aesthetics
-                  const midX = (source.x + target.x) / 2;
-                  const midY = (source.y + target.y) / 2;
-                  const dx = target.x - source.x;
-                  const dy = target.y - source.y;
-                  const normalX = -dy * 0.15;
-                  const normalY = dx * 0.15;
-                  const ctrlX = midX + normalX;
-                  const ctrlY = midY + normalY;
+                <marker
+                  id="arrow-purple"
+                  viewBox="0 0 10 10"
+                  refX="8"
+                  refY="5"
+                  markerWidth="5"
+                  markerHeight="5"
+                  orient="auto-start-reverse"
+                >
+                  <path d="M 0 1.5 L 9 5 L 0 8.5 z" fill="#c084fc" />
+                </marker>
+              </defs>
 
-                  const d = `M ${source.x} ${source.y} Q ${ctrlX} ${ctrlY} ${target.x} ${target.y}`;
+              {/* Ambient radial glow behind central block */}
+              <circle cx="600" cy="210" r="160" fill="url(#blockAura)" pointerEvents="none" />
 
-                  return (
-                    <g key={`edge-${idx}`}>
-                      {/* Railway track bed underlay */}
-                      <path
-                        d={d}
-                        fill="none"
-                        stroke="#0f172a"
-                        strokeWidth="8"
-                        strokeLinecap="round"
-                      />
+              {/* 1. RENDER EDGES / RAILWAY TRACKS */}
+              {edges.map((edge, idx) => {
+                const source = nodes.find((n) => n.id === edge.from);
+                const target = nodes.find((n) => n.id === edge.to);
+                if (!source || !target) return null;
 
-                      {/* Parallel railway ties / dashed track effect */}
-                      <path
-                        d={d}
-                        fill="none"
-                        stroke={isEdgeActive ? "#0284c7" : "#1e293b"}
-                        strokeWidth="4"
-                        strokeDasharray={edge.dashed ? "4,4" : undefined}
-                      />
+                const isEdgeActive = activeStage >= edge.stage;
+                const geom = getEdgeGeometry(source, target);
 
-                      {/* Active signal beam / illuminated centerline */}
-                      <path
-                        d={d}
-                        fill="none"
-                        stroke={strokeColor}
-                        strokeWidth={isEdgeActive ? "2.5" : "1.5"}
-                        markerEnd={markerId}
-                        className={isEdgeActive ? "transition-all duration-700" : ""}
-                      />
+                let strokeColor = "#334155";
+                let markerId = "url(#arrow-default)";
+                if (isEdgeActive) {
+                  if (edge.to === "train-right" || edge.to === "node-passenger") {
+                    strokeColor = "#10b981";
+                    markerId = "url(#arrow-emerald)";
+                  } else if (edge.to === "node-freight") {
+                    strokeColor = "#c084fc";
+                    markerId = "url(#arrow-purple)";
+                  } else {
+                    strokeColor = "#FF9933";
+                    markerId = "url(#arrow-active)";
+                  }
+                }
 
-                      {/* Animated signal particle traveling along the track when tracing */}
-                      {isTracing && isEdgeActive && (
-                        <circle r="4" fill="#ffffff">
-                          <animateMotion path={d} dur="1.8s" repeatCount="indefinite" />
-                        </circle>
-                      )}
+                const labelW = (edge.label?.length || 8) * 6.5 + 14;
 
-                      {/* Edge Label */}
-                      {edge.label && (
+                return (
+                  <g key={`edge-${idx}`}>
+                    {/* Layer 1: Railway Track Bed Underlay (Dark ballast bed) */}
+                    <path
+                      d={geom.d}
+                      fill="none"
+                      stroke="#050d1a"
+                      strokeWidth="9"
+                      strokeLinecap="round"
+                    />
+
+                    {/* Layer 2: Railway Ties / Sleepers (Ties dash pattern) */}
+                    <path
+                      d={geom.d}
+                      fill="none"
+                      stroke={isEdgeActive ? strokeColor : "#1e293b"}
+                      strokeWidth="4"
+                      strokeDasharray="4,4"
+                      opacity={isEdgeActive ? 0.8 : 0.3}
+                    />
+
+                    {/* Layer 3: Central Signal Beam */}
+                    <path
+                      d={geom.d}
+                      fill="none"
+                      stroke={strokeColor}
+                      strokeWidth={isEdgeActive ? "2" : "1.2"}
+                      strokeDasharray={edge.dashed ? "6,4" : undefined}
+                      markerEnd={markerId}
+                      className={isEdgeActive ? "transition-all duration-500" : ""}
+                    />
+
+                    {/* Layer 4: Port Connection Pins at endpoints */}
+                    <circle
+                      cx={geom.sourcePoint.x}
+                      cy={geom.sourcePoint.y}
+                      r="2.5"
+                      fill={isEdgeActive ? strokeColor : "#334155"}
+                      stroke="#050b14"
+                      strokeWidth="1"
+                    />
+                    <circle
+                      cx={geom.targetPoint.x}
+                      cy={geom.targetPoint.y}
+                      r="2.5"
+                      fill={isEdgeActive ? strokeColor : "#334155"}
+                      stroke="#050b14"
+                      strokeWidth="1"
+                    />
+
+                    {/* Layer 5: Traveling Signal Pulse (When active/tracing) */}
+                    {isEdgeActive && (
+                      <circle
+                        r="3.5"
+                        fill="#ffffff"
+                        style={{ filter: `drop-shadow(0 0 5px ${strokeColor})` }}
+                      >
+                        <animateMotion
+                          path={geom.d}
+                          dur={isTracing ? "1.6s" : "3.2s"}
+                          repeatCount="indefinite"
+                        />
+                      </circle>
+                    )}
+
+                    {/* Layer 6: High-Contrast Edge Label Pill */}
+                    {edge.label && (
+                      <g className="select-none pointer-events-none">
+                        <rect
+                          x={geom.midX - labelW / 2}
+                          y={geom.midY - 8.5}
+                          width={labelW}
+                          height="17"
+                          rx="3"
+                          fill="#060e1c"
+                          stroke={isEdgeActive ? strokeColor : "#1e293b"}
+                          strokeWidth="1"
+                          style={{ filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.8))" }}
+                        />
                         <text
-                          x={ctrlX}
-                          y={ctrlY - 6}
-                          fill={isEdgeActive ? "#fcd34d" : "#64748b"}
-                          fontSize="9"
-                          fontWeight="700"
+                          x={geom.midX}
+                          y={geom.midY + 3.5}
+                          fill={isEdgeActive ? "#fcd34d" : "#94a3b8"}
+                          fontSize="7.5"
+                          fontWeight="800"
                           textAnchor="middle"
-                          className="font-mono uppercase select-none"
-                          style={{ textShadow: "0 1px 4px rgba(0,0,0,0.9)" }}
+                          className="font-mono uppercase tracking-wider select-none"
                         >
                           {edge.label}
                         </text>
-                      )}
-                    </g>
-                  );
-                })}
+                      </g>
+                    )}
+                  </g>
+                );
+              })}
 
-                {/* 2. RENDER NODES */}
-                {nodes.map((node) => {
-                  const isNodeActive = activeStage >= node.stage;
-                  const isSelected = selectedNodeId === node.id;
+              {/* 2. RENDER DIGITAL TWIN NODES */}
+              {nodes.map((node) => {
+                const isNodeActive = activeStage >= node.stage;
+                const isSelected = selectedNodeId === node.id;
 
-                  // Node styling parameters based on type
-                  let borderColor = "#38bdf8";
-                  let badgeBg = "#0284c7";
-                  let glowColor = "rgba(56, 189, 248, 0.4)";
+                let borderColor = "#0284c7";
+                let badgeBg = "#002b4d";
+                let glowColor = "rgba(56, 189, 248, 0.5)";
+                let statusBeaconColor = "#10b981";
 
-                  if (node.type === "block") {
-                    borderColor = "#FF9933";
-                    badgeBg = "#003366";
-                    glowColor = "rgba(255, 153, 51, 0.6)";
-                  } else if (node.type === "asset") {
-                    borderColor = node.status === "critical" ? "#ef4444" : "#f97316";
-                    badgeBg = "#7f1d1d";
-                    glowColor = "rgba(239, 68, 68, 0.5)";
-                  } else if (node.type === "train") {
-                    borderColor = node.status === "warning" ? "#f59e0b" : "#10b981";
-                    badgeBg = "#064e3b";
-                    glowColor = "rgba(16, 185, 129, 0.5)";
-                  } else if (node.type === "freight") {
-                    borderColor = "#c084fc";
-                    badgeBg = "#581c87";
-                    glowColor = "rgba(192, 132, 252, 0.5)";
-                  } else if (node.type === "network") {
-                    borderColor = node.status === "critical" ? "#ef4444" : "#fb923c";
-                    badgeBg = "#431407";
-                    glowColor = "rgba(251, 146, 60, 0.5)";
-                  }
+                if (node.type === "block") {
+                  borderColor = "#FF9933";
+                  badgeBg = "#003366";
+                  glowColor = "rgba(255, 153, 51, 0.7)";
+                  statusBeaconColor = "#FF9933";
+                } else if (node.type === "asset") {
+                  borderColor = node.status === "critical" ? "#ef4444" : "#f97316";
+                  badgeBg = node.status === "critical" ? "#450a0a" : "#431407";
+                  glowColor =
+                    node.status === "critical"
+                      ? "rgba(239, 68, 68, 0.6)"
+                      : "rgba(249, 115, 22, 0.5)";
+                  statusBeaconColor = node.status === "critical" ? "#ef4444" : "#f97316";
+                } else if (node.type === "train") {
+                  borderColor = node.status === "warning" ? "#f59e0b" : "#10b981";
+                  badgeBg = node.status === "warning" ? "#451a03" : "#064e3b";
+                  glowColor =
+                    node.status === "warning"
+                      ? "rgba(245, 158, 11, 0.6)"
+                      : "rgba(16, 185, 129, 0.5)";
+                  statusBeaconColor = node.status === "warning" ? "#f59e0b" : "#10b981";
+                } else if (node.type === "freight") {
+                  borderColor = "#c084fc";
+                  badgeBg = "#3b0764";
+                  glowColor = "rgba(192, 132, 252, 0.6)";
+                  statusBeaconColor = "#c084fc";
+                } else if (node.type === "corridor" || node.type === "downstream") {
+                  borderColor = "#38bdf8";
+                  badgeBg = "#0c2540";
+                  glowColor = "rgba(56, 189, 248, 0.5)";
+                  statusBeaconColor = "#38bdf8";
+                } else if (node.type === "network") {
+                  borderColor = node.status === "critical" ? "#ef4444" : "#f59e0b";
+                  badgeBg = "#3d1203";
+                  glowColor = "rgba(245, 158, 11, 0.6)";
+                  statusBeaconColor = node.status === "critical" ? "#ef4444" : "#f59e0b";
+                }
 
-                  const boxW = node.type === "block" ? 170 : 145;
-                  const boxH = node.type === "block" ? 64 : 52;
-                  const boxX = node.x - boxW / 2;
-                  const boxY = node.y - boxH / 2;
+                const boxW = node.width || (node.type === "block" ? 250 : 220);
+                const boxH = node.height || (node.type === "block" ? 78 : 60);
+                const boxX = node.x - boxW / 2;
+                const boxY = node.y - boxH / 2;
 
-                  return (
-                    <g
-                      key={node.id}
-                      onClick={() => setSelectedNodeId(node.id === selectedNodeId ? null : node.id)}
-                      className="cursor-pointer transition-transform duration-200 hover:scale-105"
-                      style={{
-                        transformOrigin: `${node.x}px ${node.y}px`,
-                        opacity: isNodeActive ? 1 : 0.35,
-                      }}
-                    >
-                      {/* Pulse halo for selected or central node */}
-                      {(isSelected || node.type === "block") && (
-                        <rect
-                          x={boxX - 4}
-                          y={boxY - 4}
-                          width={boxW + 8}
-                          height={boxH + 8}
-                          rx="4"
-                          fill="none"
-                          stroke={borderColor}
-                          strokeWidth="2"
-                          strokeDasharray="4,4"
-                          className="animate-spin-slow"
-                          style={{ filter: `drop-shadow(0 0 8px ${glowColor})` }}
-                        />
-                      )}
-
-                      {/* Main Node Card Body */}
+                return (
+                  <g
+                    key={node.id}
+                    onClick={() => setSelectedNodeId(node.id === selectedNodeId ? null : node.id)}
+                    className="cursor-pointer transition-transform duration-200 hover:scale-[1.025]"
+                    style={{
+                      transformOrigin: `${node.x}px ${node.y}px`,
+                      opacity: isNodeActive ? 1 : 0.3,
+                    }}
+                  >
+                    {/* Glowing outer halo ring for central or selected node */}
+                    {(isSelected || node.type === "block") && (
                       <rect
-                        x={boxX}
-                        y={boxY}
-                        width={boxW}
-                        height={boxH}
-                        rx="3"
-                        fill="#0b1320"
+                        x={boxX - 3}
+                        y={boxY - 3}
+                        width={boxW + 6}
+                        height={boxH + 6}
+                        rx="6"
+                        fill="none"
                         stroke={borderColor}
-                        strokeWidth={isSelected ? "2.5" : "1.5"}
+                        strokeWidth={isSelected ? "2" : "1"}
+                        opacity={isSelected ? "1" : "0.5"}
+                        style={{ filter: `drop-shadow(0 0 ${isSelected ? 12 : 6}px ${glowColor})` }}
                       />
+                    )}
 
-                      {/* Top Header Strip */}
-                      <rect x={boxX} y={boxY} width={boxW} height={16} rx="2" fill={badgeBg} />
+                    {/* Main Node Card Body */}
+                    <rect
+                      x={boxX}
+                      y={boxY}
+                      width={boxW}
+                      height={boxH}
+                      rx="4"
+                      fill={
+                        node.type === "block" ? "url(#blockCardGradient)" : "url(#cardGradient)"
+                      }
+                      stroke={borderColor}
+                      strokeWidth={isSelected ? "2.5" : "1.2"}
+                    />
 
-                      {/* Node Type Label */}
-                      <text
-                        x={boxX + 6}
-                        y={boxY + 11}
-                        fill="#ffffff"
-                        fontSize="8.5"
-                        fontWeight="900"
-                        className="font-mono uppercase tracking-wider select-none"
-                      >
-                        {node.type === "block" && "🔧 MAINTENANCE BLOCK"}
-                        {node.type === "asset" && "🔴 ASSET DEFECT"}
-                        {node.type === "train" && "🟢 TRAIN PATH"}
-                        {node.type === "freight" && "🟣 FREIGHT FLOW"}
-                        {node.type === "corridor" && "🔵 CORRIDOR"}
-                        {node.type === "downstream" && "🔵 DOWNSTREAM"}
-                        {node.type === "network" && "🟠 NETWORK PRESSURE"}
-                      </text>
+                    {/* Top Category Strip */}
+                    <rect
+                      x={boxX}
+                      y={boxY}
+                      width={boxW}
+                      height={18}
+                      rx="3"
+                      fill={badgeBg}
+                      opacity="0.95"
+                    />
 
-                      {/* Main Node Text */}
-                      <text
-                        x={boxX + 8}
-                        y={boxY + 31}
-                        fill="#ffffff"
-                        fontSize={node.type === "block" ? "11" : "10"}
-                        fontWeight="800"
-                        className="select-none"
-                      >
-                        {node.label}
-                      </text>
-
-                      {/* Sublabel Text */}
-                      <text
-                        x={boxX + 8}
-                        y={boxY + 45}
-                        fill="#94a3b8"
-                        fontSize="8.5"
-                        fontWeight="500"
-                        className="font-mono select-none"
-                      >
-                        {node.sublabel}
-                      </text>
-
-                      {/* Beacon status indicator circle */}
-                      <circle
-                        cx={boxX + boxW - 10}
-                        cy={boxY + 8}
-                        r="3.5"
-                        fill={
-                          node.status === "critical"
-                            ? "#ef4444"
-                            : node.status === "warning"
-                              ? "#f59e0b"
-                              : "#10b981"
-                        }
-                        className="animate-pulse"
-                      />
-                    </g>
-                  );
-                })}
-              </svg>
-
-              {/* Node Inspection Tooltip / Drawer overlay on canvas */}
-              {activeInspectedNode && (
-                <div className="absolute bottom-3 left-3 right-3 sm:left-auto sm:right-3 sm:w-80 bg-slate-950/95 border-2 border-[#FF9933] p-3.5 rounded-[2px] shadow-2xl backdrop-blur-md z-20">
-                  <div className="flex items-center justify-between border-b border-slate-800 pb-2 mb-2">
-                    <div className="flex items-center gap-1.5">
-                      <Eye className="size-3.5 text-[#FF9933]" />
-                      <span className="text-[11px] font-bold uppercase tracking-wider text-white">
-                        {t("INSPECTED CAUSAL NODE", "निरीक्षण किया गया नोड")}
-                      </span>
-                    </div>
-                    <button
-                      onClick={() => setSelectedNodeId(null)}
-                      className="text-xs text-slate-400 hover:text-white cursor-pointer"
+                    {/* Node Type Label */}
+                    <text
+                      x={boxX + 8}
+                      y={boxY + 12.5}
+                      fill="#ffffff"
+                      fontSize="8.5"
+                      fontWeight="900"
+                      className="font-mono uppercase tracking-wider select-none"
                     >
-                      ✕
-                    </button>
-                  </div>
+                      {node.type === "block" && "🔧 MAINTENANCE BLOCK"}
+                      {node.type === "asset" && `🔴 ${node.dept || "ASSET"} DEFECT`}
+                      {node.type === "train" &&
+                        (node.id === "train-express"
+                          ? "⚠️ TRAIN PATH OVERLAP"
+                          : "🟢 TRAIN PATH CLEAR")}
+                      {node.type === "freight" && "🟣 FREIGHT RAKE FLOW"}
+                      {node.type === "corridor" && "🔵 CORRIDOR TRACK SPINE"}
+                      {node.type === "downstream" && "🔵 DOWNSTREAM HANDOVER"}
+                      {node.type === "network" && "🟠 NETWORK PRESSURE"}
+                    </text>
 
-                  <div className="text-xs font-bold text-[#FF9933] mb-0.5">
-                    {activeInspectedNode.label}
-                  </div>
-                  <div className="text-[10px] text-slate-400 font-mono mb-2">
-                    {activeInspectedNode.sublabel}
-                  </div>
+                    {/* Beacon status indicator circle */}
+                    <circle cx={boxX + boxW - 10} cy={boxY + 9} r="3" fill={statusBeaconColor} />
+                    <circle
+                      cx={boxX + boxW - 10}
+                      cy={boxY + 9}
+                      r="5.5"
+                      fill="none"
+                      stroke={statusBeaconColor}
+                      strokeWidth="0.75"
+                      className="animate-ping opacity-40"
+                    />
 
-                  {activeInspectedNode.details && (
-                    <div className="space-y-1 text-[11px] bg-slate-900/80 p-2 rounded-[2px] border border-slate-800">
-                      {Object.entries(activeInspectedNode.details).map(([key, val]) => (
-                        <div key={key} className="flex justify-between items-center text-slate-300">
-                          <span className="text-slate-500 font-medium">{key}:</span>
-                          <span className="font-semibold text-slate-100 text-right">{val}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                    {/* Main Node Label */}
+                    <text
+                      x={boxX + 10}
+                      y={boxY + 34}
+                      fill={node.type === "block" ? "#FF9933" : "#ffffff"}
+                      fontSize={node.type === "block" ? "13" : "11.5"}
+                      fontWeight="800"
+                      className="select-none tracking-tight"
+                    >
+                      {node.label}
+                    </text>
+
+                    {/* Sublabel Text */}
+                    <text
+                      x={boxX + 10}
+                      y={boxY + 48}
+                      fill="#94a3b8"
+                      fontSize="9"
+                      fontWeight="500"
+                      className="font-mono select-none"
+                    >
+                      {node.sublabel}
+                    </text>
+
+                    {/* Central block extra operational micro-gauge */}
+                    {node.type === "block" && (
+                      <g className="select-none font-mono text-[8px]">
+                        <rect
+                          x={boxX + 10}
+                          y={boxY + 56}
+                          width={boxW - 20}
+                          height="12"
+                          rx="2"
+                          fill="#030812"
+                          stroke="#1e293b"
+                        />
+                        <rect
+                          x={boxX + 10}
+                          y={boxY + 56}
+                          width={(boxW - 20) * (selectedBlock.utilization_percent / 100)}
+                          height="12"
+                          rx="2"
+                          fill="#0284c7"
+                          opacity="0.6"
+                        />
+                        <text x={boxX + 14} y={boxY + 65} fill="#38bdf8" fontWeight="700">
+                          UTIL: {selectedBlock.utilization_percent}% • OPT SCORE:{" "}
+                          {selectedBlock.optimization_score}/100
+                        </text>
+                      </g>
+                    )}
+                  </g>
+                );
+              })}
+            </svg>
+
+            {/* Floating Node Inspection Tooltip Drawer on canvas */}
+            {activeInspectedNode && (
+              <div className="absolute bottom-4 right-4 w-84 max-w-[calc(100%-2rem)] bg-slate-950/95 border-2 border-[#FF9933] p-4 rounded-[2px] shadow-2xl backdrop-blur-md z-20 animate-in fade-in zoom-in-95 duration-150">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-2 mb-2">
+                  <div className="flex items-center gap-1.5">
+                    <Eye className="size-3.5 text-[#FF9933]" />
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-white">
+                      {t("INSPECTED TOPOLOGY NODE", "निरीक्षण किया गया नोड")}
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => setSelectedNodeId(null)}
+                    className="size-5 rounded flex items-center justify-center text-xs text-slate-400 hover:text-white hover:bg-slate-800 cursor-pointer"
+                  >
+                    ✕
+                  </button>
                 </div>
-              )}
-            </div>
-          </Card>
-        </div>
 
-        {/* 4. IMPACT DNA PANEL (COL 4/12) */}
-        <div className="xl:col-span-4 space-y-4">
+                <div className="text-xs font-bold text-[#FF9933] mb-0.5">
+                  {activeInspectedNode.label}
+                </div>
+                <div className="text-[10px] text-slate-400 font-mono mb-2.5">
+                  {activeInspectedNode.sublabel}
+                </div>
+
+                {activeInspectedNode.details && (
+                  <div className="space-y-1.5 text-[11px] bg-slate-900/80 p-2.5 rounded-[2px] border border-slate-800">
+                    {Object.entries(activeInspectedNode.details).map(([key, val]) => (
+                      <div key={key} className="flex justify-between items-center text-slate-300">
+                        <span className="text-slate-500 font-medium">{key}:</span>
+                        <span className="font-semibold text-slate-100 text-right">{val}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </Card>
+      </div>
+
+      {/* 4. BLOCK IMPACT DNA & AI INTELLIGENCE (MOVED BELOW THE DIAGRAM) */}
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
+        {/* BLOCK IMPACT DNA METRICS CARD (COL 7/12) */}
+        <div className="xl:col-span-7 space-y-4">
           <Card className="border-2 border-[#003366] bg-white dark:bg-slate-900 rounded-[2px] shadow-sm">
-            <CardHeader className="bg-[#003366] text-white px-4 py-3 border-b-2 border-[#FF9933]">
+            <CardHeader className="bg-[#003366] text-white px-5 py-3.5 border-b-2 border-[#FF9933]">
               <CardTitle className="text-xs font-black uppercase tracking-wider flex items-center justify-between">
-                <span>{t("BLOCK IMPACT DNA", "ब्लॉक प्रभाव डीएनए")}</span>
-                <Badge className="bg-[#FF9933] text-black font-extrabold text-[10px] px-2 py-0.2 rounded-[2px]">
+                <div className="flex items-center gap-2">
+                  <Activity className="size-4 text-[#FF9933]" />
+                  <span>{t("BLOCK IMPACT DNA METRICS", "ब्लॉक प्रभाव डीएनए मेट्रिक्स")}</span>
+                </div>
+                <Badge className="bg-[#FF9933] text-black font-extrabold text-[10px] px-2.5 py-0.5 rounded-[2px]">
                   {selectedBlock.block_id}
                 </Badge>
               </CardTitle>
             </CardHeader>
 
-            <CardContent className="p-4 space-y-3.5">
-              {/* Metrics Grid */}
-              <div className="grid grid-cols-2 gap-2.5">
-                {/* Assets Affected */}
-                <div className="p-3 bg-slate-50 dark:bg-slate-950 border border-border rounded-[2px]">
-                  <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                    {t("Assets affected", "प्रभावित परिसंपत्तियां")}
+            <CardContent className="p-5 space-y-4">
+              {/* 6 Metrics Grid - Spacious 3 columns */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                {/* 1. Assets Affected */}
+                <div className="p-3.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-[2px] hover:border-sky-500 transition-colors">
+                  <div className="flex items-center justify-between text-slate-500">
+                    <span className="text-[10px] font-bold uppercase tracking-wider">
+                      {t("Assets affected", "प्रभावित परिसंपत्तियां")}
+                    </span>
+                    <Wrench className="size-3.5 text-amber-500" />
                   </div>
-                  <div className="text-xl font-black text-[#003366] dark:text-sky-400 mt-0.5">
+                  <div className="text-2xl font-black text-[#003366] dark:text-sky-400 mt-1">
                     {selectedBlock.asset_count}
                   </div>
-                  <div className="text-[9px] text-slate-500 font-medium mt-0.5">
+                  <div className="text-[10px] text-slate-500 font-medium mt-0.5">
                     USFD flaw, OHE, Signals
                   </div>
                 </div>
 
-                {/* Train Movements */}
-                <div className="p-3 bg-slate-50 dark:bg-slate-950 border border-border rounded-[2px]">
-                  <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                    {t("Train movements", "ट्रेन आवागमन")}
+                {/* 2. Train movements */}
+                <div className="p-3.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-[2px] hover:border-sky-500 transition-colors">
+                  <div className="flex items-center justify-between text-slate-500">
+                    <span className="text-[10px] font-bold uppercase tracking-wider">
+                      {t("Train movements", "ट्रेन आवागमन")}
+                    </span>
+                    <TrainFront className="size-3.5 text-sky-500" />
                   </div>
-                  <div className="text-xl font-black text-[#003366] dark:text-sky-400 mt-0.5">
+                  <div className="text-2xl font-black text-[#003366] dark:text-sky-400 mt-1">
                     {selectedBlock.train_movements_count}
                   </div>
-                  <div className="text-[9px] text-slate-500 font-medium mt-0.5">
+                  <div className="text-[10px] text-slate-500 font-medium mt-0.5">
                     Scheduled window paths
                   </div>
                 </div>
 
-                {/* Passenger Movements */}
-                <div className="p-3 bg-slate-50 dark:bg-slate-950 border border-border rounded-[2px]">
-                  <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                    {t("Passenger movements", "यात्री आवागमन")}
+                {/* 3. Passenger movements */}
+                <div className="p-3.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-[2px] hover:border-emerald-500 transition-colors">
+                  <div className="flex items-center justify-between text-slate-500">
+                    <span className="text-[10px] font-bold uppercase tracking-wider">
+                      {t("Passenger movements", "यात्री आवागमन")}
+                    </span>
+                    <Layers className="size-3.5 text-emerald-500" />
                   </div>
-                  <div className="text-xl font-black text-emerald-600 dark:text-emerald-400 mt-0.5">
+                  <div className="text-2xl font-black text-emerald-600 dark:text-emerald-400 mt-1">
                     {selectedBlock.passenger_movements_count}
                   </div>
-                  <div className="text-[9px] text-slate-500 font-medium mt-0.5">
+                  <div className="text-[10px] text-slate-500 font-medium mt-0.5">
                     Express & Mail paths
                   </div>
                 </div>
 
-                {/* Freight Pressure */}
-                <div className="p-3 bg-slate-50 dark:bg-slate-950 border border-border rounded-[2px]">
-                  <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                    {t("Freight pressure", "मालगाड़ी दबाव")}
+                {/* 4. Freight pressure */}
+                <div className="p-3.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-[2px] hover:border-purple-500 transition-colors">
+                  <div className="flex items-center justify-between text-slate-500">
+                    <span className="text-[10px] font-bold uppercase tracking-wider">
+                      {t("Freight pressure", "मालगाड़ी दबाव")}
+                    </span>
+                    <Flame className="size-3.5 text-purple-500" />
                   </div>
-                  <div className="text-xl font-black text-purple-600 dark:text-purple-400 mt-0.5">
+                  <div className="text-2xl font-black text-purple-600 dark:text-purple-400 mt-1">
                     {selectedBlock.freight_pressure_score}
                   </div>
-                  <div className="text-[9px] text-slate-500 font-medium mt-0.5">
+                  <div className="text-[10px] text-slate-500 font-medium mt-0.5">
                     Predicted rake load index
                   </div>
                 </div>
 
-                {/* Traffic Impact */}
-                <div className="p-3 bg-slate-50 dark:bg-slate-950 border border-border rounded-[2px]">
-                  <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                    {t("Traffic impact", "यातायात प्रभाव")}
+                {/* 5. Traffic impact */}
+                <div className="p-3.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-[2px] hover:border-amber-500 transition-colors">
+                  <div className="flex items-center justify-between text-slate-500">
+                    <span className="text-[10px] font-bold uppercase tracking-wider">
+                      {t("Traffic impact", "यातायात प्रभाव")}
+                    </span>
+                    <AlertTriangle className="size-3.5 text-amber-500" />
                   </div>
-                  <div className="text-xl font-black text-amber-600 dark:text-amber-400 mt-0.5">
+                  <div className="text-2xl font-black text-amber-600 dark:text-amber-400 mt-1">
                     {selectedBlock.train_impact_score}
                   </div>
-                  <div className="text-[9px] text-slate-500 font-medium mt-0.5">
+                  <div className="text-[10px] text-slate-500 font-medium mt-0.5">
                     Cumulative delay metric
                   </div>
                 </div>
 
-                {/* Downstream Corridors */}
-                <div className="p-3 bg-slate-50 dark:bg-slate-950 border border-border rounded-[2px]">
-                  <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                    {t("Downstream corridors", "डाउनस्ट्रीम कॉरिडोर")}
+                {/* 6. Downstream corridors */}
+                <div className="p-3.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-[2px] hover:border-sky-500 transition-colors">
+                  <div className="flex items-center justify-between text-slate-500">
+                    <span className="text-[10px] font-bold uppercase tracking-wider">
+                      {t("Downstream corridors", "डाउनस्ट्रीम कॉरिडोर")}
+                    </span>
+                    <Network className="size-3.5 text-sky-500" />
                   </div>
-                  <div className="text-xl font-black text-[#003366] dark:text-sky-400 mt-0.5">
+                  <div className="text-2xl font-black text-[#003366] dark:text-sky-400 mt-1">
                     {selectedBlock.downstream_corridors_count}
                   </div>
-                  <div className="text-[9px] text-slate-500 font-medium mt-0.5">
+                  <div className="text-[10px] text-slate-500 font-medium mt-0.5">
                     Connected divisions
                   </div>
                 </div>
               </div>
 
               {/* Network Pressure Banner */}
-              <div className="p-3 rounded-[2px] border flex items-center justify-between bg-amber-50 dark:bg-amber-950/40 border-amber-300 dark:border-amber-800">
+              <div className="p-3.5 rounded-[2px] border flex items-center justify-between bg-amber-50 dark:bg-amber-950/40 border-amber-300 dark:border-amber-800">
                 <div>
                   <div className="text-[10px] font-bold text-amber-800 dark:text-amber-300 uppercase tracking-wider">
                     {t("Network pressure", "नेटवर्क परिचालन दबाव")}
@@ -1680,7 +2032,7 @@ function RailwayImpactDnaPage() {
                 </div>
 
                 {/* 4-Step Severity Ladder */}
-                <div className="grid grid-cols-4 gap-1 text-center font-bold text-[10px]">
+                <div className="grid grid-cols-4 gap-1.5 text-center font-bold text-[10px]">
                   <div
                     className={`py-1.5 rounded-[2px] border ${
                       selectedBlock.severity_level === "LOCAL" ||
@@ -1730,13 +2082,15 @@ function RailwayImpactDnaPage() {
               </div>
             </CardContent>
           </Card>
+        </div>
 
-          {/* 5. HIDDEN DEPENDENCIES CARD */}
-          <Card className="border-2 border-[#003366] bg-white dark:bg-slate-900 rounded-[2px] shadow-sm">
-            <CardHeader className="bg-slate-50 dark:bg-slate-800/60 px-4 py-3 border-b border-border">
+        {/* 5. HIDDEN DEPENDENCIES CARD (COL 5/12) */}
+        <div className="xl:col-span-5 space-y-4">
+          <Card className="border-2 border-[#003366] bg-white dark:bg-slate-900 rounded-[2px] shadow-sm h-full flex flex-col">
+            <CardHeader className="bg-slate-50 dark:bg-slate-800/60 px-5 py-3.5 border-b border-border">
               <CardTitle className="text-xs font-black uppercase tracking-wider text-slate-800 dark:text-slate-200 flex items-center justify-between">
-                <span className="flex items-center gap-1.5">
-                  <AlertTriangle className="size-3.5 text-[#FF9933]" />
+                <span className="flex items-center gap-2">
+                  <AlertTriangle className="size-4 text-[#FF9933]" />
                   {t("AI FOUND", "एआई ने पाया")} {selectedBlock.hidden_dependencies.length}{" "}
                   {t("HIDDEN DEPENDENCIES", "छिपी हुई निर्भरताएं")}
                 </span>
@@ -1746,13 +2100,13 @@ function RailwayImpactDnaPage() {
               </CardTitle>
             </CardHeader>
 
-            <CardContent className="p-4">
+            <CardContent className="p-5 flex-1">
               {selectedBlock.hidden_dependencies.length > 0 ? (
-                <ul className="space-y-2.5">
+                <ul className="space-y-3">
                   {selectedBlock.hidden_dependencies.map((dep, idx) => (
                     <li
                       key={idx}
-                      className="text-xs leading-relaxed text-slate-700 dark:text-slate-300 bg-slate-50 dark:bg-slate-950 p-2.5 rounded-[2px] border-l-3 border-[#003366] dark:border-sky-400"
+                      className="text-xs leading-relaxed text-slate-700 dark:text-slate-300 bg-slate-50 dark:bg-slate-950 p-3 rounded-[2px] border-l-3 border-[#003366] dark:border-sky-400 shadow-xs"
                     >
                       <span className="font-bold text-[#003366] dark:text-sky-400 mr-1.5">•</span>
                       {dep}
@@ -1760,7 +2114,7 @@ function RailwayImpactDnaPage() {
                   ))}
                 </ul>
               ) : (
-                <div className="text-xs text-slate-500 p-3 bg-slate-50 dark:bg-slate-950 rounded-[2px]">
+                <div className="text-xs text-slate-500 p-4 bg-slate-50 dark:bg-slate-950 rounded-[2px]">
                   {t(
                     "Dependency analysis requires additional traffic intelligence data.",
                     "निर्भरता विश्लेषण के लिए अतिरिक्त यातायात आसूचना डेटा की आवश्यकता है।",

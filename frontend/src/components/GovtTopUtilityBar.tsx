@@ -6,7 +6,6 @@ import { useLanguage } from "@/context/LanguageContext";
 export function GovtTopUtilityBar() {
   const { theme, toggleTheme } = useTheme();
   const { lang, setLang, t } = useLanguage();
-  const [fontSize, setFontSize] = useState<"sm" | "md" | "lg">("md");
   const [lastUpdated, setLastUpdated] = useState("");
 
   useEffect(() => {
@@ -16,28 +15,18 @@ export function GovtTopUtilityBar() {
         day: "2-digit",
         month: "short",
         year: "numeric",
-      }) + " " + now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false }) + " IST"
+      }) +
+        " " +
+        now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false }) +
+        " IST",
     );
   }, []);
-
-  const handleFontChange = (size: "sm" | "md" | "lg") => {
-    setFontSize(size);
-    if (typeof document !== "undefined") {
-      if (size === "sm") {
-        document.documentElement.style.fontSize = "13px";
-      } else if (size === "lg") {
-        document.documentElement.style.fontSize = "16px";
-      } else {
-        document.documentElement.style.fontSize = "14px";
-      }
-    }
-  };
 
   const handleScreenReader = () => {
     alert(
       lang === "hi"
         ? "स्क्रीन रीडर एक्सेस सक्षम किया गया। सभी मॉड्यूल पर मानक एआरआईए लेबल और लैंडमार्क नेविगेशन सक्रिय हैं।"
-        : "Screen Reader Access enabled. Standard ARIA labels and semantic landmark navigation active across all IR-ABPS modules."
+        : "Screen Reader Access enabled. Standard ARIA labels and semantic landmark navigation active across all IR-ABPS modules.",
     );
   };
 
@@ -70,46 +59,10 @@ export function GovtTopUtilityBar() {
             title={t("Screen Reader Access", "स्क्रीन रीडर एक्सेस")}
           >
             <Volume2 className="size-3 text-primary" />
-            <span className="hidden lg:inline">{t("Screen Reader Access", "स्क्रीन रीडर एक्सेस")}</span>
+            <span className="hidden lg:inline">
+              {t("Screen Reader Access", "स्क्रीन रीडर एक्सेस")}
+            </span>
           </button>
-
-          {/* Font Resizing */}
-          <div className="flex items-center gap-1 pl-3">
-            <span className="hidden xl:inline text-slate-500">{t("Text Size:", "फॉन्ट:")}</span>
-            <button
-              onClick={() => handleFontChange("sm")}
-              className={`px-1.5 py-0.5 rounded border text-[10px] font-bold cursor-pointer ${
-                fontSize === "sm"
-                  ? "bg-primary text-primary-foreground border-primary"
-                  : "bg-background border-border hover:bg-slate-200 dark:hover:bg-slate-800"
-              }`}
-              title="Decrease Font Size"
-            >
-              A-
-            </button>
-            <button
-              onClick={() => handleFontChange("md")}
-              className={`px-1.5 py-0.5 rounded border text-[11px] font-bold cursor-pointer ${
-                fontSize === "md"
-                  ? "bg-primary text-primary-foreground border-primary"
-                  : "bg-background border-border hover:bg-slate-200 dark:hover:bg-slate-800"
-              }`}
-              title="Standard Font Size"
-            >
-              A
-            </button>
-            <button
-              onClick={() => handleFontChange("lg")}
-              className={`px-1.5 py-0.5 rounded border text-[12px] font-bold cursor-pointer ${
-                fontSize === "lg"
-                  ? "bg-primary text-primary-foreground border-primary"
-                  : "bg-background border-border hover:bg-slate-200 dark:hover:bg-slate-800"
-              }`}
-              title="Increase Font Size"
-            >
-              A+
-            </button>
-          </div>
 
           {/* High Contrast / Dark Mode Toggle */}
           <button
@@ -159,7 +112,9 @@ export function GovtTopUtilityBar() {
           {/* Last Updated */}
           <span className="hidden 2xl:inline pl-3 text-[10px] text-slate-500">
             {t("Last Updated:", "अंतिम अद्यतन:")}{" "}
-            <span className="font-semibold text-slate-700 dark:text-slate-300">{lastUpdated || "Live"}</span>
+            <span className="font-semibold text-slate-700 dark:text-slate-300">
+              {lastUpdated || "Live"}
+            </span>
           </span>
         </div>
       </div>
