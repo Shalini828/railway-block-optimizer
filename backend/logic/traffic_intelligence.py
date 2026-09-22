@@ -462,16 +462,28 @@ def load_traffic_in_window(
     Load traffic overlapping with a specific window on a corridor and date.
     Returns list of traffic items with 'overlap_minutes' attached.
     """
-    day_traffic = load_traffic_for_day(cursor, corridor_id, travel_date)
+    day_traffic = load_traffic_for_day(
+        cursor,
+        corridor_id,
+        travel_date
+    )
+
     in_window = []
 
     for item in day_traffic:
         arr = item["arrival_time"]
         dep = item["departure_time"]
+
         if arr is None or dep is None:
             continue
 
-        overlaps, overlap_min = windows_overlap(start_time, end_time, arr, dep)
+        overlaps, overlap_min = windows_overlap(
+            start_time,
+            end_time,
+            arr,
+            dep
+        )
+
         if overlaps:
             item_copy = dict(item)
             item_copy["overlap_minutes"] = overlap_min
