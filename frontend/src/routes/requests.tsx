@@ -1,5 +1,5 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState, useMemo } from "react";
+﻿import { createFileRoute, Link } from "@tanstack/react-router";
+import { useState, useMemo, useEffect } from "react";
 import {
   Send,
   AlertTriangle,
@@ -107,9 +107,75 @@ const STATUSES: (Status | "All")[] = [
   "Completed",
 ];
 
+function mapBackendStatus(value: unknown): Status {
+  const s = String(value ?? "").trim().toUpperCase();
+  if (["OPTIMIZED", "CLUSTERED", "SHADOWED"].includes(s)) return "Clustered / Shadowed";
+  if (s === "APPROVED") return "Approved";
+  if (["ACTIVE", "IN_PROGRESS"].includes(s)) return "Active";
+  if (["COMPLETED", "CLOSED"].includes(s)) return "Completed";
+  if (["CANCELLED", "CANCELED"].includes(s)) return "Cancelled";
+  if (s === "REJECTED") return "Rejected";
+  return "Pending AI Scheduling";
+}
+
+function mapBackendDept(value: unknown): Dept {
+  const s = String(value ?? "").trim().toUpperCase();
+  return s === "SMMS" ? "SMMS" : s === "TDMS" ? "TDMS" : "TMS";
+}
+
+function mapBackendRequisition(item: any): Requisition {
+  const minutes = Number(item?.requested_duration_min ?? 0);
+  const criticality =
+    item?.criticality === "Medium"
+      ? "Medium"
+      : item?.criticality === "Low"
+        ? "Low"
+        : "High";
+  const daysOverdue = Number(item?.days_overdue ?? item?.overdue_days ?? 0);
+  const tsrRisk = Boolean(item?.tsr_risk ?? item?.safety_risk ?? false);
+  const blockType = item?.block_type ?? "Traffic Block";
+
+  const score =
+    item?.score != null && Number.isFinite(Number(item.score))
+      ? Number(item.score)
+      : criticalityScore({
+          criticality,
+          daysOverdue,
+          tsrRisk,
+          blockType,
+        } as Requisition);
+
+  return {
+    id: String(item?.request_id ?? item?.id ?? "—"),
+    backendId: String(item?.request_id ?? item?.id ?? ""),
+    assetId: String(item?.asset_id ?? item?.task_id ?? "—"),
+    dept: mapBackendDept(item?.department_id ?? item?.dept),
+    work: String(item?.description ?? item?.work ?? "Maintenance work"),
+    section: String(item?.corridor_id ?? item?.section_id ?? "—"),
+    line: String(item?.line ?? item?.track_line ?? "—"),
+    chainage: String(item?.chainage ?? "—"),
+    duration: minutes > 0 ? minutes / 60 : 1,
+    crew: Number(item?.crew ?? item?.crew_strength ?? 0),
+    criticality: criticality as Requisition["criticality"],
+    daysOverdue,
+    tsrRisk,
+    blockType: blockType as Requisition["blockType"],
+    requestedBy: String(item?.requested_by ?? "—"),
+    status: mapBackendStatus(item?.request_status ?? item?.status),
+    score,
+    rejectionReason: item?.rejection_reason
+      ? String(item.rejection_reason)
+      : undefined,
+  } as Requisition;
+}
+
 function RequestsPage() {
-  const { visibleReqs, reqs, addReq, role, scope, can } = useAbps();
+  const { role, scope, can } = useAbps();
   const { t } = useLanguage();
+
+  const [backendReqs, setBackendReqs] = useState<Requisition[]>([]);
+  const [isLoadingRequests, setIsLoadingRequests] = useState(true);
+  const [requestLoadError, setRequestLoadError] = useState<string | null>(null);
   const defaultDept: Dept = role.dept === "COA" ? "TMS" : (role.dept as Dept);
 
   const [dept, setDept] = useState<Dept>(defaultDept);
@@ -135,8 +201,41 @@ function RequestsPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showForm, setShowForm] = useState(true);
 
-  // Use visibleReqs for department roles, reqs for network roles
-  const activeReqs = visibleReqs;
+  const loadRequests = async () => {
+    setIsLoadingRequests(true);
+    setRequestLoadError(null);
+
+    try {
+      const response = await apiFetch("/block-requests/");
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data?.detail || data?.message || "Failed to load requisitions");
+      }
+
+      const rows = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.requests)
+          ? data.requests
+          : [];
+
+      setBackendReqs(rows.map(mapBackendRequisition));
+    } catch (error) {
+      console.error("Failed to load requisitions:", error);
+      setRequestLoadError(
+        error instanceof Error ? error.message : "Failed to load requisitions",
+      );
+      setBackendReqs([]);
+    } finally {
+      setIsLoadingRequests(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadRequests();
+  }, []);
+
+  const activeReqs = backendReqs;
 
   const filtered = useMemo(() => {
     return activeReqs.filter((r) => {
@@ -217,11 +316,8 @@ function RequestsPage() {
         throw new Error(requestData.detail || "Failed to submit requisition");
       }
 
-      // Add to local frontend requisition ledger with backendId
-      addReq({
-        ...payload,
-        backendId: requestData.request_id,
-      });
+      // PostgreSQL is the source of truth for the requisition ledger.
+      await loadRequests();
 
       setWork("");
 
@@ -280,7 +376,7 @@ function RequestsPage() {
         const data = await res.json();
         throw new Error(data.detail || "Failed to cancel");
       }
-      req.status = "Cancelled";
+      await loadRequests();
       toast.success(t(`Requisition ${req.id} cancelled.`, `मांग पत्र ${req.id} रद्द कर दिया गया।`));
     } catch (e: any) {
       toast.error(e.message || "Failed to cancel requisition");
@@ -304,8 +400,7 @@ function RequestsPage() {
         const data = await res.json();
         throw new Error(data.detail || "Failed to reject");
       }
-      rejectingReq.status = "Rejected";
-      rejectingReq.rejectionReason = rejectionReason;
+      await loadRequests();
       setRejectingReq(null);
       setRejectionReason("");
       toast.success(t(`Requisition ${rejectingReq.id} rejected.`, `मांग पत्र ${rejectingReq.id} अस्वीकृत।`));
@@ -920,7 +1015,30 @@ function RequestsPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filtered.map((r) => {
+                  {isLoadingRequests ? (
+                    <TableRow>
+                      <TableCell colSpan={7} className="text-center py-12 text-xs text-muted-foreground">
+                        <div className="flex items-center justify-center gap-2">
+                          <RefreshCw className="size-4 animate-spin" />
+                          Loading requisitions from BDMS...
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ) : requestLoadError ? (
+                    <TableRow>
+                      <TableCell colSpan={7} className="text-center py-12 text-xs text-red-600">
+                        <div className="space-y-2">
+                          <p className="font-semibold">Could not load requisitions.</p>
+                          <p className="text-[11px] text-muted-foreground">{requestLoadError}</p>
+                          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => void loadRequests()}>
+                            <RefreshCw className="mr-1.5 size-3.5" />
+                            Retry
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    filtered.map((r) => {
                     const rScore = r.score ?? criticalityScore(r);
                     let scrLabel = "LOW";
                     let scrClass = "bg-emerald-100 text-emerald-900 border-emerald-300";
@@ -1004,8 +1122,9 @@ function RequestsPage() {
                         </TableCell>
                       </TableRow>
                     );
-                  })}
-                  {filtered.length === 0 && (
+                    })
+                  )}
+                  {!isLoadingRequests && !requestLoadError && filtered.length === 0 && (
                     <TableRow>
                       <TableCell colSpan={7} className="text-center py-12 text-xs text-muted-foreground">
                         No requisitions matching selected filters.
@@ -1017,7 +1136,7 @@ function RequestsPage() {
             </CardContent>
             <div className="border-t border-border bg-slate-50 dark:bg-slate-900/60 px-4 py-2 text-[11px] text-slate-500 flex justify-between items-center">
               <span>National Railway BDMS Register (Audit Compliant)</span>
-              <span>Showing {filtered.length} of {reqs.length} Total Records</span>
+              <span>Showing {filtered.length} of {activeReqs.length} Total Records</span>
             </div>
           </Card>
         </div>

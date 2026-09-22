@@ -713,9 +713,9 @@ def create_block_request(
         # =====================================================
 
         requested_by_user_id = resolve_user_id(
-            cursor,
-            requester_name
-        ) or user.role_id
+    cursor,
+    requester_name
+)
 
 
         # =====================================================
