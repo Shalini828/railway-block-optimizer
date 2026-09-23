@@ -231,11 +231,18 @@ def get_dashboard_kpis(user: CurrentUser = Depends(get_current_user)):
         with conn.cursor() as cur:
 
             where_clause = ""
+            request_source = "FROM public.block_requests"
             params = ()
             if user.scope != "network":
-                clean_dept = user.dept.upper()
-                where_clause = "WHERE UPPER(COALESCE(department_id, '')) IN (%s, %s)"
-                params = (f"DEPT-{clean_dept}", clean_dept)
+               clean_dept = user.dept.upper()
+               request_source = """
+                  FROM public.block_requests br
+                  JOIN public.maintenance_tasks mt ON mt.task_id = br.task_id
+               """
+               where_clause = """
+                  WHERE UPPER(COALESCE(mt.department, '')) IN (%s, %s)
+            """
+               params = (f"DEPT-{clean_dept}", clean_dept)
 
             cur.execute(f"""
                 SELECT
@@ -275,7 +282,7 @@ def get_dashboard_kpis(user: CurrentUser = Depends(get_current_user)):
                         0
                     ) AS optimized_requested_minutes
 
-                FROM public.block_requests
+                {request_source}
                 {where_clause}
             """, params)
 

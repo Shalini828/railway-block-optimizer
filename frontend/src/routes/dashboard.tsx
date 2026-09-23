@@ -293,7 +293,10 @@ function DashboardPage() {
                 : dept === "SMMS"
                   ? t("Signal Asset Availability", "सिग्नल परिसंपत्ति उपलब्धता")
                   : t("OHE Asset Availability", "ओएचई परिसंपत्ति उपलब्धता"),
-            value: formatNumber(deptKpis?.asset_availability_percent ?? (dept === "TMS" ? 95.8 : dept === "SMMS" ? 97.2 : 96.4), true),
+            value: formatNumber(
+  deptKpis?.asset_availability_percent ?? 0,
+  true
+),
             note:
               dept === "TMS"
                 ? t("P.Way Track, Rails & Turnouts", "पी.वे ट्रैक, रेल एवं टर्नआउट")

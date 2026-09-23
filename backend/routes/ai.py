@@ -1365,7 +1365,7 @@ def get_block_intelligence(block_id: str):
         # --------------------------------------------------
         # Final optimization score
         # --------------------------------------------------
-
+        optimization_score = float(optimization_score or 0)
         why_selected.append(
             f"Optimization score: {optimization_score:.2f}"
         )
@@ -1457,7 +1457,9 @@ def get_block_intelligence(block_id: str):
                     ),
 
                     "train_impact_score": float(
-                        train_impact_score or 0
+                        assessment.get("train_impact_score", 0)
+
+
                     ),
 
                     "number_of_tasks": int(

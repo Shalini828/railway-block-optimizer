@@ -257,8 +257,10 @@ def _get_shadow_opportunities(current_blocks):
 # ============================================================
 
 @router.get("/", dependencies=[Depends(require_permission("planner.view"))])
-def get_optimized_plan(user: CurrentUser = Depends(get_current_user)):
-
+def get_optimized_plan(
+    include_review: bool = True,
+    user: CurrentUser = Depends(get_current_user),
+):
     conn = get_connection()
 
     try:
@@ -412,15 +414,19 @@ def get_optimized_plan(user: CurrentUser = Depends(get_current_user)):
         # them from the requests belonging to the saved PostgreSQL
         # plan. This makes the result stable after refresh/restart.
         # ----------------------------------------------------
-        shadow_block_opportunities = _get_shadow_opportunities(
-            blocks,
-        )
+        if include_review:
+         shadow_block_opportunities = _get_shadow_opportunities(
+        blocks,
+    )
+        else:
+         shadow_block_opportunities = []
+        
 
         print(
             "SHADOW BLOCK OPPORTUNITIES RETURNED:",
             len(shadow_block_opportunities),
         )
-
+        
         # ----------------------------------------------------
         # Format blocks for frontend (applying department scoping)
         # ----------------------------------------------------
@@ -499,7 +505,17 @@ def get_optimized_plan(user: CurrentUser = Depends(get_current_user)):
             block_dict["is_own"] = is_own
 
             # Review status timeline summary
-            block_dict["review"] = get_block_review_summary(block_id)
+            if include_review:
+             block_dict["review"] = get_block_review_summary(block_id)
+            else:
+             block_dict["review"] = {
+        "controller_decision": None,
+        "controller_note": None,
+        "controller_reviewed_at": None,
+        "has_controller_endorsement": False,
+        "open_change_requests": [],
+        "acknowledgements": [],
+    }
 
             formatted_blocks.append(block_dict)
 
