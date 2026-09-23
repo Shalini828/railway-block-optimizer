@@ -2184,6 +2184,16 @@ def build_window_explanation(
         f"{ai_decision_confidence['score_gap']:.2f})"
     )
 
+    if ai_decision_confidence["level"] == "LOW":
+        if ai_decision_confidence["score_gap"] == 0:
+            reasons.append(
+                "Top candidate windows are tied; the selected window was chosen by conflict count and proximity tie-breakers"
+            )
+        else:
+            reasons.append(
+                "Top candidate windows are nearly tied; the score difference is too small for high confidence"
+            )
+
     if best_candidate["conflict_count"] == 0:
         reasons.append(
             "No train conflicts in the selected window"
@@ -3221,6 +3231,7 @@ for group in groups:
             "train_impact_score": train_impact_score,
             "train_impact": train_impact_score,
             "estimated_delay": estimated_delay,
+            "conflict_count": len(train_conflicts),
 
             "maintenance_priority": round(
                 maintenance_priority,
@@ -3399,6 +3410,7 @@ for block in optimized_blocks:
             duration_min,
             utilization_percent,
             train_impact_score,
+            estimated_delay_min,
             optimization_score,
             number_of_tasks,
             number_of_departments
@@ -3406,7 +3418,7 @@ for block in optimized_blocks:
         VALUES
         (
             %s, %s, %s, %s, %s,
-            %s, %s, %s, %s, %s, %s
+            %s, %s, %s, %s, %s, %s, %s
         )
         ON CONFLICT (block_id) DO UPDATE SET
         corridor_id = EXCLUDED.corridor_id,
@@ -3416,6 +3428,7 @@ for block in optimized_blocks:
         duration_min = EXCLUDED.duration_min,
         utilization_percent = EXCLUDED.utilization_percent,
         train_impact_score = EXCLUDED.train_impact_score,
+        estimated_delay_min = EXCLUDED.estimated_delay_min,
         optimization_score = EXCLUDED.optimization_score,
         number_of_tasks = EXCLUDED.number_of_tasks,
         number_of_departments = EXCLUDED.number_of_departments;
@@ -3432,6 +3445,7 @@ for block in optimized_blocks:
                 "train_impact_score",
                 block.get("traffic_impact_score", 0)
             ),
+            block.get("estimated_delay", 0),
             block["optimization_score"],
             len(block["tasks"]),
             department_count
@@ -3521,7 +3535,7 @@ for block in optimized_blocks:
                 block["block_id"],
                 train["train_id"],
                 "SCHEDULE_CONFLICT",
-                5
+                train.get("estimated_delay_min", 5)
             )
         )
 # ==========================================

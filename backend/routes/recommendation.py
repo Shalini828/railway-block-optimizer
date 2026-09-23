@@ -30,6 +30,18 @@ def get_connection():
     return psycopg.connect(**DB_CONFIG)
 
 
+def calculate_overlap_delay(item):
+    profile = item.get("constraint_profile") or {}
+    base_delay = profile.get("base_delay_min", 5)
+    overlap_min = item.get("overlap_minutes", 0)
+
+    if overlap_min >= 30:
+        return base_delay
+    if overlap_min > 0:
+        return max(2, base_delay // 2)
+    return 0
+
+
 class WindowRecommendationRequest(BaseModel):
     corridor: str
     date: str
@@ -330,7 +342,7 @@ def recommend_windows(request: WindowRecommendationRequest):
                         source=item.get("source")
                     )
                     weighted_conflict_sum += profile.get("impact_weight", 20)
-                    estimated_delay_min += profile.get("base_delay_min", 5)
+                    estimated_delay_min += calculate_overlap_delay(item)
 
                     sev = conflict_severity(item, freight_level)
                     if sev == "CRITICAL":
@@ -419,9 +431,11 @@ def recommend_windows(request: WindowRecommendationRequest):
                 arr = item.get("arrival_time")
                 dep = item.get("departure_time")
                 if arr is not None and dep is not None:
-                    overlaps, _ = windows_overlap(request.start, request.end, arr, dep)
+                    overlaps, overlap_min = windows_overlap(request.start, request.end, arr, dep)
                     if overlaps:
-                        req_items.append(item)
+                        request_item = dict(item)
+                        request_item["overlap_minutes"] = overlap_min
+                        req_items.append(request_item)
             req_counts = classify_counts(req_items)
 
             avoided = []
@@ -447,7 +461,7 @@ def recommend_windows(request: WindowRecommendationRequest):
                 f"Optimization score: {best['optimization_score']}."
             )
             req_delay_min = sum(
-                (item.get("constraint_profile") or {}).get("base_delay_min", 5)
+                calculate_overlap_delay(item)
                 for item in req_items
             )
         else:

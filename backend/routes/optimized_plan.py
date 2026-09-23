@@ -280,14 +280,52 @@ def get_optimized_plan(user: CurrentUser = Depends(get_current_user)):
                     optimization_score,
                     number_of_tasks,
                     number_of_departments,
+
+                    maintenance_priority,
+                    asset_risk_score,
+                    traffic_impact_score,
+                    goods_impact_score,
+                    consolidation_score,
+                    estimated_delay_min,
+
+                    ai_decision_confidence,
+                    ai_reasons,
+                    ai_explanation,
+                    traffic_prediction,
+                    optimization_reason,
+
                     block_status,
                     approved_by,
                     approved_at
+
                 FROM optimized_blocks
+
                 ORDER BY block_date, start_time
             """)
 
             blocks = cursor.fetchall()
+
+            # ------------------------------------------------
+            # Count BDMS requests represented in the saved plan
+            # ------------------------------------------------
+            # AUTHORITATIVE SAVED-PLAN DEMAND COUNT:
+            # Count distinct BDMS request IDs through the actual
+            # task-to-block relationships. This reflects the demands
+            # represented by the saved optimized plan, rather than
+            # counting blocks or maintenance tasks.
+            cursor.execute("""
+                SELECT COUNT(DISTINCT br.request_id) AS request_count
+                FROM block_requests br
+                JOIN block_tasks bt
+                    ON bt.task_id = br.task_id
+                JOIN optimized_blocks ob
+                    ON ob.block_id = bt.block_id
+                WHERE ob.block_id IS NOT NULL
+            """)
+            request_count_row = cursor.fetchone()
+            requests_processed = int(
+                request_count_row["request_count"] or 0
+            )
 
             # ------------------------------------------------
             # Fetch train impacts
@@ -442,6 +480,16 @@ def get_optimized_plan(user: CurrentUser = Depends(get_current_user)):
             block_dict["train_conflicts"] = len(
                 block_dict["conflicts"]
             )
+            block_dict["conflict_count"] = block_dict[
+                "train_conflicts"
+            ]
+            block_dict["estimated_delay"] = block_dict.get(
+                "estimated_delay_min"
+            )
+            block_dict["train_impact_score"] = block_dict.get(
+                "train_impact_score",
+                block_dict.get("train_impact", 0),
+            )
 
             block_dict["task_count"] = len(
                 block_dict["tasks"]
@@ -455,9 +503,83 @@ def get_optimized_plan(user: CurrentUser = Depends(get_current_user)):
 
             formatted_blocks.append(block_dict)
 
+        # ----------------------------------------------------
+        # SAVED ENGINE METRICS
+        # ----------------------------------------------------
+        # These metrics are reconstructed from the persisted plan.
+        # They are deliberately based on the saved optimized blocks,
+        # not on block/task counts guessed by the frontend.
+        total_block_minutes = sum(
+            float(block.get("duration_min") or 0)
+            for block in blocks
+        )
+
+        average_block_duration = (
+            total_block_minutes / len(blocks)
+            if blocks
+            else 0.0
+        )
+
+        average_utilization = (
+            sum(
+                float(block.get("utilization_percent") or 0)
+                for block in blocks
+            ) / len(blocks)
+            if blocks
+            else 0.0
+        )
+
+        average_optimization_score = (
+            sum(
+                float(block.get("optimization_score") or 0)
+                for block in blocks
+            ) / len(blocks)
+            if blocks
+            else 0.0
+        )
+
+        total_train_impact = sum(
+            float(block.get("train_impact_score") or 0)
+            for block in blocks
+        )
+
+        total_train_conflicts = sum(
+            len(impacts_by_block.get(block["block_id"], []))
+            for block in blocks
+        )
+
+        # Compute/latency belongs to the actual POST /optimization run.
+        # This saved-plan endpoint cannot reconstruct execution latency
+        # from the persisted optimized_blocks rows, so expose null rather
+        # than inventing a value.
+        engine_metrics = {
+            "requests_processed": requests_processed,
+            "blocks_generated": len(blocks),
+            "total_block_minutes": round(total_block_minutes, 2),
+            "average_block_duration_min": round(average_block_duration, 2),
+            "average_utilization": round(average_utilization, 2),
+            "average_optimization_score": round(average_optimization_score, 2),
+            "total_train_impact": round(total_train_impact, 2),
+            "total_train_conflicts": int(total_train_conflicts),
+            "compute_time_seconds": None,
+            "execution_latency_seconds": None,
+        }
+
         return {
             "status": "success",
+            "message": "Loaded the latest saved optimized plan",
             "block_count": len(formatted_blocks),
+            "requests_processed": requests_processed,
+            "blocks_generated": len(formatted_blocks),
+            "run_metrics": {
+                "total_block_minutes": engine_metrics["total_block_minutes"],
+                "average_block_duration_min": engine_metrics["average_block_duration_min"],
+                "average_utilization": engine_metrics["average_utilization"],
+                "average_optimization_score": engine_metrics["average_optimization_score"],
+                "total_train_impact": engine_metrics["total_train_impact"],
+                "total_train_conflicts": engine_metrics["total_train_conflicts"],
+            },
+            "engine_metrics": engine_metrics,
             "blocks": formatted_blocks,
             "scope": user.scope,
             "shadow_block_opportunities": shadow_block_opportunities,

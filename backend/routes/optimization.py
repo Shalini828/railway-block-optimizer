@@ -6,7 +6,6 @@ import time
 import psycopg
 import os
 import io
-import json
 from contextlib import redirect_stdout
 from dotenv import load_dotenv
 
@@ -31,123 +30,82 @@ def get_connection():
     )
 
 
-def ensure_shadow_table(conn):
-    """Create the persistent shadow-opportunity store if it does not exist."""
-    with conn.cursor() as cursor:
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS shadow_block_opportunities (
-                opportunity_id BIGSERIAL PRIMARY KEY,
-                opportunity_data JSONB NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-    conn.commit()
-
-
-def save_shadow_opportunities(opportunities):
-    """Replace the previous shadow result with the latest optimization run."""
-    conn = get_connection()
-    try:
-        ensure_shadow_table(conn)
-        with conn.cursor() as cursor:
-            cursor.execute("DELETE FROM shadow_block_opportunities")
-            for opportunity in opportunities or []:
-                cursor.execute(
-                    """
-                    INSERT INTO shadow_block_opportunities (opportunity_data)
-                    VALUES (%s::jsonb)
-                    """,
-                    (json.dumps(opportunity, default=str),)
-                )
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def get_saved_shadow_opportunities():
-    """Read the exact shadow opportunities persisted by the latest AI run."""
-    conn = get_connection()
-    try:
-        ensure_shadow_table(conn)
-        with conn.cursor() as cursor:
-            cursor.execute("""
-                SELECT opportunity_data
-                FROM shadow_block_opportunities
-                ORDER BY opportunity_id
-            """)
-            rows = cursor.fetchall()
-        return [row[0] for row in rows]
-    finally:
-        conn.close()
-
-
 def format_block(block):
     tasks = block.get("tasks", []) or []
     conflicts = block.get("train_conflicts", []) or []
+    conflict_count = (
+        conflicts
+        if isinstance(conflicts, int)
+        else len(conflicts)
+    )
+
+    def safe_float(value):
+        try:
+            return float(value or 0)
+        except (TypeError, ValueError):
+            return 0.0
 
     return {
-        "block_id": str(
-            block.get("block_id", "")
-        ),
-
+        "block_id": str(block.get("block_id", "")),
         "corridor": str(
-            block.get(
-                "corridor",
-                block.get("corridor_id", "")
-            )
+            block.get("corridor", block.get("corridor_id", ""))
         ),
-
         "date": str(
-            block.get(
-                "date",
-                block.get("block_date", "")
-            )
+            block.get("date", block.get("block_date", ""))
         ),
-
         "start": str(
-            block.get(
-                "start",
-                block.get("start_time", "")
-            )
+            block.get("start", block.get("start_time", ""))
         ),
-
         "end": str(
-            block.get(
-                "end",
-                block.get("end_time", "")
-            )
+            block.get("end", block.get("end_time", ""))
+        ),
+        "duration": safe_float(
+            block.get("duration", block.get("duration_min", 0))
+        ),
+        "utilization": safe_float(
+            block.get("utilization", block.get("utilization_percent", 0))
+        ),
+        "train_impact": safe_float(
+            block.get("train_impact", block.get("train_impact_score", 0))
+        ),
+        "train_impact_score": safe_float(
+            block.get("train_impact_score", block.get("train_impact", 0))
+        ),
+        "estimated_delay": safe_float(
+            block.get("estimated_delay", block.get("estimated_delay_min", 0))
+        ),
+        "number_of_tasks": int(
+            block.get("number_of_tasks", len(tasks)) or 0
+        ),
+        "train_conflicts": int(
+            block.get("train_conflicts_count", conflict_count) or 0
+        ),
+        "conflict_count": int(
+            block.get("conflict_count", conflict_count) or 0
         ),
 
-        "duration": float(
-            block.get(
-                "duration",
-                block.get("duration_min", 0)
-            ) or 0
-        ),
-
-        "utilization": float(
-            block.get(
-                "utilization",
-                block.get("utilization_percent", 0)
-            ) or 0
-        ),
-
-        "train_impact": float(
-            block.get(
-                "train_impact",
-                block.get("train_impact_score", 0)
-            ) or 0
-        ),
-
-        "number_of_tasks": len(tasks),
-
-        "train_conflicts": len(conflicts)
+        # Preserve the optimizer's decision evidence.
+        "optimization_score": safe_float(block.get("optimization_score", 0)),
+        "maintenance_priority": safe_float(block.get("maintenance_priority", 0)),
+        "asset_risk_score": safe_float(block.get("asset_risk_score", 0)),
+        "traffic_impact_score": safe_float(block.get("traffic_impact_score", 0)),
+        "goods_impact_score": safe_float(block.get("goods_impact_score", 0)),
+        "consolidation_score": safe_float(block.get("consolidation_score", 0)),
+        "ai_decision_confidence": block.get("ai_decision_confidence"),
+        "ai_reasons": block.get("ai_reasons") or [],
+        "ai_explanation": block.get("ai_explanation"),
+        "reason": block.get("reason") or block.get("optimization_reason"),
     }
+
 
 
 def get_saved_blocks():
     """
     Read the latest optimized blocks directly from PostgreSQL.
+
+    This is a read-only reconstruction of the saved engine result.
+    It preserves the AI decision fields so the frontend can explain
+    why each block was selected.
     """
 
     conn = get_connection()
@@ -163,8 +121,43 @@ def get_saved_blocks():
                 ob.end_time,
                 ob.duration_min,
                 ob.utilization_percent,
-                ob.train_impact_score
+                ob.train_impact_score,
+                COALESCE(SUM(bti.estimated_delay_min), 0) AS estimated_delay_min,
+                ob.optimization_score,
+                ob.number_of_tasks,
+                ob.maintenance_priority,
+                ob.asset_risk_score,
+                ob.traffic_impact_score,
+                ob.goods_impact_score,
+                ob.consolidation_score,
+                ob.ai_decision_confidence,
+                ob.ai_reasons,
+                ob.ai_explanation,
+                ob.optimization_reason,
+                COUNT(DISTINCT bti.train_id) AS train_conflict_count
             FROM optimized_blocks ob
+            LEFT JOIN block_train_impact bti
+                ON bti.block_id = ob.block_id
+            GROUP BY
+                ob.block_id,
+                ob.corridor_id,
+                ob.block_date,
+                ob.start_time,
+                ob.end_time,
+                ob.duration_min,
+                ob.utilization_percent,
+                ob.train_impact_score,
+                ob.optimization_score,
+                ob.number_of_tasks,
+                ob.maintenance_priority,
+                ob.asset_risk_score,
+                ob.traffic_impact_score,
+                ob.goods_impact_score,
+                ob.consolidation_score,
+                ob.ai_decision_confidence,
+                ob.ai_reasons,
+                ob.ai_explanation,
+                ob.optimization_reason
             ORDER BY
                 ob.block_date,
                 ob.start_time
@@ -184,11 +177,53 @@ def get_saved_blocks():
                 "duration": float(row[5] or 0),
                 "utilization": float(row[6] or 0),
                 "train_impact": float(row[7] or 0),
-                "number_of_tasks": 0,
-                "train_conflicts": 0
+                "train_impact_score": float(row[7] or 0),
+                "estimated_delay": float(row[8] or 0),
+                "number_of_tasks": int(row[10] or 0),
+                "train_conflicts": int(row[20] or 0),
+                "conflict_count": int(row[20] or 0),
+
+                # AI decision fields
+                "optimization_score": float(row[9] or 0),
+                "maintenance_priority": float(row[11] or 0),
+                "asset_risk_score": float(row[12] or 0),
+                "traffic_impact_score": float(row[13] or 0),
+                "goods_impact_score": float(row[14] or 0),
+                "consolidation_score": float(row[15] or 0),
+                "ai_decision_confidence": row[16],
+                "ai_reasons": row[17],
+                "ai_explanation": row[18],
+                "reason": row[19],
             })
 
         return blocks
+
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def get_saved_request_count():
+    """
+    Count distinct BDMS requests represented in the persisted optimized plan.
+    This is the authoritative demand/request metric for the saved-plan path.
+    """
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("""
+            SELECT COUNT(DISTINCT br.request_id)
+            FROM block_requests br
+            JOIN block_tasks bt
+                ON bt.task_id = br.task_id
+            JOIN optimized_blocks ob
+                ON ob.block_id = bt.block_id
+        """)
+
+        row = cursor.fetchone()
+        return int((row[0] if row else 0) or 0)
 
     finally:
         cursor.close()
@@ -231,6 +266,8 @@ def _get_persistent_shadow_opportunities():
     optimization engine or modify the saved schedule.
     """
     try:
+        import logic.block_optimizer as block_optimizer
+
         finder = getattr(
             block_optimizer,
             "find_shadow_block_opportunities",
@@ -440,7 +477,21 @@ def run_optimization():
 
             saved_blocks = get_saved_blocks()
 
-            shadow_block_opportunities = get_saved_shadow_opportunities()
+            # Try to get the latest shadow opportunities
+            # already generated by the optimizer module.
+            shadow_block_opportunities = getattr(
+                block_optimizer,
+                "shadow_block_opportunities",
+                []
+            ) or []
+
+            # The in-memory list disappears after a backend restart.
+            # Rebuild the SAME shadow analysis from the saved PostgreSQL
+            # plan so Execute AI Engine remains stable after refresh/re-run.
+            if not shadow_block_opportunities:
+                shadow_block_opportunities = (
+                    _get_persistent_shadow_opportunities()
+                )
 
             execution_time = round(
                 time.time() - start_time,
@@ -462,6 +513,23 @@ def run_optimization():
                 else 0
             )
 
+            requests_processed = get_saved_request_count()
+            blocks_generated = len(saved_blocks)
+
+            average_optimization_score = (
+                sum(
+                    block["optimization_score"]
+                    for block in saved_blocks
+                ) / blocks_generated
+                if blocks_generated
+                else 0
+            )
+
+            conflicts_avoided = sum(
+                block["train_conflicts"]
+                for block in saved_blocks
+            )
+
             return {
                 "status": "success",
 
@@ -469,11 +537,9 @@ def run_optimization():
                     "Showing the latest saved optimization plan."
                 ),
 
-                "requests_processed": 0,
+                "requests_processed": requests_processed,
 
-                "blocks_generated": len(
-                    saved_blocks
-                ),
+                "blocks_generated": blocks_generated,
 
                 "execution_time": execution_time,
 
@@ -484,12 +550,36 @@ def run_optimization():
                     2
                 ),
 
+                "average_optimization_score": round(
+                    average_optimization_score,
+                    2
+                ),
+
                 "train_impact": sum(
                     block["train_impact"]
                     for block in saved_blocks
                 ),
 
-                "conflicts_avoided": 0,
+                "conflicts_avoided": conflicts_avoided,
+
+                "run_metrics": {
+                    "total_block_minutes": round(total_duration, 2),
+                    "average_utilization": round(average_utilization, 2),
+                    "average_optimization_score": round(
+                        average_optimization_score,
+                        2
+                    ),
+                    "total_train_impact": round(
+                        sum(
+                            block["train_impact"]
+                            for block in saved_blocks
+                        ),
+                        2
+                    ),
+                    "total_train_conflicts": conflicts_avoided,
+                    "compute_time_seconds": execution_time,
+                    "execution_latency_seconds": execution_time,
+                },
 
                 "blocks": saved_blocks,
 
@@ -547,9 +637,12 @@ def run_optimization():
             []
         ) or []
 
-        # Persist the exact shadow opportunities produced by this run.
-        # /optimized-plan reads these rows and never recalculates them.
-        save_shadow_opportunities(shadow_block_opportunities)
+        # Normally this is populated by the current optimizer run.
+        # Keep a persistent fallback in case the module state is empty.
+        if not shadow_block_opportunities:
+            shadow_block_opportunities = (
+                _get_persistent_shadow_opportunities()
+            )
 
 
         # --------------------------------------------------
@@ -639,6 +732,22 @@ def run_optimization():
 
             "conflicts_avoided":
                 conflicts_avoided,
+
+            "run_metrics": {
+                "total_block_minutes": round(total_duration, 2),
+                "average_utilization": round(average_utilization, 2),
+                "average_optimization_score": round(
+                    sum(
+                        block.get("optimization_score", 0)
+                        for block in optimized_blocks
+                    ) / blocks_generated,
+                    2
+                ) if blocks_generated else 0,
+                "total_train_impact": round(train_impact, 2),
+                "total_train_conflicts": int(conflicts_avoided),
+                "compute_time_seconds": execution_time,
+                "execution_latency_seconds": execution_time,
+            },
 
             "blocks":
                 blocks,

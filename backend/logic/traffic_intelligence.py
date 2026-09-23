@@ -374,22 +374,21 @@ def load_traffic_for_day(
     try:
         cursor.execute("""
             SELECT
-                special_id,
+                special_train_id,
                 train_number,
                 train_name,
-                event_name,
-                event_type,
+                                special_type,
                 corridor_id,
                 service_date,
                 departure_time,
                 arrival_time,
                 direction,
                 operational_priority,
-                status
+                                active
             FROM special_train_services
             WHERE corridor_id = %s
               AND service_date = %s
-              AND status = 'SCHEDULED'
+                            AND active = TRUE
         """, (corridor_id, target_date))
 
         spec_rows = cursor.fetchall()
@@ -398,7 +397,7 @@ def load_traffic_for_day(
         for r in spec_rows:
             row = dict(zip(spec_cols, r))
 
-            raw_type = row["event_type"] or row["event_name"] or "SPECIAL"
+            raw_type = row["special_type"] or "SPECIAL"
 
             canonical, spec_type, _ = normalize_train_type(raw_type)
 
@@ -409,8 +408,8 @@ def load_traffic_for_day(
             )
 
             specials_list.append({
-                "id": row["special_id"],
-                "train_id": row["special_id"],
+                "id": row["special_train_id"],
+                "train_id": row["special_train_id"],
                 "train_number": row["train_number"],
                 "train_name": row["train_name"],
                 "train_type": canonical,

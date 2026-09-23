@@ -1078,6 +1078,38 @@ def get_block_intelligence(block_id: str):
                 detail=f"No maintenance tasks found for block {block_id}"
             )
 
+        cur.execute("""
+            SELECT
+                MIN(br.requested_start),
+                MAX(br.requested_end)
+            FROM block_tasks bt
+            JOIN block_requests br
+                ON br.task_id = bt.task_id
+            WHERE bt.block_id = %s
+              AND br.corridor_id = %s
+              AND br.requested_date = %s
+              AND br.requested_start < %s
+              AND br.requested_end > %s
+        """, (
+            block_id,
+            corridor_id,
+            block_date,
+            end_time,
+            start_time,
+        ))
+
+        requested_window_row = cur.fetchone()
+        requested_start = (
+            requested_window_row[0]
+            if requested_window_row and requested_window_row[0]
+            else None
+        )
+        requested_end = (
+            requested_window_row[1]
+            if requested_window_row and requested_window_row[1]
+            else None
+        )
+
         # Use first associated asset for asset-risk analysis
         task = tasks[0]
 
@@ -1375,6 +1407,22 @@ def get_block_intelligence(block_id: str):
             "block_date": str(block_date),
             "start_time": str(start_time),
             "end_time": str(end_time),
+            "requested_window": (
+                {
+                    "start": str(requested_start),
+                    "end": str(requested_end),
+                }
+                if requested_start and requested_end
+                else None
+            ),
+            "selected_window": {
+                "start": str(start_time),
+                "end": str(end_time),
+            },
+            "conflict_count": len(conflicts),
+            "train_conflicts": len(conflicts),
+            "train_impact_score": float(train_impact_score or 0),
+            "estimated_delay": int(assessment.get("estimated_delay_min", 0) or 0),
             "tasks_analyzed": len(tasks),
             "trains_in_window": len(conflicts),
             "traffic_summary": {

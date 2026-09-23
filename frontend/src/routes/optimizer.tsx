@@ -95,8 +95,20 @@ interface OptimizationApiResponse {
     duration: number;
     utilization: number;
     train_impact: number;
+    train_impact_score?: number;
     number_of_tasks: number;
     train_conflicts: number;
+    conflict_count?: number;
+    estimated_delay?: number;
+    optimization_score?: number;
+    maintenance_priority?: number;
+    asset_risk_score?: number;
+    traffic_impact_score?: number;
+    goods_impact_score?: number;
+    consolidation_score?: number;
+    ai_reasons?: string[] | null;
+    ai_explanation?: string | null;
+    reason?: string | null;
   }>;
 
   shadow_block_opportunities?: Array<{
@@ -126,6 +138,7 @@ interface SavedPlanBlock {
   duration_min: string | number;
   utilization_percent: string | number;
   train_impact_score: string | number;
+  estimated_delay_min?: string | number;
   optimization_score: string | number;
   number_of_tasks?: string | number;
   number_of_departments?: string | number;
@@ -133,6 +146,14 @@ interface SavedPlanBlock {
   tasks?: unknown[];
   train_conflicts?: number;
   task_count?: number;
+  maintenance_priority?: string | number;
+  asset_risk_score?: string | number;
+  traffic_impact_score?: string | number;
+  goods_impact_score?: string | number;
+  consolidation_score?: string | number;
+  ai_reasons?: string[] | null;
+  ai_explanation?: string | null;
+  reason?: string | null;
 }
 
 interface BlockIntelligence {
@@ -142,6 +163,18 @@ interface BlockIntelligence {
   block_date: string;
   start_time: string;
   end_time: string;
+  requested_window?: {
+    start: string;
+    end: string;
+  };
+  selected_window?: {
+    start: string;
+    end: string;
+  };
+  conflict_count?: number;
+  train_conflicts?: number;
+  train_impact_score?: number;
+  estimated_delay?: number;
   tasks_analyzed: number;
   trains_in_window: number;
   intelligence: {
@@ -172,17 +205,120 @@ interface BlockIntelligence {
     special_trains: number;
     express_trains: number;
   };
-  ai_explanation: {
-    score: number;
-    why_selected: string[];
-    metrics: {
-      duration_min: number;
-      utilization_percent: number;
-      train_impact_score: number;
-      number_of_tasks: number;
-      number_of_departments: number;
+  ai_explanation?: {
+    score?: number;
+    why_selected?: string[];
+    metrics?: {
+      duration_min?: number;
+      utilization_percent?: number;
+      train_impact_score?: number;
+      number_of_tasks?: number;
+      number_of_departments?: number;
     };
-  };
+  } | null;
+  ai_reasons?: string[] | null;
+  ai_explanation_text?: string | null;
+}
+
+function normalizeAiReasons(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    const flattened: string[] = [];
+
+    for (const item of value) {
+      if (typeof item === "string") {
+        const nested = normalizeAiReasons(item);
+        if (nested.length > 0) {
+          flattened.push(...nested);
+        } else if (item.trim()) {
+          flattened.push(item.trim());
+        }
+      }
+    }
+
+    return flattened;
+  }
+
+  if (typeof value !== "string") return [];
+
+  const raw = value.trim();
+  if (!raw) return [];
+
+  // Already a normal JSON array.
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return normalizeAiReasons(parsed);
+    }
+  } catch {
+    // Stored optimizer explanations may use Python repr syntax.
+  }
+
+  // Extract the "reasons" array from a persisted Python-dict string:
+  // {'reasons': ['reason 1', 'reason 2'], ...}
+  const reasonsMatch = raw.match(/['"]reasons['"]\s*:\s*\[(.*?)\](?:\s*,|\s*})/s);
+
+  if (reasonsMatch?.[1]) {
+    const extracted: string[] = [];
+    const itemRegex = /['"]((?:\\.|[^'"])*)['"]/g;
+    let match: RegExpExecArray | null;
+
+    while ((match = itemRegex.exec(reasonsMatch[1])) !== null) {
+      const reason = (match?.[1] ?? "").replace(/\\"/g, '"').replace(/\\/g, "").trim();
+
+      if (reason) extracted.push(reason);
+    }
+
+    if (extracted.length > 0) return extracted;
+  }
+
+  // A plain persisted Python list:
+  // ['reason 1', 'reason 2']
+  if (raw.startsWith("[") && raw.endsWith("]")) {
+    const extracted: string[] = [];
+    const itemRegex = /['"]((?:\\.|[^'"])*)['"]/g;
+    let match: RegExpExecArray | null;
+
+    while ((match = itemRegex.exec(raw)) !== null) {
+      const reason = (match?.[1] ?? "").replace(/\\"/g, '"').replace(/\\/g, "").trim();
+      if (reason) extracted.push(reason);
+    }
+
+    if (extracted.length > 0) return extracted;
+  }
+
+  // Never render a serialized Python/JSON object as a "reason".
+  if ((raw.startsWith("{") && raw.endsWith("}")) || raw.startsWith("Object(")) {
+    return [];
+  }
+
+  return [raw];
+}
+
+function getBlockAiReasons(
+  block: NonNullable<OptimizationApiResponse["blocks"]>[number],
+  intelligence?: BlockIntelligence,
+): string[] {
+  const intelligenceReasons = normalizeAiReasons(intelligence?.ai_explanation?.why_selected);
+  const blockReasons = normalizeAiReasons(block.ai_reasons);
+  const combinedReasons = Array.from(
+    new Set([...intelligenceReasons, ...blockReasons]),
+  );
+  if (combinedReasons.length > 0) return combinedReasons;
+
+  if (block.reason?.trim()) return [block.reason.trim()];
+  if (block.ai_explanation?.trim()) return [block.ai_explanation.trim()];
+
+  return [];
+}
+
+function getBlockAiScore(
+  block: NonNullable<OptimizationApiResponse["blocks"]>[number],
+  intelligence?: BlockIntelligence,
+): number {
+  const intelligenceScore = Number(intelligence?.ai_explanation?.score);
+  if (Number.isFinite(intelligenceScore)) return intelligenceScore;
+  const optimizerScore = Number(block.optimization_score);
+  return Number.isFinite(optimizerScore) ? optimizerScore : 0;
 }
 
 async function fetchSavedOptimization(): Promise<OptimizationApiResponse | null> {
@@ -212,9 +348,21 @@ async function fetchSavedOptimization(): Promise<OptimizationApiResponse | null>
     duration: Number(block.duration_min) || 0,
     utilization: Number(block.utilization_percent) || 0,
     train_impact: Number(block.train_impact_score) || 0,
+    train_impact_score: Number(block.train_impact_score) || 0,
     number_of_tasks:
       Number(block.number_of_tasks ?? block.task_count ?? block.tasks?.length ?? 0) || 0,
     train_conflicts: Number(block.train_conflicts ?? block.conflicts?.length ?? 0) || 0,
+    conflict_count: Number(block.train_conflicts ?? block.conflicts?.length ?? 0) || 0,
+    estimated_delay: Number(block.estimated_delay_min ?? 0) || 0,
+    optimization_score: Number(block.optimization_score) || 0,
+    maintenance_priority: Number(block.maintenance_priority) || 0,
+    asset_risk_score: Number(block.asset_risk_score) || 0,
+    traffic_impact_score: Number(block.traffic_impact_score) || 0,
+    goods_impact_score: Number(block.goods_impact_score) || 0,
+    consolidation_score: Number(block.consolidation_score) || 0,
+    ai_reasons: Array.isArray(block.ai_reasons) ? block.ai_reasons : [],
+    ai_explanation: block.ai_explanation ?? null,
+    reason: block.reason ?? null,
   }));
 
   const totalMinutes = blocks.reduce((sum, block) => sum + block.duration, 0);
@@ -229,7 +377,7 @@ async function fetchSavedOptimization(): Promise<OptimizationApiResponse | null>
       : 0;
   const totalTrainImpact = blocks.reduce((sum, block) => sum + block.train_impact, 0);
   const totalConflicts = blocks.reduce((sum, block) => sum + block.train_conflicts, 0);
-  const requestsProcessed = blocks.reduce((sum, block) => sum + block.number_of_tasks, 0);
+  const requestsProcessed = Number(payload.requests_processed ?? payload.request_count ?? 0);
 
   return {
     status: "success",
@@ -281,11 +429,7 @@ function OptimizerPage() {
   const [corridorsList, setCorridorsList] =
     useState<{ corridor_id: string; corridor_name: string }[]>(DEFAULT_CAND_CORRIDORS);
   const [candCorridor, setCandCorridor] = useState("C01");
-  const [candDate, setCandDate] = useState(() => {
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    return tomorrow.toISOString().split("T")[0];
-  });
+  const [candDate, setCandDate] = useState("");
   const [candStart, setCandStart] = useState("09:00");
   const [candEnd, setCandEnd] = useState("12:00");
   const [recommendResult, setRecommendResult] = useState<Record<string, any> | null>(null);
@@ -348,9 +492,17 @@ function OptimizerPage() {
       })
       .catch(() => {});
 
-    // Automatically run initial evaluation for default window so the comparison is immediately visible and useful
-    void evaluateCandidateWindows("C01", undefined, "09:00", "12:00", true);
   }, []);
+
+  useEffect(() => {
+    const planningDate = apiData?.blocks?.[0]?.date;
+    if (!planningDate) return;
+
+    setCandDate((currentDate) => (
+      currentDate === planningDate ? currentDate : planningDate
+    ));
+    void evaluateCandidateWindows("C01", planningDate, "09:00", "12:00", true);
+  }, [apiData]);
 
   useEffect(() => {
     let cancelled = false;
@@ -397,7 +549,22 @@ function OptimizerPage() {
               return;
             }
 
-            const data: BlockIntelligence = await response.json();
+            const data = (await response.json()) as BlockIntelligence;
+
+            if (data.ai_explanation) {
+              const rawReasons = data.ai_explanation.why_selected;
+              const normalizedReasons = normalizeAiReasons(rawReasons);
+
+              data.ai_explanation = {
+                ...data.ai_explanation,
+                why_selected: normalizedReasons,
+              };
+            }
+
+            if (data.ai_reasons) {
+              data.ai_reasons = normalizeAiReasons(data.ai_reasons);
+            }
+
             results[block.block_id] = data;
           } catch (error) {
             console.error(`Failed to load AI intelligence for ${block.block_id}:`, error);
@@ -507,6 +674,15 @@ function OptimizerPage() {
                   train_impact_score?: unknown;
                   number_of_tasks?: unknown;
                   train_conflicts?: unknown;
+                  optimization_score?: unknown;
+                  maintenance_priority?: unknown;
+                  asset_risk_score?: unknown;
+                  traffic_impact_score?: unknown;
+                  goods_impact_score?: unknown;
+                  consolidation_score?: unknown;
+                  ai_reasons?: unknown;
+                  ai_explanation?: unknown;
+                  reason?: unknown;
                 }>
               ).map((block) => ({
                 block_id: String(block.block_id ?? ""),
@@ -517,14 +693,30 @@ function OptimizerPage() {
                 duration: Number(block.duration ?? block.duration_min ?? 0),
                 utilization: Number(block.utilization ?? block.utilization_percent ?? 0),
                 train_impact: Number(block.train_impact ?? block.train_impact_score ?? 0),
+                train_impact_score: Number(block.train_impact_score ?? block.train_impact ?? 0),
                 number_of_tasks: Number(block.number_of_tasks ?? 0),
                 train_conflicts: Number(block.train_conflicts ?? 0),
+                conflict_count: Number(block.conflict_count ?? block.train_conflicts ?? 0),
+                estimated_delay: Number(block.estimated_delay ?? block.estimated_delay_min ?? 0),
+                optimization_score: Number(block.optimization_score ?? 0),
+                maintenance_priority: Number(block.maintenance_priority ?? 0),
+                asset_risk_score: Number(block.asset_risk_score ?? 0),
+                traffic_impact_score: Number(block.traffic_impact_score ?? 0),
+                goods_impact_score: Number(block.goods_impact_score ?? 0),
+                consolidation_score: Number(block.consolidation_score ?? 0),
+                ai_reasons: normalizeAiReasons(block.ai_reasons),
+                ai_explanation:
+                  typeof block.ai_explanation === "string" ? block.ai_explanation : null,
+                reason: typeof block.reason === "string" ? block.reason : null,
               }));
 
               finalData = {
                 ...data,
                 status: "success",
                 message: "Showing latest saved optimization plan.",
+                requests_processed: Number(
+                  saved.requests_processed ?? saved.request_count ?? data.requests_processed ?? 0,
+                ),
                 blocks_generated: blocks.length,
                 blocks,
                 run_metrics: {
@@ -545,6 +737,38 @@ function OptimizerPage() {
 
       if (data.status === "error") {
         throw new Error(data.message || "Optimization failed");
+      }
+
+      // The optimizer can successfully create/persist blocks while its
+      // in-memory request list is empty. The persisted PostgreSQL plan is
+      // authoritative for the number of BDMS requests actually bundled.
+      if (Number(data.requests_processed ?? 0) === 0 && Number(data.blocks_generated ?? 0) > 0) {
+        try {
+          const savedResponse = await apiFetch("/optimized-plan/");
+
+          if (savedResponse.ok) {
+            const saved = await savedResponse.json();
+
+            if (saved.status === "success") {
+              finalData = {
+                ...data,
+                requests_processed: Number(
+                  saved.requests_processed ?? saved.request_count ?? data.requests_processed ?? 0,
+                ),
+                blocks_generated: Number(
+                  data.blocks_generated ?? saved.blocks_generated ?? saved.block_count ?? 0,
+                ),
+                run_metrics: data.run_metrics ?? saved.run_metrics,
+                blocks: data.blocks?.length ? data.blocks : (saved.blocks ?? data.blocks),
+              };
+            }
+          }
+        } catch (savedMetricError) {
+          console.error(
+            "Could not restore persisted request count after execution:",
+            savedMetricError,
+          );
+        }
       }
 
       clearInterval(timer);
@@ -818,7 +1042,12 @@ function OptimizerPage() {
           </p>
           <p className="text-xl font-bold font-mono text-amber-700 dark:text-amber-400 mt-0.5">
             {apiData?.run_metrics?.total_train_impact != null
-              ? Number(apiData.run_metrics.total_train_impact).toFixed(2)
+              ? Number(
+                  apiData.blocks?.reduce(
+                    (total, block) => total + Number(block.estimated_delay ?? 0),
+                    0,
+                  ) ?? 0,
+                ).toFixed(2)
               : "0.00"}
           </p>
           <p className="text-[10px] text-slate-500 mt-0.5">COA Estimated Impact</p>
@@ -1609,166 +1838,251 @@ function OptimizerPage() {
                         Clashes
                       </span>
                       <span className="font-mono font-bold text-xs text-emerald-700 dark:text-emerald-400">
-                        {b.train_conflicts}
+                        {b.conflict_count ?? b.train_conflicts}
                       </span>
                     </div>
                   </div>
 
                   {/* UNIFIED AI INTELLIGENCE */}
-                  {blockIntelligence[b.block_id] && (
-                    <div className="border-2 border-[#003366] dark:border-sky-700 bg-slate-50 dark:bg-slate-800/60 p-3 rounded-[2px]">
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-1.5">
-                          <BrainCircuit className="size-3.5 text-[#003366] dark:text-sky-400" />
-                          <span className="text-[10px] font-bold uppercase tracking-wider text-[#003366] dark:text-sky-400">
-                            Unified AI Intelligence
-                          </span>
-                        </div>
+                  {(() => {
+                    const intelligence = blockIntelligence[b.block_id];
+                    const aiReasons = getBlockAiReasons(b, intelligence);
+                    const aiScore = getBlockAiScore(b, intelligence);
+                    const requestedWindow = intelligence?.requested_window;
+                    const selectedWindow = intelligence?.selected_window ?? {
+                      start: b.start,
+                      end: b.end,
+                    };
+                    const selectedConflictCount =
+                      intelligence?.conflict_count ?? b.conflict_count ?? b.train_conflicts;
+                    const selectedDelay = intelligence?.estimated_delay ?? b.estimated_delay ?? 0;
 
-                        <Badge variant="outline" className="text-[9px] font-bold">
-                          {
-                            blockIntelligence[b.block_id]!.intelligence.overall_assessment
-                              .overall_level
-                          }
-                        </Badge>
-                      </div>
-
-                      <div className="grid grid-cols-3 gap-2">
-                        <div className="bg-white dark:bg-slate-900 border border-border p-2 rounded-[2px] text-center">
-                          <p className="text-[8px] uppercase font-bold text-slate-500">
-                            Asset Risk
-                          </p>
-                          <p className="font-mono font-bold text-sm">
-                            {blockIntelligence[
-                              b.block_id
-                            ]!.intelligence.asset_risk.risk_score.toFixed(1)}
-                          </p>
-                          <p className="text-[9px] font-bold">
-                            {
-                              blockIntelligence[b.block_id]!.intelligence.asset_risk
-                                .priority_category
-                            }
-                          </p>
-                        </div>
-
-                        <div className="bg-white dark:bg-slate-900 border border-border p-2 rounded-[2px] text-center">
-                          <p className="text-[8px] uppercase font-bold text-slate-500">Traffic</p>
-                          <p className="font-mono font-bold text-sm">
-                            {blockIntelligence[
-                              b.block_id
-                            ]!.intelligence.traffic_impact.traffic_impact_score.toFixed(1)}
-                          </p>
-                          <p className="text-[9px] font-bold">
-                            {
-                              blockIntelligence[b.block_id]!.intelligence.traffic_impact
-                                .disruption_level
-                            }
-                          </p>
-                        </div>
-
-                        <div className="bg-white dark:bg-slate-900 border border-border p-2 rounded-[2px] text-center">
-                          <p className="text-[8px] uppercase font-bold text-slate-500">
-                            Goods Demand
-                          </p>
-                          <p className="font-mono font-bold text-sm">
-                            {blockIntelligence[
-                              b.block_id
-                            ]!.intelligence.goods_demand.predicted_goods_train_demand.toFixed(1)}
-                          </p>
-                          <p className="text-[9px] font-bold">
-                            {blockIntelligence[b.block_id]!.intelligence.goods_demand.demand_level}
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="mt-3 border border-slate-200 dark:border-slate-700 rounded-[2px] p-3">
-                        <p className="text-[8px] uppercase font-bold tracking-wider text-slate-500 dark:text-slate-400 mb-2">
-                          Traffic in Window
-                        </p>
-
-                        <div className="grid grid-cols-4 gap-2">
-                          <div className="text-center">
-                            <p className="text-[8px] uppercase font-bold text-slate-500">
-                              Passenger
-                            </p>
-                            <p className="font-mono font-bold text-sm">
-                              {blockIntelligence[b.block_id]?.traffic_summary?.passenger_trains ??
-                                0}
-                            </p>
-                          </div>
-
-                          <div className="text-center">
-                            <p className="text-[8px] uppercase font-bold text-slate-500">Goods</p>
-                            <p className="font-mono font-bold text-sm">
-                              {blockIntelligence[b.block_id]?.traffic_summary?.goods_trains ?? 0}
-                            </p>
-                          </div>
-
-                          <div className="text-center">
-                            <p className="text-[8px] uppercase font-bold text-slate-500">Special</p>
-                            <p className="font-mono font-bold text-sm">
-                              {blockIntelligence[b.block_id]?.traffic_summary?.special_trains ?? 0}
-                            </p>
-                          </div>
-
-                          <div className="text-center">
-                            <p className="text-[8px] uppercase font-bold text-slate-500">Express</p>
-                            <p className="font-mono font-bold text-sm">
-                              {blockIntelligence[b.block_id]?.traffic_summary?.express_trains ?? 0}
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="mt-2 pt-2 border-t border-border flex items-center justify-between">
-                        <span className="text-[9px] uppercase font-bold text-slate-500">
-                          Overall Pressure
-                        </span>
-                        <span className="font-mono font-bold text-sm text-[#003366] dark:text-sky-400">
-                          {Number(
-                            blockIntelligence[b.block_id]?.intelligence?.overall_assessment
-                              ?.pressure_score ?? 0,
-                          ).toFixed(1)}
-                        </span>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* WHY AI SELECTED THIS BLOCK */}
-                  {blockIntelligence[b.block_id]?.ai_explanation && (
-                    <div className="border border-emerald-300 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/20 p-3 rounded-[2px]">
-                      <div className="flex items-center gap-1.5 mb-2">
-                        <CheckCircle2 className="size-3.5 text-emerald-700 dark:text-emerald-400" />
-
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-300">
-                          Why AI Selected This Block
-                        </span>
-
-                        <span className="ml-auto font-mono text-[10px] font-bold text-[#003366] dark:text-sky-400">
-                          Score{" "}
-                          {blockIntelligence[b.block_id]?.ai_explanation?.score?.toFixed(2) ??
-                            "0.00"}
-                        </span>
-                      </div>
-
-                      <div className="space-y-1.5">
-                        {(blockIntelligence[b.block_id]?.ai_explanation?.why_selected ?? []).map(
-                          (reason, index) => (
-                            <div
-                              key={`${b.block_id}-reason-${index}`}
-                              className="flex items-start gap-2 text-[10px] text-slate-700 dark:text-slate-300"
-                            >
-                              <span className="text-emerald-600 dark:text-emerald-400 font-bold">
-                                ✓
+                    return (
+                      <>
+                        <div className="border border-border bg-white dark:bg-slate-900 p-3 rounded-[2px] text-xs">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <div>
+                              <span className="text-[9px] uppercase font-bold text-slate-500 block">
+                                Requested Window
                               </span>
-
-                              <span>{reason}</span>
+                              <span className="font-mono font-bold">
+                                {requestedWindow
+                                  ? `${requestedWindow.start.slice(0, 5)}–${requestedWindow.end.slice(0, 5)}`
+                                  : "Not available"}
+                              </span>
                             </div>
-                          ),
+                            <div>
+                              <span className="text-[9px] uppercase font-bold text-slate-500 block">
+                                Selected Optimized Window
+                              </span>
+                              <span className="font-mono font-bold text-[#003366] dark:text-sky-400">
+                                {selectedWindow.start.slice(0, 5)}–{selectedWindow.end.slice(0, 5)}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-[9px] uppercase font-bold text-slate-500 block">
+                                Selected Window Conflicts
+                              </span>
+                              <span className="font-mono font-bold">
+                                {selectedConflictCount} train(s)
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-[9px] uppercase font-bold text-slate-500 block">
+                                Estimated Delay
+                              </span>
+                              <span className="font-mono font-bold">
+                                {selectedDelay} min
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="border-2 border-[#003366] dark:border-sky-700 bg-slate-50 dark:bg-slate-800/60 p-3 rounded-[2px]">
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-1.5">
+                              <BrainCircuit className="size-3.5 text-[#003366] dark:text-sky-400" />
+                              <span className="text-[10px] font-bold uppercase tracking-wider text-[#003366] dark:text-sky-400">
+                                Unified AI Intelligence
+                              </span>
+                            </div>
+                            <Badge variant="outline" className="text-[9px] font-bold">
+                              {intelligence?.intelligence?.overall_assessment?.overall_level ??
+                                (aiScore >= 80 ? "HIGH" : aiScore >= 60 ? "MEDIUM" : "REVIEW")}
+                            </Badge>
+                          </div>
+
+                          <div className="grid grid-cols-3 gap-2">
+                            <div className="bg-white dark:bg-slate-900 border border-border p-2 rounded-[2px] text-center">
+                              <p className="text-[8px] uppercase font-bold text-slate-500">
+                                Asset Risk Category
+                              </p>
+                              <p className="font-mono font-bold text-sm">
+                                {intelligence?.intelligence?.asset_risk?.risk_score != null
+                                  ? Number(intelligence.intelligence.asset_risk.risk_score).toFixed(
+                                      1,
+                                    )
+                                  : b.asset_risk_score != null
+                                    ? Number(b.asset_risk_score).toFixed(1)
+                                    : "—"}
+                              </p>
+                              <p className="text-[9px] font-bold">
+                                {intelligence?.intelligence?.asset_risk?.priority_category ??
+                                  "Risk category unavailable"}
+                              </p>
+                            </div>
+
+                            <div className="bg-white dark:bg-slate-900 border border-border p-2 rounded-[2px] text-center">
+                              <p className="text-[8px] uppercase font-bold text-slate-500">
+                                Forecast Traffic Impact
+                              </p>
+                              <p className="font-mono font-bold text-sm">
+                                {intelligence?.intelligence?.traffic_impact?.traffic_impact_score !=
+                                null
+                                  ? Number(
+                                      intelligence.intelligence.traffic_impact.traffic_impact_score,
+                                    ).toFixed(1)
+                                  : b.traffic_impact_score != null
+                                    ? Number(b.traffic_impact_score).toFixed(1)
+                                    : Number(b.train_impact ?? 0).toFixed(1)}
+                              </p>
+                              <p className="text-[9px] font-bold">
+                                {intelligence?.intelligence?.traffic_impact?.disruption_level ??
+                                  "Traffic impact"}
+                              </p>
+                            </div>
+
+                            <div className="bg-white dark:bg-slate-900 border border-border p-2 rounded-[2px] text-center">
+                              <p className="text-[8px] uppercase font-bold text-slate-500">
+                                Forecast Goods Demand
+                              </p>
+                              <p className="font-mono font-bold text-sm">
+                                {intelligence?.intelligence?.goods_demand
+                                  ?.predicted_goods_train_demand != null
+                                  ? Number(
+                                      intelligence.intelligence.goods_demand
+                                        .predicted_goods_train_demand,
+                                    ).toFixed(1)
+                                  : b.goods_impact_score != null
+                                    ? Number(b.goods_impact_score).toFixed(1)
+                                    : "—"}
+                              </p>
+                              <p className="text-[9px] font-bold">
+                                {intelligence?.intelligence?.goods_demand?.demand_level ??
+                                  "Forecast"}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="mt-3 border border-slate-200 dark:border-slate-700 rounded-[2px] p-3">
+                            <p className="text-[8px] uppercase font-bold tracking-wider text-slate-500 dark:text-slate-400 mb-2">
+                              Scheduled Traffic in Selected Window
+                            </p>
+                            <div className="grid grid-cols-4 gap-2">
+                              <div className="text-center">
+                                <p className="text-[8px] uppercase font-bold text-slate-500">
+                                  Scheduled Passenger
+                                </p>
+                                <p className="font-mono font-bold text-sm">
+                                  {intelligence?.traffic_summary?.passenger_trains ?? 0}
+                                </p>
+                              </div>
+                              <div className="text-center">
+                                <p className="text-[8px] uppercase font-bold text-slate-500">
+                                  Scheduled Goods
+                                </p>
+                                <p className="font-mono font-bold text-sm">
+                                  {intelligence?.traffic_summary?.goods_trains ?? 0}
+                                </p>
+                              </div>
+                              <div className="text-center">
+                                <p className="text-[8px] uppercase font-bold text-slate-500">
+                                  Scheduled Special
+                                </p>
+                                <p className="font-mono font-bold text-sm">
+                                  {intelligence?.traffic_summary?.special_trains ?? 0}
+                                </p>
+                              </div>
+                              <div className="text-center">
+                                <p className="text-[8px] uppercase font-bold text-slate-500">
+                                  Scheduled Express
+                                </p>
+                                <p className="font-mono font-bold text-sm">
+                                  {intelligence?.traffic_summary?.express_trains ?? 0}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="mt-2 pt-2 border-t border-border flex items-center justify-between">
+                            <span className="text-[9px] uppercase font-bold text-slate-500">
+                              Overall Pressure
+                            </span>
+                            <span className="font-mono font-bold text-sm text-[#003366] dark:text-sky-400">
+                              {intelligence?.intelligence?.overall_assessment?.pressure_score !=
+                              null
+                                ? Number(
+                                    intelligence.intelligence.overall_assessment.pressure_score,
+                                  ).toFixed(1)
+                                : Number(aiScore).toFixed(1)}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* WHY AI SELECTED THIS BLOCK */}
+                        {aiReasons.length > 0 && (
+                          <div className="border-2 border-emerald-300 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/20 p-3 rounded-[2px]">
+                            <div className="flex items-center gap-1.5 mb-2">
+                              <CheckCircle2 className="size-3.5 text-emerald-700 dark:text-emerald-400" />
+                              <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-300">
+                                Why AI Selected This Block
+                              </span>
+                              <span className="ml-auto font-mono text-[10px] font-bold text-[#003366] dark:text-sky-400">
+                                Score {Number(aiScore).toFixed(2)}
+                              </span>
+                            </div>
+
+                            <div className="space-y-1.5">
+                              {aiReasons.map((reason, index) => (
+                                <div
+                                  key={`${b.block_id}-reason-${index}`}
+                                  className="flex items-start gap-2 text-[10px] text-slate-700 dark:text-slate-300"
+                                >
+                                  <span className="text-emerald-600 dark:text-emerald-400 font-bold">
+                                    ✓
+                                  </span>
+                                  <span>{reason}</span>
+                                </div>
+                              ))}
+                            </div>
+
+                            {b.optimization_score != null && (
+                              <div className="mt-2 pt-2 border-t border-emerald-200 dark:border-emerald-900/50 grid grid-cols-2 gap-2 text-[9px]">
+                                <div>
+                                  <span className="text-slate-500 uppercase font-bold">
+                                    Optimizer Score
+                                  </span>
+                                  <span className="ml-1 font-mono font-bold">
+                                    {Number(b.optimization_score).toFixed(2)}
+                                  </span>
+                                </div>
+                                <div>
+                                  <span className="text-slate-500 uppercase font-bold">
+                                    Consolidation
+                                  </span>
+                                  <span className="ml-1 font-mono font-bold">
+                                    {b.consolidation_score != null
+                                      ? Number(b.consolidation_score).toFixed(1)
+                                      : "—"}
+                                  </span>
+                                </div>
+                              </div>
+                            )}
+                          </div>
                         )}
-                      </div>
-                    </div>
-                  )}
+                      </>
+                    );
+                  })()}
 
                   <div className="pt-2.5 border-t border-border flex justify-end">
                     <Button
