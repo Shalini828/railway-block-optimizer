@@ -30,9 +30,10 @@ def get_relevant_corridor_ids(cursor, dept: Optional[str]) -> List[str]:
 
                 UNION
 
-                SELECT corridor_id FROM block_requests
-                WHERE (UPPER(department_id) = %s OR UPPER(department_id) = %s)
-                  AND corridor_id IS NOT NULL
+                SELECT br.corridor_id FROM block_requests br
+                JOIN maintenance_tasks mt ON mt.task_id = br.task_id
+                WHERE UPPER(COALESCE(mt.department, '')) IN (%s, %s)
+                  AND br.corridor_id IS NOT NULL
 
                 UNION
 
