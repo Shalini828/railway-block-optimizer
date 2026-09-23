@@ -21,7 +21,6 @@ sys.path.append(
 )
 import psycopg
 from dotenv import load_dotenv
-import psycopg
 from db_config import DB_CONFIG
 from logic.traffic_intelligence import evaluate_window
 
@@ -57,51 +56,12 @@ connection = psycopg.connect(**DB_CONFIG)
 cursor = connection.cursor()
 
 
-# ==========================================
-# DEVELOPMENT RESET
-# ==========================================
-
-cursor.execute("""
-    UPDATE block_requests
-    SET request_status = 'PENDING'
-    WHERE request_status = 'OPTIMIZED'
-""")
-
-connection.commit()
-
-print("DEVELOPMENT: OPTIMIZED requests reset to PENDING")
-
-
-# ==========================================
-# GET BLOCK REQUESTS + PRIORITY
-# ==========================================
-
-cursor.execute("""
-    SELECT
-        br.request_id,
-        br.task_id,
-        br.team_id,
-        br.corridor_id,
-        br.requested_date,
-        br.requested_start,
-        br.requested_end,
-        br.requested_duration_min,
-        COALESCE(mt.priority_score, 0)
-    FROM block_requests br
-
-    LEFT JOIN maintenance_tasks mt
-        ON br.task_id = mt.task_id
-
-    WHERE br.request_status = 'PENDING'
-
-    ORDER BY
-        br.corridor_id,
-        br.requested_date,
-        mt.priority_score DESC,
-        br.requested_start
-""")
-
-requests = cursor.fetchall()
+def rollback_safely():
+    """Rollback only the current DB transaction after a recoverable query error."""
+    try:
+        connection.rollback()
+    except Exception:
+        pass
 
 
 # ==========================================
@@ -441,7 +401,7 @@ def generate_7_day_planning(
                 planning_date,
                 exc
             )
-
+            rollback_safely()
             goods_impact = 0.0
 
         # --------------------------------------
@@ -709,7 +669,7 @@ def generate_30_day_maintenance_intelligence(
                 task_id,
                 exc
             )
-
+            rollback_safely()
             asset_risk = 0.0
 
         # ----------------------------------
@@ -768,7 +728,7 @@ def generate_30_day_maintenance_intelligence(
                 requested_date,
                 exc
             )
-
+            rollback_safely()
             goods_impact = 0.0
 
         # ----------------------------------
@@ -949,11 +909,22 @@ def get_train_conflicts(
     end_time,
     cur=None
 ):
-    if cur is not None:
-        assessment = evaluate_window(cur, corridor, block_date, start_time, end_time)
+    """Return train conflicts without leaving the shared transaction aborted."""
+    active_cursor = cur if cur is not None else cursor
+
+    try:
+        assessment = evaluate_window(
+            active_cursor,
+            corridor,
+            block_date,
+            start_time,
+            end_time,
+        )
         return assessment.get("conflicts", [])
-    assessment = evaluate_window(cursor, corridor, block_date, start_time, end_time)
-    return assessment.get("conflicts", [])
+    except Exception:
+        if cur is None:
+            rollback_safely()
+        raise
 
 
 # ==========================================
@@ -1370,6 +1341,7 @@ def optimize_emergency_block(
         asset_risk = calculate_asset_risk_for_task(task_id)
     except Exception as exc:
         print("EMERGENCY ASSET RISK ERROR:", exc)
+        rollback_safely()
         asset_risk = 0.0
 
     cursor.execute(
@@ -1559,7 +1531,7 @@ def optimize_emergency_block(
                 "EMERGENCY GOODS ML ERROR:",
                 exc
             )
-
+            rollback_safely()
             goods_impact = 0.0
 
         # ----------------------------------------------------
@@ -1747,6 +1719,7 @@ def score_candidate_window(
                 task_id,
                 exc
             )
+            rollback_safely()
 
     asset_risk_score = (
         max(asset_risks)
@@ -1847,7 +1820,7 @@ def score_candidate_window(
             "CANDIDATE GOODS ML ERROR:",
             exc
         )
-
+        rollback_safely()
         goods_impact = 0
 
     # --------------------------------------
@@ -1948,6 +1921,7 @@ def score_candidate_window(
         "conflict_count": len(
             conflicts
         ),
+        "conflict_check_status": "VERIFIED",
 
         "utilization": utilization,
 
@@ -2138,20 +2112,9 @@ def find_shadow_block_opportunities(blocks):
     return opportunities[:10]
 
 
+# This is populated only after optimized_blocks has been finalized.
+# Running shadow analysis before optimized_blocks exists causes a NameError.
 shadow_block_opportunities = []
-
-print(
-    "SHADOW BLOCK OPPORTUNITIES:",
-    len(shadow_block_opportunities)
-)
-
-
-# Shadow analysis runs on finalized optimized blocks.
-shadow_block_opportunities = find_shadow_block_opportunities(optimized_blocks)
-optimizer_log(
-    "SHADOW BLOCK OPPORTUNITIES:",
-    len(shadow_block_opportunities),
-)
 
 
 # ==========================================
@@ -2569,13 +2532,57 @@ for group in groups:
 
     if not candidate_results:
 
+        # Never silently drop a maintenance group.
+        # Preserve the requested window as a reviewable fallback.
         print(
-            "NO FEASIBLE CANDIDATE:",
+            "NO FEASIBLE CANDIDATE - USING REQUESTED WINDOW FALLBACK:",
             corridor,
             block_date
         )
 
-        continue
+        try:
+            connection.rollback()
+        except Exception:
+            pass
+
+        fallback_start = group["start"]
+        fallback_end = group["end"]
+        fallback_duration = duration
+
+        # Candidate scoring failed for this group. Do not run another
+        # potentially failing DB query here. The fallback is explicitly
+        # marked for manual review; an empty conflict list must NOT be
+        # interpreted as a verified zero-conflict window.
+        fallback_conflicts = []
+        fallback_conflict_check = "NOT_VERIFIED"
+
+        fallback_utilization = (
+            round(
+                min(
+                    (occupied_minutes / fallback_duration) * 100,
+                    100
+                ),
+                2
+            )
+            if fallback_duration > 0
+            else 0.0
+        )
+
+        candidate_results.append({
+            "start": fallback_start,
+            "end": fallback_end,
+            "duration": fallback_duration,
+            "score": 0.0,
+            "asset_risk": 0.0,
+            "traffic_impact": 0.0,
+            "goods_impact": 0.0,
+            "conflicts": fallback_conflicts,
+            "conflict_count": len(fallback_conflicts),
+            "utilization": fallback_utilization,
+            "consolidation_score": min(100, len(group["requests"]) * 25),
+            "fallback": True,
+            "conflict_check_status": fallback_conflict_check,
+        })
 
     # Higher AI score is better.
     # If scores are tied:
@@ -2713,7 +2720,9 @@ for group in groups:
             end_time=end_time
         )
         estimated_delay = assessment.get("estimated_delay_min", 0)
-    except Exception:
+    except Exception as exc:
+        print("SELECTED WINDOW EVALUATION ERROR:", exc)
+        rollback_safely()
         assessment = {}
         estimated_delay = 0
 
@@ -2988,6 +2997,7 @@ for group in groups:
                 task_id,
                 exc
             )
+            rollback_safely()
 
     if asset_risks:
         asset_risk_score = max(asset_risks)
@@ -3130,7 +3140,7 @@ for group in groups:
             "GOODS ML ERROR:",
             exc
         )
-
+        rollback_safely()
         goods_impact_score = 0
 
     # --------------------------------------
@@ -3239,8 +3249,6 @@ for group in groups:
 
             "optimization_score": optimization_score,
 
-            "train_impact_score": train_impact_score,
-
             "tasks": group["requests"],
 
             "train_conflicts": train_conflicts,
@@ -3263,12 +3271,79 @@ for group in groups:
 
     block_number += 1
 
-# ==========================================
-# DELETE PREVIOUS OPTIMIZATION
+
+    # ==========================================
+
+# OPTIMIZATION COVERAGE VALIDATION
 # ==========================================
 
-# Do not wipe the existing optimized plan.
-# New optimized blocks are persisted alongside existing blocks.
+group_request_ids = [
+    str(request[0])
+    for group in groups
+    for request in group.get("requests", [])
+]
+
+optimized_request_ids = [
+    str(request[0])
+    for block in optimized_blocks
+    for request in block.get("tasks", [])
+]
+
+group_request_set = set(group_request_ids)
+optimized_request_set = set(optimized_request_ids)
+
+missing_request_ids = sorted(
+    group_request_set - optimized_request_set
+)
+
+duplicate_request_ids = sorted(
+    {
+        request_id
+        for request_id in optimized_request_ids
+        if optimized_request_ids.count(request_id) > 1
+    }
+)
+
+print()
+print("==========================================")
+print("OPTIMIZATION COVERAGE CHECK")
+print("==========================================")
+print("REQUESTS IN GROUPS:", len(group_request_set))
+print("OPTIMIZED BLOCKS:", len(optimized_blocks))
+print("REQUESTS ASSIGNED TO BLOCKS:", len(optimized_request_set))
+print("MISSING REQUESTS:", missing_request_ids)
+print("DUPLICATE REQUESTS:", duplicate_request_ids)
+
+if missing_request_ids:
+    print(
+        "❌ COVERAGE FAILURE:",
+        len(missing_request_ids),
+        "request(s) were not assigned to any optimized block."
+    )
+else:
+    print(
+        "✅ COVERAGE PASS:",
+        len(group_request_set),
+        "request(s) are represented in optimized blocks."
+    )
+
+print("==========================================")
+
+
+# ==========================================
+# SHADOW BLOCK OPPORTUNITIES
+# ==========================================
+# Shadow analysis is advisory only and MUST run after
+# optimized_blocks has been created.
+shadow_block_opportunities = find_shadow_block_opportunities(
+    optimized_blocks
+)
+optimizer_log(
+    "SHADOW BLOCK OPPORTUNITIES:",
+    len(shadow_block_opportunities),
+)
+
+
 # ==========================================
 # INSERT OPTIMIZED BLOCKS
 # ==========================================
@@ -3454,6 +3529,8 @@ for block in optimized_blocks:
 # ==========================================
 
 # MARK PROCESSED REQUESTS AS OPTIMIZED
+# Only requests that actually appear in an optimized block are marked.
+# The coverage check above prevents silent request loss.
 for block in optimized_blocks:
     for request in block["tasks"]:
         request_id = request[0]
@@ -3466,6 +3543,7 @@ for block in optimized_blocks:
             """,
             (request_id,)
         )
+
 connection.commit()
 
 
@@ -3572,109 +3650,116 @@ print("              OPTIMIZATION COMPLETE")
 print("==============================================================")
 
 # ==========================================
-# TEST 30-DAY MAINTENANCE INTELLIGENCE
+# OPTIONAL DEVELOPMENT SELF-TESTS
 # ==========================================
+# Disabled by default. Set RUN_OPTIMIZER_SELF_TESTS=true only when
+# explicitly testing these helper functions.
+if os.getenv("RUN_OPTIMIZER_SELF_TESTS", "false").lower() == "true":
+    # ==========================================
+    # TEST 30-DAY MAINTENANCE INTELLIGENCE
+    # ==========================================
 
-try:
-    print()
-    print("==========================================")
-    print("30-DAY MAINTENANCE INTELLIGENCE TEST")
-    print("==========================================")
+    try:
+        print()
+        print("==========================================")
+        print("30-DAY MAINTENANCE INTELLIGENCE TEST")
+        print("==========================================")
 
-    maintenance_30_result = generate_30_day_maintenance_intelligence(
-        start_date=datetime(2026, 9, 1).date(),
-        corridor_id="C02",
-    )
-
-    print(
-        "CORRIDOR:",
-        maintenance_30_result["corridor"]
-    )
-
-    print(
-        "START DATE:",
-        maintenance_30_result["start_date"]
-    )
-
-    print(
-        "END DATE:",
-        maintenance_30_result["end_date"]
-    )
-
-    print(
-        "TOTAL TASKS:",
-        maintenance_30_result["total_tasks"]
-    )
-
-    print(
-        "CRITICAL TASKS:",
-        maintenance_30_result["critical_tasks"]
-    )
-
-    print(
-        "HIGH PRIORITY TASKS:",
-        maintenance_30_result["high_priority_tasks"]
-    )
-
-    for task in maintenance_30_result["tasks"]:
-
-        print(
-            f"{task['task_id']} | "
-            f"{task['corridor']} | "
-            f"{task['requested_date']} | "
-            f"asset_risk={task['asset_risk']} | "
-            f"maintenance_priority={task['maintenance_priority']} | "
-            f"traffic={task['traffic_pressure']} | "
-            f"goods={task['goods_impact']} | "
-            f"urgency={task['maintenance_urgency']} | "
-            f"level={task['urgency_level']}"
+        maintenance_30_result = generate_30_day_maintenance_intelligence(
+            start_date=datetime(2026, 9, 1).date(),
+            corridor_id="C02",
         )
 
-    print(
-        "HIGHEST PRIORITY TASK:",
-        maintenance_30_result["highest_priority_task"]
-    )
+        print(
+            "CORRIDOR:",
+            maintenance_30_result["corridor"]
+        )
 
-    print("==========================================")
-except Exception as exc:
-    print("30-day maintenance test error/skipped:", exc)
+        print(
+            "START DATE:",
+            maintenance_30_result["start_date"]
+        )
 
-try:
-    print("\n" + "=" * 60)
-    print("EMERGENCY BLOCK OPTIMIZATION TEST")
-    print("=" * 60)
+        print(
+            "END DATE:",
+            maintenance_30_result["end_date"]
+        )
 
-    emergency_result = optimize_emergency_block(
-        task_id="T-AUTO-0001",
-        corridor_id="C02",
-        block_date=datetime(2026, 9, 1).date(),
-        requested_start="10:00:00",
-        requested_end="13:00:00",
-    )
+        print(
+            "TOTAL TASKS:",
+            maintenance_30_result["total_tasks"]
+        )
 
-    print("TASK:", emergency_result["task_id"])
-    print("CORRIDOR:", emergency_result["corridor_id"])
-    print(
-        "REQUESTED WINDOW:",
-        emergency_result["requested_window"]
-    )
+        print(
+            "CRITICAL TASKS:",
+            maintenance_30_result["critical_tasks"]
+        )
 
-    print(
-        "CANDIDATES EVALUATED:",
-        emergency_result["candidates_evaluated"]
-    )
+        print(
+            "HIGH PRIORITY TASKS:",
+            maintenance_30_result["high_priority_tasks"]
+        )
 
-    print(
-        "BEST EMERGENCY WINDOW:",
-        emergency_result["best_window"]
-    )
+        for task in maintenance_30_result["tasks"]:
 
-    print("\nALTERNATIVES:")
+            print(
+                f"{task['task_id']} | "
+                f"{task['corridor']} | "
+                f"{task['requested_date']} | "
+                f"asset_risk={task['asset_risk']} | "
+                f"maintenance_priority={task['maintenance_priority']} | "
+                f"traffic={task['traffic_pressure']} | "
+                f"goods={task['goods_impact']} | "
+                f"urgency={task['maintenance_urgency']} | "
+                f"level={task['urgency_level']}"
+            )
 
-    for alternative in emergency_result["alternatives"]:
-        print(alternative)
-except Exception as exc:
-    print("Emergency test error/skipped:", exc)
+        print(
+            "HIGHEST PRIORITY TASK:",
+            maintenance_30_result["highest_priority_task"]
+        )
+
+        print("==========================================")
+    except Exception as exc:
+        print("30-day maintenance test error/skipped:", exc)
+
+    try:
+        print("\n" + "=" * 60)
+        print("EMERGENCY BLOCK OPTIMIZATION TEST")
+        print("=" * 60)
+
+        emergency_result = optimize_emergency_block(
+            task_id="T-AUTO-0001",
+            corridor_id="C02",
+            block_date=datetime(2026, 9, 1).date(),
+            requested_start="10:00:00",
+            requested_end="13:00:00",
+        )
+
+        print("TASK:", emergency_result["task_id"])
+        print("CORRIDOR:", emergency_result["corridor_id"])
+        print(
+            "REQUESTED WINDOW:",
+            emergency_result["requested_window"]
+        )
+
+        print(
+            "CANDIDATES EVALUATED:",
+            emergency_result["candidates_evaluated"]
+        )
+
+        print(
+            "BEST EMERGENCY WINDOW:",
+            emergency_result["best_window"]
+        )
+
+        print("\nALTERNATIVES:")
+
+        for alternative in emergency_result["alternatives"]:
+            print(alternative)
+    except Exception as exc:
+        print("Emergency test error/skipped:", exc)
+
 
 try:
     cursor.close()

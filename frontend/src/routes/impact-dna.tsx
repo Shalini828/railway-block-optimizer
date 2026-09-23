@@ -47,17 +47,33 @@ interface ImpactDnaSearchParams {
 }
 
 export const Route = createFileRoute("/impact-dna")({
-  validateSearch: (search: Record<string, unknown>): ImpactDnaSearchParams => ({
-    blockId: typeof search.blockId === "string" ? search.blockId : undefined,
-    lens:
-      typeof search.lens === "string" &&
-      ["senior_officer", "planning", "maintenance", "traffic", "field"].includes(search.lens)
-        ? (search.lens as ImpactDnaSearchParams["lens"])
-        : undefined,
-  }),
+  validateSearch: (search: Record<string, unknown>) => {
+    const blockId =
+      typeof search["blockId"] === "string"
+        ? search["blockId"]
+        : undefined;
+
+    const lensValue = search["lens"];
+
+    const lens =
+      typeof lensValue === "string" &&
+      ["senior_officer", "planning", "maintenance", "traffic", "field"].includes(
+        lensValue,
+      )
+        ? (lensValue as ImpactDnaSearchParams["lens"])
+        : undefined;
+
+    return {
+      ...(blockId !== undefined ? { blockId } : {}),
+      ...(lens !== undefined ? { lens } : {}),
+    };
+  },
+
   head: () => ({
     meta: [
-      { title: "Railway Impact DNA | AI Causal Network | IR-ABPS" },
+      {
+        title: "Railway Impact DNA | AI Causal Network | IR-ABPS",
+      },
       {
         name: "description",
         content:
@@ -65,6 +81,7 @@ export const Route = createFileRoute("/impact-dna")({
       },
     ],
   }),
+
   component: RailwayImpactDnaPage,
 });
 
@@ -640,9 +657,34 @@ function RailwayImpactDnaPage() {
               overall_level?: string;
             };
           };
+          traffic_intelligence?: {
+            assessment?: {
+              train_impact_score?: number;
+              estimated_delay_min?: number;
+              risk_level?: string;
+              conflicts?: Array<{
+                train_id?: string;
+                train_number?: string;
+                train_name?: string;
+                train_type?: string;
+                severity?: string;
+                overlap_minutes?: number;
+                estimated_delay_min?: number;
+                source?: string;
+                operational_priority?: number;
+              }>;
+            };
+          };
           ai_explanation?: {
             score?: number;
             why_selected?: string[];
+            metrics?: {
+              duration_min?: number;
+              utilization_percent?: number;
+              train_impact_score?: number;
+              number_of_tasks?: number;
+              number_of_departments?: number;
+            };
           };
         }
 
@@ -651,21 +693,28 @@ function RailwayImpactDnaPage() {
         }
         const payload = (await response.json()) as { blocks?: ApiSavedBlock[] };
         const savedBlocks = payload.blocks || [];
-
+        
+        
         if (savedBlocks.length > 0) {
+          const initialBlockId =
+  search.blockId && savedBlocks.some((b) => String(b.block_id) === search.blockId)
+    ? search.blockId
+    : String(savedBlocks[0]?.block_id || "");
           const mapped: ImpactBlock[] = await Promise.all(
             savedBlocks.map(async (b: ApiSavedBlock, index: number) => {
               const blockId = String(b.block_id || `OPT-${index + 1}`);
               let intelligenceData: ApiIntelligenceData | null = null;
 
-              try {
-                const intRes = await apiFetch(`/ai/blocks/${blockId}/intelligence`);
-                if (intRes.ok) {
-                  intelligenceData = (await intRes.json()) as ApiIntelligenceData;
-                }
-              } catch {
-                // optional intelligence fetch failure handled gracefully
-              }
+              if (blockId === initialBlockId) {
+  try {
+    const intRes = await apiFetch(`/ai/blocks/${blockId}/intelligence`);
+    if (intRes.ok) {
+      intelligenceData = (await intRes.json()) as ApiIntelligenceData;
+    }
+  } catch {
+    // optional intelligence fetch failure handled gracefully
+  }
+}
 
               const assetCount = Number(b.number_of_tasks ?? b.task_count ?? b.tasks?.length ?? 5);
               const trainCount = Number(b.train_conflicts ?? b.conflicts?.length ?? 7);
@@ -675,13 +724,14 @@ function RailwayImpactDnaPage() {
               const fScore =
                 intelligenceData?.intelligence?.goods_demand?.predicted_goods_train_demand ?? 18;
               const tScore = Number(
-                b.train_impact_score ??
+                intelligenceData?.traffic_intelligence?.assessment?.train_impact_score ??
                   intelligenceData?.intelligence?.traffic_impact?.traffic_impact_score ??
+                  b.train_impact_score ??
                   24,
               );
               const netPressure = intelligenceData?.intelligence?.overall_assessment?.overall_level
                 ? (intelligenceData.intelligence.overall_assessment.overall_level.toUpperCase() as
-                    "LOW" | "MEDIUM" | "HIGH")
+                    "LOW" | "MEDIUM" | "HIGH" | "CRITICAL")
                 : tScore > 35
                   ? "HIGH"
                   : tScore > 18
@@ -738,12 +788,12 @@ function RailwayImpactDnaPage() {
                   priority: Number(t.priority_score) || 75,
                 })),
                 trains: (b.conflicts || []).map((c: ApiTrainConflict) => ({
-                  train_id: c.train_id || "TRN-901",
-                  train_name: c.train_name || "Express Passenger",
-                  train_type: c.train_type || "Express",
-                  scheduled_time: c.departure_time || "11:00",
-                  estimated_delay_min: Number(c.estimated_delay_min) || 15,
-                })),
+  train_id: c.train_id || "TRN-901",
+  train_name: c.train_name || "Express Passenger",
+  train_type: c.train_type || "Express",
+  scheduled_time: c.departure_time || "11:00",
+  estimated_delay_min: Number(c.estimated_delay_min) || 15,
+})),
                 downstream_names: downstreamList,
                 hidden_dependencies: hiddenDeps,
                 explanation: `This maintenance window consolidates ${assetCount} maintenance assets on ${corrId}. The selected window intersects ${trainCount} scheduled train movements and has ${netPressure.toLowerCase()} operational pressure. ${downstreamList.length} downstream corridor relationships require attention before final approval.`,
@@ -755,7 +805,7 @@ function RailwayImpactDnaPage() {
             setBlocks(mapped);
             // If URL specified a blockId, select it; otherwise default to first
             const matching = search.blockId && mapped.find((b) => b.block_id === search.blockId);
-            setSelectedBlockId(matching ? matching.block_id : mapped[0].block_id);
+            setSelectedBlockId(matching ? matching.block_id : mapped[0]?.block_id ?? "");
             setLoading(false);
             return;
           }
@@ -768,7 +818,9 @@ function RailwayImpactDnaPage() {
         setBlocks(fallbackBlocks);
         const matching =
           search.blockId && fallbackBlocks.find((b) => b.block_id === search.blockId);
-        setSelectedBlockId(matching ? matching.block_id : fallbackBlocks[0].block_id);
+        setSelectedBlockId(
+  matching ? matching.block_id : fallbackBlocks[0]?.block_id ?? "",
+);
         setLoading(false);
       }
     }
@@ -781,9 +833,91 @@ function RailwayImpactDnaPage() {
   }, [fallbackBlocks, search.blockId]);
 
   // Selected block
-  const selectedBlock = useMemo(() => {
-    return blocks.find((b) => b.block_id === selectedBlockId) || blocks[0] || fallbackBlocks[0];
-  }, [blocks, selectedBlockId, fallbackBlocks]);
+  const selectedBlock = useMemo<ImpactBlock>(() => {
+  const block =
+    blocks.find((b) => b.block_id === selectedBlockId) ??
+    blocks[0] ??
+    fallbackBlocks[0];
+
+  if (!block) {
+    throw new Error("No Impact DNA block is available");
+  }
+
+  return block;
+}, [blocks, selectedBlockId, fallbackBlocks]);
+
+useEffect(() => {
+  if (!selectedBlockId) return;
+
+  let cancelled = false;
+
+  async function loadSelectedBlockIntelligence() {
+    try {
+      const response = await apiFetch(
+        `/ai/blocks/${selectedBlockId}/intelligence`,
+      );
+
+      if (!response.ok) return;
+
+      const intelligence = await response.json();
+
+      if (cancelled) return;
+
+      setBlocks((currentBlocks) =>
+        currentBlocks.map((block) => {
+          if (block.block_id !== selectedBlockId) {
+            return block;
+          }
+
+          const trafficScore = Number(
+            intelligence.traffic_intelligence?.assessment?.train_impact_score ??
+              intelligence.intelligence?.traffic_impact?.traffic_impact_score ??
+              block.train_impact_score,
+          );
+
+          const freightScore = Number(
+            intelligence.intelligence?.goods_demand
+              ?.predicted_goods_train_demand ??
+              block.freight_pressure_score,
+          );
+
+          const pressure =
+            intelligence.intelligence?.overall_assessment?.overall_level;
+
+          return {
+            ...block,
+            train_impact_score: trafficScore,
+            freight_pressure_score: freightScore,
+            passenger_movements_count:
+              intelligence.traffic_summary?.passenger_trains ??
+              block.passenger_movements_count,
+            train_movements_count:
+              intelligence.traffic_summary?.express_trains ??
+              block.train_movements_count,
+            network_pressure: pressure
+              ? (pressure.toUpperCase() as "LOW" | "MEDIUM" | "HIGH")
+              : block.network_pressure,
+            hidden_dependencies:
+              intelligence.ai_explanation?.why_selected?.length
+                ? intelligence.ai_explanation.why_selected
+                : block.hidden_dependencies,
+          };
+        }),
+      );
+    } catch (error) {
+      console.error(
+        `Failed to load intelligence for ${selectedBlockId}`,
+        error,
+      );
+    }
+  }
+
+  void loadSelectedBlockIntelligence();
+
+  return () => {
+    cancelled = true;
+  };
+}, [selectedBlockId]);
 
   // Handle Trace Block Impact Animation
   const handleTraceImpact = useCallback(() => {
