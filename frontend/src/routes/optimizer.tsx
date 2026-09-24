@@ -107,7 +107,12 @@ interface OptimizationApiResponse {
     goods_impact_score?: number;
     consolidation_score?: number;
     ai_reasons?: string[] | null;
-    ai_explanation?: string | null;
+    ai_explanation?: string | Record<string, unknown> | null;
+    ai_decision_confidence?: {
+      level?: string;
+      score_gap?: number;
+      candidates_evaluated?: number;
+    } | null;
     reason?: string | null;
   }>;
 
@@ -152,7 +157,12 @@ interface SavedPlanBlock {
   goods_impact_score?: string | number;
   consolidation_score?: string | number;
   ai_reasons?: string[] | null;
-  ai_explanation?: string | null;
+  ai_explanation?: string | Record<string, unknown> | null;
+  ai_decision_confidence?: {
+    level?: string;
+    score_gap?: number;
+    candidates_evaluated?: number;
+  } | null;
   reason?: string | null;
 }
 
@@ -215,6 +225,11 @@ interface BlockIntelligence {
       number_of_tasks?: number;
       number_of_departments?: number;
     };
+  } | null;
+  ai_decision_confidence?: {
+    level?: string;
+    score_gap?: number;
+    candidates_evaluated?: number;
   } | null;
   ai_reasons?: string[] | null;
   ai_explanation_text?: string | null;
@@ -306,7 +321,9 @@ function getBlockAiReasons(
   if (combinedReasons.length > 0) return combinedReasons;
 
   if (block.reason?.trim()) return [block.reason.trim()];
-  if (block.ai_explanation?.trim()) return [block.ai_explanation.trim()];
+  if (typeof block.ai_explanation === "string" && block.ai_explanation.trim()) {
+    return [block.ai_explanation.trim()];
+  }
 
   return [];
 }
@@ -362,6 +379,7 @@ async function fetchSavedOptimization(): Promise<OptimizationApiResponse | null>
     consolidation_score: Number(block.consolidation_score) || 0,
     ai_reasons: Array.isArray(block.ai_reasons) ? block.ai_reasons : [],
     ai_explanation: block.ai_explanation ?? null,
+    ai_decision_confidence: block.ai_decision_confidence ?? null,
     reason: block.reason ?? null,
   }));
 
@@ -682,6 +700,7 @@ function OptimizerPage() {
                   consolidation_score?: unknown;
                   ai_reasons?: unknown;
                   ai_explanation?: unknown;
+                  ai_decision_confidence?: unknown;
                   reason?: unknown;
                 }>
               ).map((block) => ({
@@ -706,7 +725,20 @@ function OptimizerPage() {
                 consolidation_score: Number(block.consolidation_score ?? 0),
                 ai_reasons: normalizeAiReasons(block.ai_reasons),
                 ai_explanation:
-                  typeof block.ai_explanation === "string" ? block.ai_explanation : null,
+                  block.ai_explanation && typeof block.ai_explanation === "object"
+                    ? (block.ai_explanation as Record<string, unknown>)
+                    : typeof block.ai_explanation === "string"
+                      ? block.ai_explanation
+                      : null,
+                ai_decision_confidence:
+                  block.ai_decision_confidence &&
+                  typeof block.ai_decision_confidence === "object"
+                    ? (block.ai_decision_confidence as {
+                        level?: string;
+                        score_gap?: number;
+                        candidates_evaluated?: number;
+                      })
+                    : null,
                 reason: typeof block.reason === "string" ? block.reason : null,
               }));
 
@@ -1856,6 +1888,8 @@ function OptimizerPage() {
                     const selectedConflictCount =
                       intelligence?.conflict_count ?? b.conflict_count ?? b.train_conflicts;
                     const selectedDelay = intelligence?.estimated_delay ?? b.estimated_delay ?? 0;
+                    const decisionConfidence =
+                      intelligence?.ai_decision_confidence ?? b.ai_decision_confidence;
 
                     return (
                       <>
@@ -2039,8 +2073,16 @@ function OptimizerPage() {
                               </span>
                               <span className="ml-auto font-mono text-[10px] font-bold text-[#003366] dark:text-sky-400">
                                 Score {Number(aiScore).toFixed(2)}
+                                 Score {Number(aiScore).toFixed(2)}
                               </span>
                             </div>
+                            {decisionConfidence?.level && (
+                              <div className="mb-2 text-[10px] font-mono text-slate-600 dark:text-slate-300">
+                                Decision confidence: {decisionConfidence.level} (score gap {Number(
+                                  decisionConfidence.score_gap ?? 0,
+                                ).toFixed(2)})
+                              </div>
+                            )}
 
                             <div className="space-y-1.5">
                               {aiReasons.map((reason, index) => (

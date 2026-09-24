@@ -468,8 +468,16 @@ def get_optimized_plan(
                 own_task_count = len(all_block_tasks)
                 is_own = True
 
+            json_fields = {
+                "ai_decision_confidence",
+                "ai_reasons",
+                "ai_explanation",
+                "traffic_prediction",
+            }
             block_dict = {
-                key: str(value) if value is not None else None
+                key: value
+                if key in json_fields
+                else str(value) if value is not None else None
                 for key, value in block.items()
             }
 

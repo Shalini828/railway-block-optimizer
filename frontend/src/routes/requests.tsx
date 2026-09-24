@@ -108,7 +108,9 @@ const STATUSES: (Status | "All")[] = [
 ];
 
 function mapBackendStatus(value: unknown): Status {
-  const s = String(value ?? "").trim().toUpperCase();
+  const s = String(value ?? "")
+    .trim()
+    .toUpperCase();
   if (["OPTIMIZED", "CLUSTERED", "SHADOWED"].includes(s)) return "Clustered / Shadowed";
   if (s === "APPROVED") return "Approved";
   if (["ACTIVE", "IN_PROGRESS"].includes(s)) return "Active";
@@ -119,18 +121,16 @@ function mapBackendStatus(value: unknown): Status {
 }
 
 function mapBackendDept(value: unknown): Dept {
-  const s = String(value ?? "").trim().toUpperCase();
+  const s = String(value ?? "")
+    .trim()
+    .toUpperCase();
   return s === "SMMS" ? "SMMS" : s === "TDMS" ? "TDMS" : "TMS";
 }
 
 function mapBackendRequisition(item: any): Requisition {
   const minutes = Number(item?.requested_duration_min ?? 0);
   const criticality =
-    item?.criticality === "Medium"
-      ? "Medium"
-      : item?.criticality === "Low"
-        ? "Low"
-        : "High";
+    item?.criticality === "Medium" ? "Medium" : item?.criticality === "Low" ? "Low" : "High";
   const daysOverdue = Number(item?.days_overdue ?? item?.overdue_days ?? 0);
   const tsrRisk = Boolean(item?.tsr_risk ?? item?.safety_risk ?? false);
   const blockType = item?.block_type ?? "Traffic Block";
@@ -163,9 +163,7 @@ function mapBackendRequisition(item: any): Requisition {
     requestedBy: String(item?.requested_by ?? "—"),
     status: mapBackendStatus(item?.request_status ?? item?.status),
     score,
-    rejectionReason: item?.rejection_reason
-      ? String(item.rejection_reason)
-      : undefined,
+    rejectionReason: item?.rejection_reason ? String(item.rejection_reason) : undefined,
   } as Requisition;
 }
 
@@ -201,6 +199,100 @@ function RequestsPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showForm, setShowForm] = useState(true);
 
+  function normalizeDepartment(value: unknown): Dept | string {
+    const dept = String(value ?? "")
+      .trim()
+      .toUpperCase();
+
+    if (dept === "TMS" || dept === "DEPT-TMS" || dept === "TEAM-001") {
+      return "TMS";
+    }
+
+    if (
+      dept === "SMMS" ||
+      dept === "DEPT-SMMS" ||
+      dept === "TEAM-002" ||
+      dept === "S&T" ||
+      dept === "S&T (SMMS)"
+    ) {
+      return "SMMS";
+    }
+
+    if (dept === "TDMS" || dept === "DEPT-TDMS" || dept === "TEAM-003") {
+      return "TDMS";
+    }
+
+    return dept || "TMS";
+  }
+
+  function mapBackendRequisition(item: any): Requisition {
+    const minutes = Number(item?.requested_duration_min ?? 0);
+
+    const criticality =
+      item?.criticality === "Medium" ? "Medium" : item?.criticality === "Low" ? "Low" : "High";
+
+    const daysOverdue = Number(item?.days_overdue ?? item?.overdue_days ?? 0);
+
+    const tsrRisk = Boolean(item?.tsr_risk ?? item?.safety_risk ?? false);
+
+    const blockType = item?.block_type ?? "Traffic Block";
+
+    const score =
+      item?.score != null && Number.isFinite(Number(item.score))
+        ? Number(item.score)
+        : criticalityScore({
+            criticality,
+            daysOverdue,
+            tsrRisk,
+            blockType,
+          } as Requisition);
+
+    const departmentValue = item?.department_id ?? item?.dept ?? item?.department ?? "";
+
+    return {
+      id: String(item?.request_id ?? item?.id ?? "—"),
+
+      backendId: String(item?.request_id ?? item?.id ?? ""),
+
+      assetId: String(item?.asset_id ?? item?.task_id ?? "—"),
+
+      // IMPORTANT:
+      // Convert backend department IDs into frontend department codes.
+      // DEPT-SMMS -> SMMS
+      // DEPT-TMS  -> TMS
+      // DEPT-TDMS -> TDMS
+      dept: normalizeDepartment(departmentValue) as Dept,
+
+      work: String(item?.description ?? item?.work ?? "Maintenance work"),
+
+      section: String(item?.corridor_id ?? item?.section_id ?? "—"),
+
+      line: String(item?.line ?? item?.track_line ?? "—"),
+
+      chainage: String(item?.chainage ?? "—"),
+
+      duration: minutes > 0 ? minutes / 60 : 1,
+
+      crew: Number(item?.crew ?? item?.crew_strength ?? 0),
+
+      criticality: criticality as Requisition["criticality"],
+
+      daysOverdue,
+
+      tsrRisk,
+
+      blockType: blockType as Requisition["blockType"],
+
+      requestedBy: String(item?.requested_by ?? "—"),
+
+      status: mapBackendStatus(item?.request_status ?? item?.status),
+
+      score,
+
+      rejectionReason: item?.rejection_reason ? String(item.rejection_reason) : undefined,
+    } as Requisition;
+  }
+
   const loadRequests = async () => {
     setIsLoadingRequests(true);
     setRequestLoadError(null);
@@ -213,18 +305,12 @@ function RequestsPage() {
         throw new Error(data?.detail || data?.message || "Failed to load requisitions");
       }
 
-      const rows = Array.isArray(data)
-        ? data
-        : Array.isArray(data?.requests)
-          ? data.requests
-          : [];
+      const rows = Array.isArray(data) ? data : Array.isArray(data?.requests) ? data.requests : [];
 
       setBackendReqs(rows.map(mapBackendRequisition));
     } catch (error) {
       console.error("Failed to load requisitions:", error);
-      setRequestLoadError(
-        error instanceof Error ? error.message : "Failed to load requisitions",
-      );
+      setRequestLoadError(error instanceof Error ? error.message : "Failed to load requisitions");
       setBackendReqs([]);
     } finally {
       setIsLoadingRequests(false);
@@ -276,7 +362,9 @@ function RequestsPage() {
 
   const submit = async (runOptimizer = false) => {
     if (!work.trim()) {
-      toast.error(t("Please enter nature of work / task description", "कृपया कार्य का विवरण दर्ज करें"));
+      toast.error(
+        t("Please enter nature of work / task description", "कृपया कार्य का विवरण दर्ज करें"),
+      );
       return;
     }
 
@@ -338,7 +426,12 @@ function RequestsPage() {
         toast.success(
           <div className="flex items-center gap-2">
             <CircleCheck className="size-4 text-emerald-600" />
-            <span>{t("Requisition filed & optimized into Gantt schedule", "मांग पत्र दर्ज और गैंट शेड्यूल में अनुकूलित")}</span>
+            <span>
+              {t(
+                "Requisition filed & optimized into Gantt schedule",
+                "मांग पत्र दर्ज और गैंट शेड्यूल में अनुकूलित",
+              )}
+            </span>
           </div>,
         );
 
@@ -353,7 +446,7 @@ function RequestsPage() {
             <span>
               {t(
                 "Requisition submitted — Pending AI Scheduling. Control / DRM Planning will schedule it.",
-                "मांग पत्र जमा किया गया — एआई शेड्यूलिंग लंबित। नियंत्रण / डीआरएम योजना इसे निर्धारित करेगी।"
+                "मांग पत्र जमा किया गया — एआई शेड्यूलिंग लंबित। नियंत्रण / डीआरएम योजना इसे निर्धारित करेगी।",
               )}
             </span>
           </div>,
@@ -403,7 +496,9 @@ function RequestsPage() {
       await loadRequests();
       setRejectingReq(null);
       setRejectionReason("");
-      toast.success(t(`Requisition ${rejectingReq.id} rejected.`, `मांग पत्र ${rejectingReq.id} अस्वीकृत।`));
+      toast.success(
+        t(`Requisition ${rejectingReq.id} rejected.`, `मांग पत्र ${rejectingReq.id} अस्वीकृत।`),
+      );
     } catch (e: any) {
       toast.error(e.message || "Failed to reject requisition");
     }
@@ -484,20 +579,36 @@ function RequestsPage() {
       {/* Summary KPI Strip */}
       <div className="mb-5 grid grid-cols-2 sm:grid-cols-4 gap-3">
         <div className="border border-border bg-white dark:bg-slate-900 p-3 rounded-[2px]">
-          <p className="text-[10px] font-bold uppercase text-slate-500">{t("Total Demands", "कुल मांग")}</p>
-          <p className="text-xl font-bold text-slate-900 dark:text-slate-100 mt-0.5">{stats.total}</p>
+          <p className="text-[10px] font-bold uppercase text-slate-500">
+            {t("Total Demands", "कुल मांग")}
+          </p>
+          <p className="text-xl font-bold text-slate-900 dark:text-slate-100 mt-0.5">
+            {stats.total}
+          </p>
         </div>
         <div className="border border-border bg-white dark:bg-slate-900 p-3 rounded-[2px]">
-          <p className="text-[10px] font-bold uppercase text-purple-700 dark:text-purple-400">{t("Pending AI Scheduling", "एआई शेड्यूलिंग लंबित")}</p>
-          <p className="text-xl font-bold text-purple-700 dark:text-purple-400 mt-0.5">{stats.pending}</p>
+          <p className="text-[10px] font-bold uppercase text-purple-700 dark:text-purple-400">
+            {t("Pending AI Scheduling", "एआई शेड्यूलिंग लंबित")}
+          </p>
+          <p className="text-xl font-bold text-purple-700 dark:text-purple-400 mt-0.5">
+            {stats.pending}
+          </p>
         </div>
         <div className="border border-border bg-white dark:bg-slate-900 p-3 rounded-[2px]">
-          <p className="text-[10px] font-bold uppercase text-amber-700 dark:text-amber-400">{t("Active Execution", "सक्रिय निष्पादन")}</p>
-          <p className="text-xl font-bold text-amber-700 dark:text-amber-400 mt-0.5">{stats.active}</p>
+          <p className="text-[10px] font-bold uppercase text-amber-700 dark:text-amber-400">
+            {t("Active Execution", "सक्रिय निष्पादन")}
+          </p>
+          <p className="text-xl font-bold text-amber-700 dark:text-amber-400 mt-0.5">
+            {stats.active}
+          </p>
         </div>
         <div className="border border-border bg-white dark:bg-slate-900 p-3 rounded-[2px]">
-          <p className="text-[10px] font-bold uppercase text-emerald-700 dark:text-emerald-400">{t("Completed & Closed", "पूर्ण एवं बंद")}</p>
-          <p className="text-xl font-bold text-emerald-700 dark:text-emerald-400 mt-0.5">{stats.completed}</p>
+          <p className="text-[10px] font-bold uppercase text-emerald-700 dark:text-emerald-400">
+            {t("Completed & Closed", "पूर्ण एवं बंद")}
+          </p>
+          <p className="text-xl font-bold text-emerald-700 dark:text-emerald-400 mt-0.5">
+            {stats.completed}
+          </p>
         </div>
       </div>
 
@@ -511,19 +622,22 @@ function RequestsPage() {
                 {stats.pending}{" "}
                 {t(
                   "requisitions awaiting AI scheduling",
-                  "मांग पत्र एआई शेड्यूलिंग की प्रतीक्षा कर रहे हैं"
+                  "मांग पत्र एआई शेड्यूलिंग की प्रतीक्षा कर रहे हैं",
                 )}
               </span>
               <p className="text-[11px] text-purple-700 dark:text-purple-400">
                 {t(
                   "Review demands in the IR-ABPS Brain optimization matrix.",
-                  "आईआर-एबीपीएस ब्रेन ऑप्टिमाइज़ेशन मैट्रिक्स में मांगों की समीक्षा करें।"
+                  "आईआर-एबीपीएस ब्रेन ऑप्टिमाइज़ेशन मैट्रिक्स में मांगों की समीक्षा करें।",
                 )}
               </p>
             </div>
           </div>
           <Link to="/optimizer">
-            <Button size="sm" className="h-8 bg-purple-700 hover:bg-purple-800 text-white font-bold text-xs rounded-[2px]">
+            <Button
+              size="sm"
+              className="h-8 bg-purple-700 hover:bg-purple-800 text-white font-bold text-xs rounded-[2px]"
+            >
               <Brain className="mr-1.5 size-3.5" />
               {t("Open IR-ABPS Brain", "आईआर-एबीपीएस ब्रेन खोलें")}
               <ArrowRight className="ml-1.5 size-3" />
@@ -552,7 +666,7 @@ function RequestsPage() {
                 <p className="text-[11px] text-slate-500">
                   {t(
                     "Electronic Maintenance Demand Filing · Filing form is currently minimized.",
-                    "इलेक्ट्रॉनिक अनुरक्षण मांग फाइलिंग · मांग पत्र फॉर्म वर्तमान में छोटा किया गया है।"
+                    "इलेक्ट्रॉनिक अनुरक्षण मांग फाइलिंग · मांग पत्र फॉर्म वर्तमान में छोटा किया गया है।",
                   )}
                 </p>
               </div>
@@ -573,17 +687,23 @@ function RequestsPage() {
                 <Info className="size-5 text-[#003366] dark:text-sky-400 mt-0.5 shrink-0" />
                 <div>
                   <h3 className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-slate-100">
-                    {t("Control Office Requisition Consumer", "नियंत्रण कार्यालय मांग पत्र उपभोक्ता")}
+                    {t(
+                      "Control Office Requisition Consumer",
+                      "नियंत्रण कार्यालय मांग पत्र उपभोक्ता",
+                    )}
                   </h3>
                   <p className="text-xs text-slate-600 dark:text-slate-300 mt-1.5 leading-relaxed">
                     {t(
                       "Requisitions are raised by the department engineers. Control consumes, schedules, and reviews them.",
-                      "मांग पत्र विभागीय इंजीनियरों द्वारा उठाए जाते हैं। नियंत्रण उन्हें प्राप्त, निर्धारित एवं समीक्षा करता है।"
+                      "मांग पत्र विभागीय इंजीनियरों द्वारा उठाए जाते हैं। नियंत्रण उन्हें प्राप्त, निर्धारित एवं समीक्षा करता है।",
                     )}
                   </p>
                   <div className="mt-3.5">
                     <Link to="/optimizer">
-                      <Button size="sm" className="h-8 bg-[#003366] hover:bg-[#002244] text-white font-bold text-xs rounded-[2px]">
+                      <Button
+                        size="sm"
+                        className="h-8 bg-[#003366] hover:bg-[#002244] text-white font-bold text-xs rounded-[2px]"
+                      >
                         <Brain className="mr-1.5 size-3.5" />
                         {t("Open IR-ABPS Brain", "आईआर-एबीपीएस ब्रेन खोलें")}
                       </Button>
@@ -616,7 +736,10 @@ function RequestsPage() {
                     </span>
                   </div>
                   <p className="text-[10px] text-slate-300">
-                    {t("Electronic Maintenance Demand Filing · Centre for Railway Information Systems", "इलेक्ट्रॉनिक अनुरक्षण मांग फाइलिंग · रेलवे सूचना प्रणाली केंद्र")}
+                    {t(
+                      "Electronic Maintenance Demand Filing · Centre for Railway Information Systems",
+                      "इलेक्ट्रॉनिक अनुरक्षण मांग फाइलिंग · रेलवे सूचना प्रणाली केंद्र",
+                    )}
                   </p>
                 </div>
               </div>
@@ -638,7 +761,8 @@ function RequestsPage() {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3.5">
                 <div className="grid gap-1">
                   <Label className="text-[11px] font-bold uppercase text-slate-700 dark:text-slate-300">
-                    {t("Originating Department", "मूल विभाग")} <span className="text-destructive">*</span>
+                    {t("Originating Department", "मूल विभाग")}{" "}
+                    <span className="text-destructive">*</span>
                   </Label>
                   <Select
                     value={scope === "department" ? (role.dept as Dept) : dept}
@@ -661,7 +785,10 @@ function RequestsPage() {
                   </Select>
                   {scope === "department" && (
                     <span className="text-[10px] text-muted-foreground italic">
-                      {t("Locked to departmental jurisdiction", "विभागीय अधिकार क्षेत्र के अनुसार लॉक किया गया")}
+                      {t(
+                        "Locked to departmental jurisdiction",
+                        "विभागीय अधिकार क्षेत्र के अनुसार लॉक किया गया",
+                      )}
                     </span>
                   )}
                 </div>
@@ -833,7 +960,9 @@ function RequestsPage() {
                     <Label className="text-xs font-bold cursor-pointer" htmlFor="tsr-toggle">
                       TSR Risk If Deferred
                     </Label>
-                    <span className="text-[10px] text-slate-500">Imposes sectional caution order</span>
+                    <span className="text-[10px] text-slate-500">
+                      Imposes sectional caution order
+                    </span>
                   </div>
                   <Switch id="tsr-toggle" checked={tsr} onCheckedChange={setTsr} />
                 </div>
@@ -873,11 +1002,13 @@ function RequestsPage() {
                     >
                       {isSubmitting ? (
                         <>
-                          <RefreshCw className="mr-1.5 size-3.5 animate-spin" /> {t("Filing...", "दर्ज किया जा रहा है...")}
+                          <RefreshCw className="mr-1.5 size-3.5 animate-spin" />{" "}
+                          {t("Filing...", "दर्ज किया जा रहा है...")}
                         </>
                       ) : (
                         <>
-                          <Send className="mr-1.5 size-3.5" /> {t("Submit Requisition", "मांग पत्र जमा करें")}
+                          <Send className="mr-1.5 size-3.5" />{" "}
+                          {t("Submit Requisition", "मांग पत्र जमा करें")}
                         </>
                       )}
                     </Button>
@@ -889,11 +1020,13 @@ function RequestsPage() {
                     >
                       {isSubmitting ? (
                         <>
-                          <RefreshCw className="mr-1.5 size-3.5 animate-spin" /> {t("Optimizing...", "अनुकूलन जारी...")}
+                          <RefreshCw className="mr-1.5 size-3.5 animate-spin" />{" "}
+                          {t("Optimizing...", "अनुकूलन जारी...")}
                         </>
                       ) : (
                         <>
-                          <Sparkles className="mr-1.5 size-3.5 text-amber-400" /> {t("Submit & Run IR-ABPS", "जमा करें और चलाएं")}
+                          <Sparkles className="mr-1.5 size-3.5 text-amber-400" />{" "}
+                          {t("Submit & Run IR-ABPS", "जमा करें और चलाएं")}
                         </>
                       )}
                     </Button>
@@ -907,11 +1040,13 @@ function RequestsPage() {
                   >
                     {isSubmitting ? (
                       <>
-                        <RefreshCw className="mr-1.5 size-3.5 animate-spin" /> {t("Transmitting...", "प्रेषित किया जा रहा है...")}
+                        <RefreshCw className="mr-1.5 size-3.5 animate-spin" />{" "}
+                        {t("Transmitting...", "प्रेषित किया जा रहा है...")}
                       </>
                     ) : (
                       <>
-                        <Send className="mr-1.5 size-3.5" /> {t("Submit Requisition", "मांग पत्र जमा करें")}
+                        <Send className="mr-1.5 size-3.5" />{" "}
+                        {t("Submit Requisition", "मांग पत्र जमा करें")}
                       </>
                     )}
                   </Button>
@@ -952,12 +1087,30 @@ function RequestsPage() {
 
               {/* Filter Controls Bar */}
               <div className="mt-3 flex flex-wrap items-center gap-3">
-                <Tabs value={tab} onValueChange={(v) => setTab(v as Dept | "ALL")} className="w-auto">
+                <Tabs
+                  value={tab}
+                  onValueChange={(v) => setTab(v as Dept | "ALL")}
+                  className="w-auto"
+                >
                   <TabsList className="h-8 rounded-[2px] bg-slate-200 dark:bg-slate-800 p-0.5">
-                    <TabsTrigger value="ALL" className="text-xs px-2.5 h-7 rounded-[2px] font-bold">ALL</TabsTrigger>
-                    <TabsTrigger value="TMS" className="text-xs px-2.5 h-7 rounded-[2px] font-bold">TMS (Civil)</TabsTrigger>
-                    <TabsTrigger value="SMMS" className="text-xs px-2.5 h-7 rounded-[2px] font-bold">SMMS (Signal)</TabsTrigger>
-                    <TabsTrigger value="TDMS" className="text-xs px-2.5 h-7 rounded-[2px] font-bold">TDMS (OHE)</TabsTrigger>
+                    <TabsTrigger value="ALL" className="text-xs px-2.5 h-7 rounded-[2px] font-bold">
+                      ALL
+                    </TabsTrigger>
+                    <TabsTrigger value="TMS" className="text-xs px-2.5 h-7 rounded-[2px] font-bold">
+                      TMS (Civil)
+                    </TabsTrigger>
+                    <TabsTrigger
+                      value="SMMS"
+                      className="text-xs px-2.5 h-7 rounded-[2px] font-bold"
+                    >
+                      SMMS (Signal)
+                    </TabsTrigger>
+                    <TabsTrigger
+                      value="TDMS"
+                      className="text-xs px-2.5 h-7 rounded-[2px] font-bold"
+                    >
+                      TDMS (OHE)
+                    </TabsTrigger>
                   </TabsList>
                 </Tabs>
 
@@ -1017,7 +1170,10 @@ function RequestsPage() {
                 <TableBody>
                   {isLoadingRequests ? (
                     <TableRow>
-                      <TableCell colSpan={7} className="text-center py-12 text-xs text-muted-foreground">
+                      <TableCell
+                        colSpan={7}
+                        className="text-center py-12 text-xs text-muted-foreground"
+                      >
                         <div className="flex items-center justify-center gap-2">
                           <RefreshCw className="size-4 animate-spin" />
                           Loading requisitions from BDMS...
@@ -1030,7 +1186,12 @@ function RequestsPage() {
                         <div className="space-y-2">
                           <p className="font-semibold">Could not load requisitions.</p>
                           <p className="text-[11px] text-muted-foreground">{requestLoadError}</p>
-                          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => void loadRequests()}>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-xs"
+                            onClick={() => void loadRequests()}
+                          >
                             <RefreshCw className="mr-1.5 size-3.5" />
                             Retry
                           </Button>
@@ -1039,94 +1200,116 @@ function RequestsPage() {
                     </TableRow>
                   ) : (
                     filtered.map((r) => {
-                    const rScore = r.score ?? criticalityScore(r);
-                    let scrLabel = "LOW";
-                    let scrClass = "bg-emerald-100 text-emerald-900 border-emerald-300";
-                    if (rScore > 40) {
-                      scrLabel = "MED";
-                      scrClass = "bg-blue-100 text-blue-900 border-blue-300";
-                    }
-                    if (rScore > 65) {
-                      scrLabel = "HIGH";
-                      scrClass = "bg-amber-100 text-amber-900 border-amber-300";
-                    }
-                    if (rScore > 85) {
-                      scrLabel = "CRIT";
-                      scrClass = "bg-red-100 text-red-900 border-red-300 font-bold";
-                    }
+                      const rScore = r.score ?? criticalityScore(r);
+                      let scrLabel = "LOW";
+                      let scrClass = "bg-emerald-100 text-emerald-900 border-emerald-300";
+                      if (rScore > 40) {
+                        scrLabel = "MED";
+                        scrClass = "bg-blue-100 text-blue-900 border-blue-300";
+                      }
+                      if (rScore > 65) {
+                        scrLabel = "HIGH";
+                        scrClass = "bg-amber-100 text-amber-900 border-amber-300";
+                      }
+                      if (rScore > 85) {
+                        scrLabel = "CRIT";
+                        scrClass = "bg-red-100 text-red-900 border-red-300 font-bold";
+                      }
 
-                    return (
-                      <TableRow key={r.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
-                        <TableCell>
-                          <p className="font-mono font-bold text-xs text-[#003366] dark:text-sky-400">
-                            {r.id}
-                          </p>
-                          <p className="text-[10px] font-mono text-slate-500">{r.assetId}</p>
-                        </TableCell>
-                        <TableCell>
-                          <span className={`border px-1.5 py-0.5 text-[9px] uppercase rounded-[2px] font-bold ${getDeptStyle(r.dept)}`}>
-                            {r.dept}
-                          </span>
-                        </TableCell>
-                        <TableCell className="text-xs">
-                          <p className="font-semibold text-slate-800 dark:text-slate-200">{r.section}</p>
-                          <p className="text-[10px] text-slate-500">{r.line} · {r.chainage}</p>
-                        </TableCell>
-                        <TableCell className="text-xs font-mono text-right font-bold whitespace-nowrap py-2">
-                          {r.duration} hrs
-                        </TableCell>
-                        <TableCell className="text-right whitespace-nowrap py-2">
-                          <span className={`border px-1.5 py-0.5 text-[9px] uppercase rounded-[2px] font-mono font-bold ${scrClass}`}>
-                            {rScore} ({scrLabel})
-                          </span>
-                        </TableCell>
-                        <TableCell className="whitespace-nowrap py-2">
-                          <span className={`border px-1.5 py-0.5 text-[9px] uppercase rounded-[2px] font-semibold ${getStatusStyle(r.status)}`}>
-                            {r.status}
-                          </span>
-                        </TableCell>
-                        <TableCell className="text-right whitespace-nowrap py-2">
-                          <div className="flex items-center justify-end gap-1.5">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="h-7 px-2 text-[11px] font-bold border-slate-300 dark:border-slate-700"
-                              onClick={() => setDetail(r)}
+                      return (
+                        <TableRow
+                          key={r.id}
+                          className="hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                        >
+                          <TableCell>
+                            <p className="font-mono font-bold text-xs text-[#003366] dark:text-sky-400">
+                              {r.id}
+                            </p>
+                            <p className="text-[10px] font-mono text-slate-500">{r.assetId}</p>
+                          </TableCell>
+                          <TableCell>
+                            <span
+                              className={`border px-1.5 py-0.5 text-[9px] uppercase rounded-[2px] font-bold ${getDeptStyle(r.dept)}`}
                             >
-                              {t("Details", "विवरण")} <ArrowRight className="ml-1 size-3" />
-                            </Button>
-                            {r.status === "Pending AI Scheduling" && can("requests.cancel") && (
+                              {r.dept}
+                            </span>
+                          </TableCell>
+                          <TableCell className="text-xs">
+                            <p className="font-semibold text-slate-800 dark:text-slate-200">
+                              {r.section}
+                            </p>
+                            <p className="text-[10px] text-slate-500">
+                              {r.line} · {r.chainage}
+                            </p>
+                          </TableCell>
+                          <TableCell className="text-xs font-mono text-right font-bold whitespace-nowrap py-2">
+                            {r.duration} hrs
+                          </TableCell>
+                          <TableCell className="text-right whitespace-nowrap py-2">
+                            <span
+                              className={`border px-1.5 py-0.5 text-[9px] uppercase rounded-[2px] font-mono font-bold ${scrClass}`}
+                            >
+                              {rScore} ({scrLabel})
+                            </span>
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap py-2">
+                            <span
+                              className={`border px-1.5 py-0.5 text-[9px] uppercase rounded-[2px] font-semibold ${getStatusStyle(r.status)}`}
+                            >
+                              {r.status}
+                            </span>
+                          </TableCell>
+                          <TableCell className="text-right whitespace-nowrap py-2">
+                            <div className="flex items-center justify-end gap-1.5">
                               <Button
                                 size="sm"
                                 variant="outline"
-                                className="h-7 px-2 text-[11px] font-bold text-red-600 border-red-200 hover:bg-red-50 dark:border-red-900/50 dark:text-red-400 dark:hover:bg-red-950/40"
-                                onClick={() => handleCancel(r)}
-                                title={t("Cancel pending requisition", "लंबित मांग पत्र रद्द करें")}
+                                className="h-7 px-2 text-[11px] font-bold border-slate-300 dark:border-slate-700"
+                                onClick={() => setDetail(r)}
                               >
-                                <Ban className="mr-1 size-3" />
-                                {t("Cancel", "रद्द")}
+                                {t("Details", "विवरण")} <ArrowRight className="ml-1 size-3" />
                               </Button>
-                            )}
-                            {r.status === "Pending AI Scheduling" && can("requests.reject") && (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="h-7 px-2 text-[11px] font-bold text-amber-700 border-amber-200 hover:bg-amber-50 dark:border-amber-900/50 dark:text-amber-400 dark:hover:bg-amber-950/40"
-                                onClick={() => setRejectingReq(r)}
-                                title={t("Reject requisition with reason", "कारण सहित मांग पत्र अस्वीकार करें")}
-                              >
-                                {t("Reject", "अस्वीकार")}
-                              </Button>
-                            )}
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    );
+                              {r.status === "Pending AI Scheduling" && can("requests.cancel") && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 px-2 text-[11px] font-bold text-red-600 border-red-200 hover:bg-red-50 dark:border-red-900/50 dark:text-red-400 dark:hover:bg-red-950/40"
+                                  onClick={() => handleCancel(r)}
+                                  title={t(
+                                    "Cancel pending requisition",
+                                    "लंबित मांग पत्र रद्द करें",
+                                  )}
+                                >
+                                  <Ban className="mr-1 size-3" />
+                                  {t("Cancel", "रद्द")}
+                                </Button>
+                              )}
+                              {r.status === "Pending AI Scheduling" && can("requests.reject") && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 px-2 text-[11px] font-bold text-amber-700 border-amber-200 hover:bg-amber-50 dark:border-amber-900/50 dark:text-amber-400 dark:hover:bg-amber-950/40"
+                                  onClick={() => setRejectingReq(r)}
+                                  title={t(
+                                    "Reject requisition with reason",
+                                    "कारण सहित मांग पत्र अस्वीकार करें",
+                                  )}
+                                >
+                                  {t("Reject", "अस्वीकार")}
+                                </Button>
+                              )}
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      );
                     })
                   )}
                   {!isLoadingRequests && !requestLoadError && filtered.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={7} className="text-center py-12 text-xs text-muted-foreground">
+                      <TableCell
+                        colSpan={7}
+                        className="text-center py-12 text-xs text-muted-foreground"
+                      >
                         No requisitions matching selected filters.
                       </TableCell>
                     </TableRow>
@@ -1136,7 +1319,9 @@ function RequestsPage() {
             </CardContent>
             <div className="border-t border-border bg-slate-50 dark:bg-slate-900/60 px-4 py-2 text-[11px] text-slate-500 flex justify-between items-center">
               <span>National Railway BDMS Register (Audit Compliant)</span>
-              <span>Showing {filtered.length} of {activeReqs.length} Total Records</span>
+              <span>
+                Showing {filtered.length} of {activeReqs.length} Total Records
+              </span>
             </div>
           </Card>
         </div>
@@ -1154,9 +1339,13 @@ function RequestsPage() {
                 <DialogTitle className="text-base font-bold uppercase mt-1 text-white">
                   {detail?.id}
                 </DialogTitle>
-                <p className="text-[11px] text-slate-300 font-mono mt-0.5">Asset Tag: {detail?.assetId}</p>
+                <p className="text-[11px] text-slate-300 font-mono mt-0.5">
+                  Asset Tag: {detail?.assetId}
+                </p>
               </div>
-              <span className={`border px-2 py-0.5 text-[10px] uppercase font-bold rounded-[2px] bg-white text-slate-900`}>
+              <span
+                className={`border px-2 py-0.5 text-[10px] uppercase font-bold rounded-[2px] bg-white text-slate-900`}
+              >
                 {detail?.status}
               </span>
             </div>
@@ -1166,7 +1355,9 @@ function RequestsPage() {
             <div className="p-4 space-y-3 text-xs">
               <div className="border border-border bg-slate-50 dark:bg-slate-900 p-2.5 rounded-[2px]">
                 <p className="text-[10px] font-bold uppercase text-slate-500">Nature of Work</p>
-                <p className="font-semibold text-slate-800 dark:text-slate-200 mt-0.5">{detail.work}</p>
+                <p className="font-semibold text-slate-800 dark:text-slate-200 mt-0.5">
+                  {detail.work}
+                </p>
               </div>
 
               <div className="grid grid-cols-2 gap-2.5 border border-border p-3 rounded-[2px]">
@@ -1191,15 +1382,21 @@ function RequestsPage() {
                   <p className="font-mono font-semibold">{detail.duration} hrs</p>
                 </div>
                 <div>
-                  <span className="text-[10px] font-bold uppercase text-slate-500">Crew Strength</span>
+                  <span className="text-[10px] font-bold uppercase text-slate-500">
+                    Crew Strength
+                  </span>
                   <p className="font-semibold">{detail.crew} staff</p>
                 </div>
                 <div>
-                  <span className="text-[10px] font-bold uppercase text-slate-500">Criticality</span>
+                  <span className="text-[10px] font-bold uppercase text-slate-500">
+                    Criticality
+                  </span>
                   <p className="font-semibold">{detail.criticality}</p>
                 </div>
                 <div>
-                  <span className="text-[10px] font-bold uppercase text-slate-500">Days Overdue</span>
+                  <span className="text-[10px] font-bold uppercase text-slate-500">
+                    Days Overdue
+                  </span>
                   <p className="font-semibold">{detail.daysOverdue} days</p>
                 </div>
                 <div>
@@ -1212,8 +1409,12 @@ function RequestsPage() {
                 </div>
                 {detail.rejectionReason && (
                   <div className="col-span-2 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 p-2 rounded-[2px]">
-                    <span className="text-[10px] font-bold uppercase text-red-700 dark:text-red-400">Rejection Reason</span>
-                    <p className="font-semibold text-red-900 dark:text-red-200 text-xs mt-0.5">{detail.rejectionReason}</p>
+                    <span className="text-[10px] font-bold uppercase text-red-700 dark:text-red-400">
+                      Rejection Reason
+                    </span>
+                    <p className="font-semibold text-red-900 dark:text-red-200 text-xs mt-0.5">
+                      {detail.rejectionReason}
+                    </p>
                   </div>
                 )}
               </div>
@@ -1236,11 +1437,15 @@ function RequestsPage() {
           <div className="p-4 space-y-3">
             <div>
               <Label className="text-[11px] font-bold uppercase text-slate-700 dark:text-slate-300">
-                {t("Reason for Rejection", "अस्वीकृति का कारण")} <span className="text-destructive">*</span>
+                {t("Reason for Rejection", "अस्वीकृति का कारण")}{" "}
+                <span className="text-destructive">*</span>
               </Label>
               <Input
                 className="mt-1 text-xs rounded-[2px]"
-                placeholder={t("e.g. Traffic saturation / Overlapping mega-block", "उदा. यातायात अधिभार / अतिव्यापी ब्लॉक")}
+                placeholder={t(
+                  "e.g. Traffic saturation / Overlapping mega-block",
+                  "उदा. यातायात अधिभार / अतिव्यापी ब्लॉक",
+                )}
                 value={rejectionReason}
                 onChange={(e) => setRejectionReason(e.target.value)}
               />

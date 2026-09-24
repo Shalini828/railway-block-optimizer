@@ -169,36 +169,86 @@ def resolve_section_id(cursor, section: str, corridor_id: str):
 
 @router.get("/", dependencies=[Depends(require_permission("requests.view"))])
 def get_block_requests(user: CurrentUser = Depends(get_current_user)):
-
     conn = get_connection()
     cursor = conn.cursor()
 
     try:
-        cursor.execute(
-            """
-            SELECT
-                request_id,
-                task_id,
-                team_id,
-                corridor_id,
-                requested_date,
-                requested_start,
-                requested_end,
-                requested_duration_min,
-                block_type,
-                request_status,
-                submitted_date,
-                created_by,
-                reviewed_by,
-                reviewed_at,
-                priority,
-                review_notes
-            FROM block_requests
-            ORDER BY
-                requested_date NULLS LAST,
-                requested_start NULLS LAST
-            """
-        )
+        if user.scope != "network":
+            clean_dept = user.dept.upper()
+
+            cursor.execute(
+                """
+                SELECT
+                    br.request_id,
+                    br.task_id,
+                    mt.asset_id,
+                    br.team_id,
+                    br.corridor_id,
+                    br.requested_date,
+                    br.requested_start,
+                    br.requested_end,
+                    br.requested_duration_min,
+                    br.block_type,
+                    br.request_status,
+                    br.submitted_date,
+                    br.requested_by,
+                    br.department_id,
+                    br.section_id,
+                    br.criticality,
+                    br.safety_risk,
+                    br.description,
+                    br.review_status,
+                    br.reviewed_by,
+                    br.reviewed_at,
+                    br.rejection_reason,
+                    br.created_at,
+                    br.updated_at
+                FROM block_requests br
+                LEFT JOIN maintenance_tasks mt
+                    ON mt.task_id = br.task_id
+                WHERE UPPER(COALESCE(br.department_id, '')) IN (%s, %s)
+                ORDER BY
+                    br.requested_date NULLS LAST,
+                    br.requested_start NULLS LAST
+                """,
+                (f"DEPT-{clean_dept}", clean_dept),
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT
+                    br.request_id,
+                    br.task_id,
+                    mt.asset_id,
+                    br.team_id,
+                    br.corridor_id,
+                    br.requested_date,
+                    br.requested_start,
+                    br.requested_end,
+                    br.requested_duration_min,
+                    br.block_type,
+                    br.request_status,
+                    br.submitted_date,
+                    br.requested_by,
+                    br.department_id,
+                    br.section_id,
+                    br.criticality,
+                    br.safety_risk,
+                    br.description,
+                    br.review_status,
+                    br.reviewed_by,
+                    br.reviewed_at,
+                    br.rejection_reason,
+                    br.created_at,
+                    br.updated_at
+                FROM block_requests br
+                LEFT JOIN maintenance_tasks mt
+                    ON mt.task_id = br.task_id
+                ORDER BY
+                    br.requested_date NULLS LAST,
+                    br.requested_start NULLS LAST
+                """
+            )
 
         rows = cursor.fetchall()
 
@@ -206,24 +256,28 @@ def get_block_requests(user: CurrentUser = Depends(get_current_user)):
             {
                 "request_id": row[0],
                 "task_id": row[1],
-                "team_id": row[2],
-                "corridor_id": row[3],
-                "requested_date": str(row[4]) if row[4] else None,
-                "requested_start": str(row[5]) if row[5] else None,
-                "requested_end": str(row[6]) if row[6] else None,
-                "requested_duration_min": row[7],
-                "block_type": row[8],
-                "request_status": row[9],
-                "submitted_date": str(row[10]) if row[10] else None,
-                "created_by": row[11],
-                "reviewed_by": row[12],
-                "reviewed_at": (
-                    row[13].isoformat()
-                    if row[13]
-                    else None
-                ),
-                "priority": row[14],
-                "review_notes": row[15],
+                "asset_id": row[2],
+                "team_id": row[3],
+                "corridor_id": row[4],
+                "requested_date": str(row[5]) if row[5] else None,
+                "requested_start": str(row[6]) if row[6] else None,
+                "requested_end": str(row[7]) if row[7] else None,
+                "requested_duration_min": row[8],
+                "block_type": row[9],
+                "request_status": row[10],
+                "submitted_date": str(row[11]) if row[11] else None,
+                "requested_by": row[12],
+                "department_id": row[13],
+                "section_id": row[14],
+                "criticality": row[15],
+                "safety_risk": row[16],
+                "description": row[17],
+                "review_status": row[18],
+                "reviewed_by": row[19],
+                "reviewed_at": row[20].isoformat() if row[20] else None,
+                "rejection_reason": row[21],
+                "created_at": row[22].isoformat() if row[22] else None,
+                "updated_at": row[23].isoformat() if row[23] else None,
             }
             for row in rows
         ]
@@ -519,9 +573,9 @@ def create_block_request(
         # =====================================================
 
         team_mapping = {
-           "TMS": "ENG-01",
-           "SMMS": "SNT-01",
-           "TDMS": "TRD-01",
+            "TMS": "TEAM-001",
+            "SMMS": "TEAM-002",
+            "TDMS": "TEAM-003",
         }
 
         team_id = team_mapping.get(department)
@@ -1155,53 +1209,75 @@ def create_block_request(
         # =====================================================
 
         cursor.execute(
-    """
-    INSERT INTO block_requests
-    (
-        request_id,
-        task_id,
-        team_id,
-        corridor_id,
-        requested_date,
-        requested_start,
-        requested_end,
-        requested_duration_min,
-        block_type,
-        request_status,
-        submitted_date,
-        created_by
-    )
-    VALUES
-    (
-        %s,
-        %s,
-        %s,
-        %s,
-        %s,
-        %s,
-        %s,
-        %s,
-        %s,
-        %s,
-        %s,
-        %s
-    )
-    """,
-    (
-        request_id,
-        task_id,
-        team_id,
-        corridor_id,
-        planning_date,
-        requested_start,
-        requested_end,
-        duration_minutes,
-        block_type,
-        "PENDING",
-        date.today(),
-        requested_by_user_id
-    )
-)
+            """
+            INSERT INTO block_requests
+            (
+                request_id,
+                task_id,
+                team_id,
+                corridor_id,
+                requested_date,
+                requested_start,
+                requested_end,
+                requested_duration_min,
+                block_type,
+                request_status,
+                submitted_date,
+                requested_by,
+                department_id,
+                section_id,
+                criticality,
+                safety_risk,
+                description,
+                review_status,
+                created_at,
+                updated_at
+            )
+            VALUES
+            (
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                CURRENT_TIMESTAMP,
+                CURRENT_TIMESTAMP
+            )
+            """,
+            (
+                request_id,
+                task_id,
+                team_id,
+                corridor_id,
+                planning_date,
+                requested_start,
+                requested_end,
+                duration_minutes,
+                block_type,
+                "PENDING",
+                date.today(),
+                requested_by_user_id,
+                department_id,
+                section_id,
+                criticality_level,
+                safety_risk,
+                description,
+                "PENDING",
+            )
+        )
 
 
         # =====================================================

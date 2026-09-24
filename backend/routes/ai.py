@@ -1015,7 +1015,10 @@ def get_block_intelligence(block_id: str):
             ob.train_impact_score,
             ob.optimization_score,
             ob.number_of_tasks,
-            ob.number_of_departments
+            ob.number_of_departments,
+            ob.ai_decision_confidence,
+            ob.ai_reasons,
+            ob.ai_explanation
         FROM optimized_blocks ob
         WHERE ob.block_id = %s
     """, (block_id,))
@@ -1040,6 +1043,9 @@ def get_block_intelligence(block_id: str):
             optimization_score,
             number_of_tasks,
             number_of_departments,
+                    ai_decision_confidence,
+                    ai_reasons,
+                    persisted_ai_explanation,
         ) = block
 
         # ==========================================
@@ -1423,6 +1429,9 @@ def get_block_intelligence(block_id: str):
             "train_conflicts": len(conflicts),
             "train_impact_score": float(train_impact_score or 0),
             "estimated_delay": int(assessment.get("estimated_delay_min", 0) or 0),
+                        "ai_decision_confidence": ai_decision_confidence or {},
+                        "ai_reasons": ai_reasons or [],
+                        "persisted_ai_explanation": persisted_ai_explanation or {},
             "tasks_analyzed": len(tasks),
             "trains_in_window": len(conflicts),
             "traffic_summary": {

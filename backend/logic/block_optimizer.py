@@ -20,6 +20,7 @@ sys.path.append(
     )
 )
 import psycopg
+from psycopg.types.json import Jsonb
 from dotenv import load_dotenv
 from db_config import DB_CONFIG
 from logic.traffic_intelligence import evaluate_window
@@ -3232,6 +3233,7 @@ for group in groups:
             "train_impact": train_impact_score,
             "estimated_delay": estimated_delay,
             "conflict_count": len(train_conflicts),
+            "ai_decision_confidence": ai_decision_confidence,
 
             "maintenance_priority": round(
                 maintenance_priority,
@@ -3411,12 +3413,15 @@ for block in optimized_blocks:
             utilization_percent,
             train_impact_score,
             estimated_delay_min,
+            ai_decision_confidence,
+            ai_reasons,
+            ai_explanation,
             optimization_score,
             number_of_tasks,
             number_of_departments
         )
         VALUES
-        (
+            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
             %s, %s, %s, %s, %s,
             %s, %s, %s, %s, %s, %s, %s
         )
@@ -3429,6 +3434,9 @@ for block in optimized_blocks:
         utilization_percent = EXCLUDED.utilization_percent,
         train_impact_score = EXCLUDED.train_impact_score,
         estimated_delay_min = EXCLUDED.estimated_delay_min,
+        ai_decision_confidence = EXCLUDED.ai_decision_confidence,
+        ai_reasons = EXCLUDED.ai_reasons,
+        ai_explanation = EXCLUDED.ai_explanation,
         optimization_score = EXCLUDED.optimization_score,
         number_of_tasks = EXCLUDED.number_of_tasks,
         number_of_departments = EXCLUDED.number_of_departments;
@@ -3446,6 +3454,9 @@ for block in optimized_blocks:
                 block.get("traffic_impact_score", 0)
             ),
             block.get("estimated_delay", 0),
+            Jsonb(block.get("ai_decision_confidence", {})),
+            Jsonb(block.get("ai_reasons", [])),
+            Jsonb(block.get("ai_explanation", {})),
             block["optimization_score"],
             len(block["tasks"]),
             department_count
