@@ -204,9 +204,18 @@ export default function MaintenanceTasksPage() {
   const overdueCount = tasks.filter(
     (t) => (t.overdue_days ?? 0) > 0 && t.task_status !== "COMPLETED",
   ).length;
-  const dueSoonCount = tasks.filter(
-    (t) => (t.overdue_days ?? 0) <= 0 && t.task_status !== "COMPLETED" && t.due_date,
-  ).length;
+  const dueSoonCount = tasks.filter((t) => {
+  if (!t.due_date || t.task_status === "COMPLETED") return false;
+
+  const today = new Date();
+  const dueDate = new Date(t.due_date);
+
+  const diffDays = Math.ceil(
+    (dueDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24),
+  );
+
+  return diffDays >= 0 && diffDays <= 7;
+}).length;
   const completedCount = tasks.filter((t) => t.task_status === "COMPLETED").length;
 
   // Filtered and sorted tasks
@@ -396,10 +405,16 @@ export default function MaintenanceTasksPage() {
                 <span className="text-[11px] text-slate-500 font-mono">CRIS IR-ABPS-M1</span>
               </div>
               <p className="text-xs text-slate-800 mt-1 leading-relaxed">
-                <strong>{criticalCount} critical safety defects</strong> and{" "}
-                <strong>{overdueCount} overdue maintenance items</strong> detected on the active corridor.
-                AI suggests grouping compatible TRD and Track works into shared 120-min block windows to save capacity.
-              </p>
+  <strong>{criticalCount} critical safety defects</strong> and{" "}
+  <strong>{overdueCount} overdue maintenance items</strong> detected in the active register.
+  {scope === "department" && role.dept === "TMS"
+    ? " AI identifies compatible Track maintenance activities for consolidated block planning."
+    : scope === "department" && role.dept === "SMMS"
+      ? " AI identifies compatible Signalling and S&T maintenance activities for consolidated block planning."
+      : scope === "department" && role.dept === "TDMS"
+        ? " AI identifies compatible Traction Distribution maintenance activities for consolidated block planning."
+        : " AI identifies compatible maintenance activities across departments for consolidated block planning."}
+</p>
             </div>
           </div>
           <Button
@@ -431,10 +446,17 @@ export default function MaintenanceTasksPage() {
               <Layers className="size-3.5 text-[#003366] shrink-0" /> Joint-block cluster potential: <strong>High</strong>
             </p>
             {tasks.length > 0 && tasks.find((t) => (t.priority_score ?? 0) >= 90) && (
-              <p className="text-slate-600 flex items-center gap-1.5 text-[11px]">
-                <ShieldAlert className="size-3 text-[#800000] shrink-0" /> Track fracture / OHE defect requires Section Controller block.
-              </p>
-            )}
+  <p className="text-slate-600 flex items-center gap-1.5 text-[11px]">
+    <ShieldAlert className="size-3 text-[#800000] shrink-0" />
+    {scope === "department" && role.dept === "TMS"
+      ? "High-priority Track maintenance requires Section Controller review."
+      : scope === "department" && role.dept === "SMMS"
+        ? "High-priority Signalling maintenance requires Section Controller review."
+        : scope === "department" && role.dept === "TDMS"
+          ? "High-priority Traction maintenance requires Section Controller review."
+          : "High-priority maintenance requires Section Controller review."}
+  </p>
+)}
           </div>
         </div>
       </div>

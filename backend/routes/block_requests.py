@@ -173,15 +173,49 @@ def get_block_requests(user: CurrentUser = Depends(get_current_user)):
     cursor = conn.cursor()
 
     try:
-        if user.scope != "network":
-            clean_dept = user.dept.upper()
+        if user.scope == "network":
+            cursor.execute(
+                """
+                SELECT
+                    br.request_id,
+                    br.task_id,
+                    br.team_id,
+                    br.corridor_id,
+                    br.requested_date,
+                    br.requested_start,
+                    br.requested_end,
+                    br.requested_duration_min,
+                    br.block_type,
+                    br.request_status,
+                    br.submitted_date,
+                    br.created_by,
+                    br.reviewed_by,
+                    br.reviewed_at,
+                    br.priority,
+                    br.review_notes
+                FROM block_requests br
+                ORDER BY
+                    br.requested_date NULLS LAST,
+                    br.requested_start NULLS LAST
+                """
+            )
+        else:
+            clean_dept = (user.dept or "").replace("DEPT-", "").upper()
+
+            if clean_dept == "TMS":
+                allowed_departments = ("ENGINEERING", "TMS")
+            elif clean_dept == "SMMS":
+                allowed_departments = ("S&T",)
+            elif clean_dept == "TDMS":
+                allowed_departments = ("TRD",)
+            else:
+                allowed_departments = (clean_dept,)
 
             cursor.execute(
                 """
                 SELECT
                     br.request_id,
                     br.task_id,
-                    mt.asset_id,
                     br.team_id,
                     br.corridor_id,
                     br.requested_date,
@@ -191,63 +225,20 @@ def get_block_requests(user: CurrentUser = Depends(get_current_user)):
                     br.block_type,
                     br.request_status,
                     br.submitted_date,
-                    br.requested_by,
-                    br.department_id,
-                    br.section_id,
-                    br.criticality,
-                    br.safety_risk,
-                    br.description,
-                    br.review_status,
+                    br.created_by,
                     br.reviewed_by,
                     br.reviewed_at,
-                    br.rejection_reason,
-                    br.created_at,
-                    br.updated_at
+                    br.priority,
+                    br.review_notes
                 FROM block_requests br
-                LEFT JOIN maintenance_tasks mt
-                    ON mt.task_id = br.task_id
-                WHERE UPPER(COALESCE(br.department_id, '')) IN (%s, %s)
+                JOIN maintenance_tasks mt
+                ON mt.task_id = br.task_id
+                WHERE UPPER(COALESCE(mt.department, '')) = ANY(%s)
                 ORDER BY
                     br.requested_date NULLS LAST,
                     br.requested_start NULLS LAST
                 """,
-                (f"DEPT-{clean_dept}", clean_dept),
-            )
-        else:
-            cursor.execute(
-                """
-                SELECT
-                    br.request_id,
-                    br.task_id,
-                    mt.asset_id,
-                    br.team_id,
-                    br.corridor_id,
-                    br.requested_date,
-                    br.requested_start,
-                    br.requested_end,
-                    br.requested_duration_min,
-                    br.block_type,
-                    br.request_status,
-                    br.submitted_date,
-                    br.requested_by,
-                    br.department_id,
-                    br.section_id,
-                    br.criticality,
-                    br.safety_risk,
-                    br.description,
-                    br.review_status,
-                    br.reviewed_by,
-                    br.reviewed_at,
-                    br.rejection_reason,
-                    br.created_at,
-                    br.updated_at
-                FROM block_requests br
-                LEFT JOIN maintenance_tasks mt
-                    ON mt.task_id = br.task_id
-                ORDER BY
-                    br.requested_date NULLS LAST,
-                    br.requested_start NULLS LAST
-                """
+                (list(allowed_departments),)
             )
 
         rows = cursor.fetchall()
@@ -312,10 +303,15 @@ def update_block_request(
     try:
         cursor.execute(
             """
-            SELECT request_id, request_status, department_id
-            FROM block_requests
-            WHERE request_id = %s
-            """,
+            SELECT
+        br.request_id,
+        br.request_status,
+        mt.department
+    FROM block_requests br
+    LEFT JOIN maintenance_tasks mt
+        ON mt.task_id = br.task_id
+    WHERE br.request_id = %s
+    """,
             (request_id,),
         )
         row = cursor.fetchone()
@@ -365,7 +361,6 @@ def update_block_request(
             params.append(criticality_to_level(crit))
 
         if updates:
-            updates.append("updated_at = CURRENT_TIMESTAMP")
             params.append(request_id)
             cursor.execute(
                 f"UPDATE block_requests SET {', '.join(updates)} WHERE request_id = %s",
@@ -405,10 +400,15 @@ def cancel_block_request(
     try:
         cursor.execute(
             """
-            SELECT request_id, request_status, department_id
-            FROM block_requests
-            WHERE request_id = %s
-            """,
+             SELECT
+        br.request_id,
+        br.request_status,
+        mt.department
+    FROM block_requests br
+    LEFT JOIN maintenance_tasks mt
+        ON mt.task_id = br.task_id
+    WHERE br.request_id = %s
+    """,
             (request_id,),
         )
         row = cursor.fetchone()
@@ -424,8 +424,18 @@ def cancel_block_request(
 
         if user.scope != "network":
             dept_id = (row[2] or "").upper()
-            user_dept = user.dept.upper()
-            if dept_id not in (f"DEPT-{user_dept}", user_dept):
+            user_dept = (user.dept or "").replace("DEPT-", "").upper()
+
+            if user_dept == "TMS":
+                allowed_departments = ("ENGINEERING", "TMS")
+            elif user_dept == "SMMS":
+                allowed_departments = ("S&T",)
+            elif user_dept == "TDMS":
+                allowed_departments = ("TRD",)
+            else:
+                allowed_departments = (user_dept,)
+
+            if dept_id not in allowed_departments:
                 raise RBACForbiddenException(
                     required=f"department.{user.dept}",
                     role=user.role_id,
@@ -435,7 +445,7 @@ def cancel_block_request(
         cursor.execute(
             """
             UPDATE block_requests
-            SET request_status = 'CANCELLED', updated_at = CURRENT_TIMESTAMP
+            SET request_status = 'CANCELLED'
             WHERE request_id = %s
             """,
             (request_id,),

@@ -321,7 +321,9 @@ function RequestsPage() {
     void loadRequests();
   }, []);
 
-  const activeReqs = backendReqs;
+  const activeReqs = backendReqs.filter(
+  (r) => (r.status ?? "").toUpperCase() !== "CANCELLED",
+);
 
   const filtered = useMemo(() => {
     return activeReqs.filter((r) => {
