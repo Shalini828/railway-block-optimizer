@@ -130,17 +130,23 @@ def get_dashboard_kpis(user: CurrentUser = Depends(get_current_user)):
         with conn.cursor() as cur:
 
             if user.scope != "network":
-                cur.execute("""
-                    SELECT
-                        COUNT(*) AS total_assets,
-                        AVG(health_score) AS average_health,
-                        COUNT(*) FILTER (
-                            WHERE LOWER(COALESCE(operational_status, ''))
-                            IN ('operational', 'active', 'available')
-                        ) AS operational_assets
-                    FROM public.assets
-                    WHERE UPPER(department) = %s
-                """, (user.dept.upper(),))
+             cur.execute("""
+                SELECT
+                    COUNT(DISTINCT a.asset_id) AS total_assets,
+                    AVG(a.health_score) AS average_health,
+                    COUNT(DISTINCT a.asset_id) FILTER (
+                        WHERE LOWER(COALESCE(a.operational_status, ''))
+                        IN ('operational', 'active', 'available')
+                    ) AS operational_assets
+                FROM public.assets a
+                WHERE UPPER(COALESCE(a.department, '')) = %s
+                OR EXISTS (
+                        SELECT 1
+                        FROM public.maintenance_tasks mt
+                        WHERE mt.asset_id = a.asset_id
+                        AND UPPER(COALESCE(mt.department, '')) = %s
+                )
+            """, (user.dept.upper(), user.dept.upper()))
             else:
                 cur.execute("""
                     SELECT
