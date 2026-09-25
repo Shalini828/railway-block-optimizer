@@ -128,7 +128,9 @@ function mapBackendDept(value: unknown): Dept {
 }
 
 function mapBackendRequisition(item: any): Requisition {
-  const minutes = Number(item?.requested_duration_min ?? 0);
+  const minutes = Number(
+    item?.requested_duration_min ?? item?.duration_min ?? item?.duration_minutes ?? 0,
+  );
   const criticality =
     item?.criticality === "Medium" ? "Medium" : item?.criticality === "Low" ? "Low" : "High";
   const daysOverdue = Number(item?.days_overdue ?? item?.overdue_days ?? 0);
@@ -154,7 +156,7 @@ function mapBackendRequisition(item: any): Requisition {
     section: String(item?.corridor_id ?? item?.section_id ?? "—"),
     line: String(item?.line ?? item?.track_line ?? "—"),
     chainage: String(item?.chainage ?? "—"),
-    duration: minutes > 0 ? minutes / 60 : 1,
+    duration: minutes > 0 ? Math.round((minutes / 60) * 100) / 100 : 0,
     crew: Number(item?.crew ?? item?.crew_strength ?? 0),
     criticality: criticality as Requisition["criticality"],
     daysOverdue,
@@ -226,7 +228,9 @@ function RequestsPage() {
   }
 
   function mapBackendRequisition(item: any): Requisition {
-    const minutes = Number(item?.requested_duration_min ?? 0);
+    const minutes = Number(
+      item?.requested_duration_min ?? item?.duration_min ?? item?.duration_minutes ?? 0,
+    );
 
     const criticality =
       item?.criticality === "Medium" ? "Medium" : item?.criticality === "Low" ? "Low" : "High";
@@ -271,7 +275,7 @@ function RequestsPage() {
 
       chainage: String(item?.chainage ?? "—"),
 
-      duration: minutes > 0 ? minutes / 60 : 1,
+      duration: minutes > 0 ? Math.round((minutes / 60) * 100) / 100 : 0,
 
       crew: Number(item?.crew ?? item?.crew_strength ?? 0),
 
@@ -473,6 +477,33 @@ function RequestsPage() {
       toast.success(t(`Requisition ${req.id} cancelled.`, `मांग पत्र ${req.id} रद्द कर दिया गया।`));
     } catch (e: any) {
       toast.error(e.message || "Failed to cancel requisition");
+    }
+  };
+
+  const handleApprove = async (req: Requisition) => {
+    if (!confirm(`Approve requisition ${req.id}?`)) return;
+
+    try {
+      const targetId = req.backendId || req.id;
+
+      const res = await apiFetch(`/block-requests/${targetId}/approve`, {
+        method: "POST",
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.detail || "Failed to approve");
+      }
+
+      await loadRequests();
+
+      toast.success(
+        t(`Requisition ${req.id} approved.`, `मांग पत्र ${req.id} स्वीकृत कर दिया गया।`),
+      );
+
+      setDetail(null);
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to approve requisition");
     }
   };
 
@@ -1269,35 +1300,6 @@ function RequestsPage() {
                               >
                                 {t("Details", "विवरण")} <ArrowRight className="ml-1 size-3" />
                               </Button>
-                              {r.status === "Pending AI Scheduling" && can("requests.cancel") && (
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="h-7 px-2 text-[11px] font-bold text-red-600 border-red-200 hover:bg-red-50 dark:border-red-900/50 dark:text-red-400 dark:hover:bg-red-950/40"
-                                  onClick={() => handleCancel(r)}
-                                  title={t(
-                                    "Cancel pending requisition",
-                                    "लंबित मांग पत्र रद्द करें",
-                                  )}
-                                >
-                                  <Ban className="mr-1 size-3" />
-                                  {t("Cancel", "रद्द")}
-                                </Button>
-                              )}
-                              {r.status === "Pending AI Scheduling" && can("requests.reject") && (
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="h-7 px-2 text-[11px] font-bold text-amber-700 border-amber-200 hover:bg-amber-50 dark:border-amber-900/50 dark:text-amber-400 dark:hover:bg-amber-950/40"
-                                  onClick={() => setRejectingReq(r)}
-                                  title={t(
-                                    "Reject requisition with reason",
-                                    "कारण सहित मांग पत्र अस्वीकार करें",
-                                  )}
-                                >
-                                  {t("Reject", "अस्वीकार")}
-                                </Button>
-                              )}
                             </div>
                           </TableCell>
                         </TableRow>
@@ -1352,71 +1354,170 @@ function RequestsPage() {
           </DialogHeader>
 
           {detail && (
-            <div className="p-4 space-y-3 text-xs">
-              <div className="border border-border bg-slate-50 dark:bg-slate-900 p-2.5 rounded-[2px]">
-                <p className="text-[10px] font-bold uppercase text-slate-500">Nature of Work</p>
-                <p className="font-semibold text-slate-800 dark:text-slate-200 mt-0.5">
-                  {detail.work}
-                </p>
+            <div className="p-4 space-y-3 text-xs max-h-[70vh] overflow-y-auto">
+              {/* NATURE OF WORK */}
+              <div className="border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 p-3 rounded-md">
+                <div className="flex items-center justify-between mb-1">
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">
+                    Nature of Work
+                  </p>
+
+                  <span className="px-2 py-1 rounded border text-[10px] font-bold uppercase">
+                    {detail.blockType}
+                  </span>
+                </div>
+
+                <p className="font-semibold text-slate-800 dark:text-slate-200">{detail.work}</p>
               </div>
 
-              <div className="grid grid-cols-2 gap-2.5 border border-border p-3 rounded-[2px]">
-                <div>
-                  <span className="text-[10px] font-bold uppercase text-slate-500">Section</span>
-                  <p className="font-semibold">{detail.section}</p>
+              {/* REQUEST DETAILS */}
+              <div className="border border-slate-300 dark:border-slate-700 rounded-md overflow-hidden">
+                <div className="px-3 py-2 bg-slate-100 dark:bg-slate-800 border-b border-slate-300 dark:border-slate-700">
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-slate-600 dark:text-slate-300">
+                    Request Details
+                  </p>
                 </div>
-                <div>
-                  <span className="text-[10px] font-bold uppercase text-slate-500">Line</span>
-                  <p className="font-semibold">{detail.line}</p>
-                </div>
-                <div className="col-span-2">
-                  <span className="text-[10px] font-bold uppercase text-slate-500">Chainage</span>
-                  <p className="font-mono font-semibold">{detail.chainage}</p>
-                </div>
-                <div>
-                  <span className="text-[10px] font-bold uppercase text-slate-500">Block Type</span>
-                  <p className="font-semibold">{detail.blockType}</p>
-                </div>
-                <div>
-                  <span className="text-[10px] font-bold uppercase text-slate-500">Duration</span>
-                  <p className="font-mono font-semibold">{detail.duration} hrs</p>
-                </div>
-                <div>
-                  <span className="text-[10px] font-bold uppercase text-slate-500">
-                    Crew Strength
-                  </span>
-                  <p className="font-semibold">{detail.crew} staff</p>
-                </div>
-                <div>
-                  <span className="text-[10px] font-bold uppercase text-slate-500">
-                    Criticality
-                  </span>
-                  <p className="font-semibold">{detail.criticality}</p>
-                </div>
-                <div>
-                  <span className="text-[10px] font-bold uppercase text-slate-500">
-                    Days Overdue
-                  </span>
-                  <p className="font-semibold">{detail.daysOverdue} days</p>
-                </div>
-                <div>
-                  <span className="text-[10px] font-bold uppercase text-slate-500">TSR Risk</span>
-                  <p className="font-semibold">{detail.tsrRisk ? "Imposed (Yes)" : "No"}</p>
-                </div>
-                <div className="col-span-2">
-                  <span className="text-[10px] font-bold uppercase text-slate-500">Filed By</span>
-                  <p className="font-semibold">{detail.requestedBy}</p>
-                </div>
-                {detail.rejectionReason && (
-                  <div className="col-span-2 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 p-2 rounded-[2px]">
-                    <span className="text-[10px] font-bold uppercase text-red-700 dark:text-red-400">
-                      Rejection Reason
+
+                <div className="grid grid-cols-2 gap-x-6 gap-y-4 p-3">
+                  <div>
+                    <span className="text-[10px] font-bold uppercase text-slate-500">Section</span>
+                    <p className="font-semibold mt-0.5">{detail.section || "—"}</p>
+                  </div>
+
+                  <div>
+                    <span className="text-[10px] font-bold uppercase text-slate-500">Line</span>
+                    <p className="font-semibold mt-0.5">{detail.line || "—"}</p>
+                  </div>
+
+                  <div className="col-span-2">
+                    <span className="text-[10px] font-bold uppercase text-slate-500">Chainage</span>
+                    <p className="font-mono font-semibold mt-0.5">{detail.chainage || "—"}</p>
+                  </div>
+
+                  <div>
+                    <span className="text-[10px] font-bold uppercase text-slate-500">
+                      Block Type
                     </span>
-                    <p className="font-semibold text-red-900 dark:text-red-200 text-xs mt-0.5">
-                      {detail.rejectionReason}
+                    <p className="font-semibold mt-0.5">{detail.blockType || "—"}</p>
+                  </div>
+
+                  <div>
+                    <span className="text-[10px] font-bold uppercase text-slate-500">Duration</span>
+                    <p className="font-mono font-bold text-blue-700 dark:text-blue-400 mt-0.5">
+                      {Number(detail.duration).toFixed(2)} hrs
                     </p>
                   </div>
-                )}
+
+                  <div>
+                    <span className="text-[10px] font-bold uppercase text-slate-500">
+                      Crew Strength
+                    </span>
+                    <p className="font-semibold mt-0.5">{detail.crew || 0} staff</p>
+                  </div>
+
+                  <div>
+                    <span className="text-[10px] font-bold uppercase text-slate-500">
+                      Criticality
+                    </span>
+                    <p className="font-semibold mt-0.5">{detail.criticality || "—"}</p>
+                  </div>
+
+                  <div>
+                    <span className="text-[10px] font-bold uppercase text-slate-500">
+                      Days Overdue
+                    </span>
+                    <p className="font-semibold mt-0.5">{detail.daysOverdue || 0} days</p>
+                  </div>
+
+                  <div>
+                    <span className="text-[10px] font-bold uppercase text-slate-500">TSR Risk</span>
+                    <p className="font-semibold mt-0.5">
+                      {detail.tsrRisk ? "Imposed (Yes)" : "No"}
+                    </p>
+                  </div>
+
+                  <div className="col-span-2">
+                    <span className="text-[10px] font-bold uppercase text-slate-500">Filed By</span>
+                    <p className="font-semibold mt-0.5">{detail.requestedBy || "—"}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* RISK SUMMARY */}
+              <div className="border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 rounded-md p-3">
+                <p className="text-[10px] font-bold uppercase tracking-wide text-amber-700 dark:text-amber-400 mb-2">
+                  Risk / Assessment
+                </p>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <span className="text-[10px] font-bold uppercase text-slate-500">
+                      Criticality
+                    </span>
+                    <p className="font-bold mt-0.5">{detail.criticality || "—"}</p>
+                  </div>
+
+                  <div>
+                    <span className="text-[10px] font-bold uppercase text-slate-500">TSR Risk</span>
+                    <p className="font-bold mt-0.5">{detail.tsrRisk ? "Imposed" : "No"}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* REJECTION REASON */}
+              {detail.rejectionReason && (
+                <div className="border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950/40 rounded-md p-3">
+                  <span className="text-[10px] font-bold uppercase text-red-700 dark:text-red-400">
+                    Rejection Reason
+                  </span>
+
+                  <p className="font-semibold text-red-900 dark:text-red-200 mt-1">
+                    {detail.rejectionReason}
+                  </p>
+                </div>
+              )}
+
+              {/* ACTIONS */}
+              <div className="border-t border-slate-300 dark:border-slate-700 pt-3 mt-2">
+                <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500 mb-2">
+                  Officer Actions
+                </p>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <Button
+                    size="sm"
+                    className="font-bold bg-green-600 hover:bg-green-700 text-white"
+                    onClick={() => handleApprove(detail)}
+                  >
+                    ✓ APPROVE / OPTIMIZE
+                  </Button>
+
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="font-bold border-blue-300 text-blue-700 hover:bg-blue-50"
+                  >
+                    ↻ REWORK
+                  </Button>
+
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="font-bold border-red-300 text-red-600 hover:bg-red-50"
+                    onClick={() => handleCancel(detail)}
+                  >
+                    CANCEL
+                  </Button>
+
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="font-bold border-amber-300 text-amber-700 hover:bg-amber-50"
+                    onClick={() => setRejectingReq(detail)}
+                  >
+                    REJECT
+                  </Button>
+                </div>
               </div>
             </div>
           )}

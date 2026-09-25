@@ -74,6 +74,7 @@ interface Emergency {
   severity: "CRITICAL" | "HIGH" | "MEDIUM";
   startedAt: Date;
   status: string;
+  resolvedAt?: Date | null;
   controlNotified: boolean;
   trafficProtectionStatus: string;
 }
@@ -132,19 +133,13 @@ function EmergencyPage() {
 
   const allowedEmergencyTypes = useMemo(() => {
     if (role.id === "engineering") {
-      return EMERGENCY_TYPES.filter((t) =>
-        ["Track", "Engineering", "General"].includes(t.group),
-      );
+      return EMERGENCY_TYPES.filter((t) => ["Track", "Engineering", "General"].includes(t.group));
     }
     if (role.id === "traction") {
-      return EMERGENCY_TYPES.filter((t) =>
-        ["Traction", "General"].includes(t.group),
-      );
+      return EMERGENCY_TYPES.filter((t) => ["Traction", "General"].includes(t.group));
     }
     if (role.id === "signal") {
-      return EMERGENCY_TYPES.filter((t) =>
-        ["S&T", "General"].includes(t.group),
-      );
+      return EMERGENCY_TYPES.filter((t) => ["S&T", "General"].includes(t.group));
     }
     return EMERGENCY_TYPES;
   }, [role.id]);
@@ -160,30 +155,84 @@ function EmergencyPage() {
   const fetchEmergencies = async () => {
     try {
       setIsLoading(true);
-      const response = await apiFetch("/emergency/");
-      if (!response.ok) {
-        throw new Error(`Failed to fetch emergency incidents (${response.status})`);
-      }
-      const data = await response.json();
-      if (!data.emergencies) {
-        throw new Error("Invalid emergency API response");
+
+      // Use the shared API client so authentication/base URL handling stays
+      // consistent with the rest of the application.
+      const response = await apiFetch("/emergency/", {
+        method: "GET",
+      });
+
+      const rawText = await response.text();
+
+      console.log("EMERGENCY GET STATUS:", response.status);
+      console.log("EMERGENCY GET RESPONSE:", rawText);
+
+      let data: any;
+
+      try {
+        data = rawText ? JSON.parse(rawText) : null;
+      } catch {
+        throw new Error(`Backend returned invalid JSON (${response.status}): ${rawText}`);
       }
 
-      const mappedEmergencies: Emergency[] = data.emergencies.map((item: any) => ({
-        id: item.id,
-        type: item.type,
-        section: item.section,
-        line: item.line,
-        severity: item.severity,
-        startedAt: new Date(item.started_at),
-        status: item.status,
-        controlNotified: item.control_notified,
-        trafficProtectionStatus: item.traffic_protection_status,
-      }));
+      if (!response.ok) {
+        throw new Error(
+          data?.detail || data?.message || `Emergency API failed with status ${response.status}`,
+        );
+      }
+
+      // The emergency backend has returned more than one valid envelope
+      // shape during development. Accept all of them so the UI stays
+      // compatible with the actual /emergency/ response.
+      const emergencyRows = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.emergencies)
+          ? data.emergencies
+          : Array.isArray(data?.data)
+            ? data.data
+            : Array.isArray(data?.items)
+              ? data.items
+              : Array.isArray(data?.results)
+                ? data.results
+                : [];
+
+      const mappedEmergencies: Emergency[] = emergencyRows
+        .map((item: any, index: number) => {
+          const id =
+            item?.id ??
+            item?.incident_id ??
+            item?.emergency_id ??
+            item?.incidentId ??
+            `EMG-${index + 1}`;
+
+          const type = item?.type ?? item?.emergency_type ?? item?.incident_type ?? "Unknown Hazard";
+          const startedAtValue = item?.started_at ?? item?.created_at ?? item?.startedAt;
+
+          return {
+            id: String(id),
+            type: String(type),
+            section: String(item?.section ?? "Unknown Section"),
+            line: String(item?.line ?? "Main Line"),
+            severity: (item?.severity ?? "HIGH") as Emergency["severity"],
+            startedAt: startedAtValue ? new Date(startedAtValue) : new Date(),
+            status: String(item?.status ?? "ACTIVE").toUpperCase(),
+            resolvedAt: (item?.resolved_at ?? item?.resolvedAt)
+              ? new Date(item?.resolved_at ?? item?.resolvedAt)
+              : null,
+            controlNotified: Boolean(item?.control_notified ?? item?.controlNotified),
+            trafficProtectionStatus: String(
+              item?.traffic_protection_status ??
+                item?.trafficProtectionStatus ??
+                "PENDING",
+            ),
+          };
+        })
+        .filter((item: Emergency) => !Number.isNaN(item.startedAt.getTime()));
 
       setEmergencies(mappedEmergencies);
 
       const generatedActivity: ActivityEvent[] = [];
+
       mappedEmergencies.forEach((emergency) => {
         generatedActivity.push({
           id: `${emergency.id}-reported`,
@@ -214,14 +263,30 @@ function EmergencyPage() {
           text: "Traffic protection status recorded",
           detail: emergency.trafficProtectionStatus,
         });
+
+        if (["RESOLVED", "CLOSED", "CLEARED"].includes(String(emergency.status).toUpperCase())) {
+          const resolvedTime =
+            emergency.resolvedAt && !Number.isNaN(emergency.resolvedAt.getTime())
+              ? emergency.resolvedAt
+              : new Date(emergency.startedAt.getTime() + 240000);
+
+          generatedActivity.push({
+            id: `${emergency.id}-resolved`,
+            time: resolvedTime,
+            text: "Emergency block resolved",
+            detail: emergency.id,
+          });
+        }
       });
 
       generatedActivity.sort((a, b) => b.time.getTime() - a.time.getTime());
+
       setActivity(generatedActivity);
     } catch (error) {
       console.error("Emergency API error:", error);
+
       toast.error("Unable to load emergency incident registry", {
-        description: "Please check backend connectivity.",
+        description: error instanceof Error ? error.message : "Unknown backend error",
       });
     } finally {
       setIsLoading(false);
@@ -232,9 +297,18 @@ function EmergencyPage() {
     fetchEmergencies();
   }, []);
 
-  const criticalCount = emergencies.filter((e) => e.severity === "CRITICAL").length;
-  const notifiedCount = emergencies.filter((e) => e.controlNotified).length;
-  const protectedCount = emergencies.filter((e) => e.trafficProtectionStatus === "CONFIRMED").length;
+  const activeEmergencies = emergencies.filter(
+    (e) => !["RESOLVED", "CLOSED", "CLEARED"].includes(String(e.status).toUpperCase()),
+  );
+  const resolvedEmergencies = emergencies.filter(
+    (e) => ["RESOLVED", "CLOSED", "CLEARED"].includes(String(e.status).toUpperCase()),
+  );
+
+  const criticalCount = activeEmergencies.filter((e) => e.severity === "CRITICAL").length;
+  const notifiedCount = activeEmergencies.filter((e) => e.controlNotified).length;
+  const protectedCount = activeEmergencies.filter(
+    (e) => e.trafficProtectionStatus === "CONFIRMED",
+  ).length;
 
   const getSeverityBadge = (severity: string) => {
     switch (severity) {
@@ -293,30 +367,52 @@ function EmergencyPage() {
           emergency_type: newType,
           section: newSection,
           line: "Main Line",
-          severity: severity,
+          severity,
         }),
       });
 
-      const data = await response.json();
+      const rawText = await response.text();
 
-      if (!response.ok) {
-        throw new Error(data.detail || "Failed to create emergency incident");
+      console.log("EMERGENCY CREATE STATUS:", response.status);
+      console.log("EMERGENCY CREATE RESPONSE:", rawText);
+
+      let data: any = null;
+      try {
+        data = rawText ? JSON.parse(rawText) : null;
+      } catch {
+        throw new Error(`Invalid backend response (${response.status})`);
       }
 
-      const createdIncident = data.emergency;
+      if (!response.ok) {
+        throw new Error(
+          data?.detail || data?.message || `Emergency creation failed (${response.status})`,
+        );
+      }
+
+      const incidentId =
+        data?.emergency?.id ??
+        data?.emergency?.incident_id ??
+        data?.incident?.id ??
+        data?.incident?.incident_id ??
+        data?.incident_id ??
+        data?.id ??
+        data?.emergency_id ??
+        "New emergency";
+
       setNewSection("");
       setNewType("");
 
+      // Read the registry again after the POST so the UI reflects PostgreSQL.
       await fetchEmergencies();
 
-      toast.success("Emergency incident recorded in official register", {
-        description: `${createdIncident.id} created for ${createdIncident.section}.`,
+      toast.success("Emergency block created successfully", {
+        description: `${incidentId} has been recorded in the emergency register.`,
       });
     } catch (error) {
       console.error("Create emergency error:", error);
+
       toast.error("Emergency creation failed", {
-        description:
-          error instanceof Error ? error.message : "Unable to connect to backend.",
+        description: error instanceof Error ? error.message : "Backend connection failed.",
       });
     } finally {
       setIsInitiating(false);
@@ -327,18 +423,42 @@ function EmergencyPage() {
     if (!resolveModal) return;
 
     const blockToResolve = emergencies.find((e) => e.id === resolveModal);
-    if (!blockToResolve) return;
+
+    if (!blockToResolve) {
+      toast.error("Resolution failed", {
+        description: "Emergency incident could not be found.",
+      });
+      return;
+    }
 
     try {
-      const response = await apiFetch(`/emergency/${resolveModal}/resolve`, {
-        method: "PATCH",
+      setIsInitiating(true);
+
+      const response = await apiFetch(`/emergency/${encodeURIComponent(resolveModal)}/resolve`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          confirmed: true,
+        }),
       });
 
       const data = await response.json();
 
+      console.log("RESOLVE EMERGENCY RESPONSE:", data);
+
       if (!response.ok) {
-        throw new Error(data.detail || "Failed to resolve emergency");
+        throw new Error(data?.detail || data?.message || "Failed to resolve emergency");
       }
+
+      setEmergencies((current) =>
+        current.map((emergency) =>
+          emergency.id === resolveModal
+            ? { ...emergency, status: "RESOLVED", resolvedAt: new Date() }
+            : emergency,
+        ),
+      );
 
       setResolveModal(null);
       setDetailsDrawer(null);
@@ -350,10 +470,12 @@ function EmergencyPage() {
       });
     } catch (error) {
       console.error("Resolve emergency error:", error);
+
       toast.error("Resolution failed", {
-        description:
-          error instanceof Error ? error.message : "Unable to connect to backend.",
+        description: error instanceof Error ? error.message : "Unable to connect to backend.",
       });
+    } finally {
+      setIsInitiating(false);
     }
   };
 
@@ -370,13 +492,9 @@ function EmergencyPage() {
     });
   };
 
-  const activeDrawerBlock = detailsDrawer
-    ? emergencies.find((e) => e.id === detailsDrawer)
-    : null;
+  const activeDrawerBlock = detailsDrawer ? emergencies.find((e) => e.id === detailsDrawer) : null;
 
-  const activeResolveBlock = resolveModal
-    ? emergencies.find((e) => e.id === resolveModal)
-    : null;
+  const activeResolveBlock = resolveModal ? emergencies.find((e) => e.id === resolveModal) : null;
 
   return (
     <div className="space-y-6 pb-12">
@@ -393,11 +511,17 @@ function EmergencyPage() {
                   FORM IR-SOS-EMERG-2025
                 </span>
                 <span className="text-xs text-white/80 font-serif">
-                  {t("RAILWAY BOARD • EMERGENCY BLOCK & SAFETY CONTROL DESK", "रेलवे बोर्ड • आपातकालीन ब्लॉक एवं संरक्षा नियंत्रण कक्ष")}
+                  {t(
+                    "RAILWAY BOARD • EMERGENCY BLOCK & SAFETY CONTROL DESK",
+                    "रेलवे बोर्ड • आपातकालीन ब्लॉक एवं संरक्षा नियंत्रण कक्ष",
+                  )}
                 </span>
               </div>
               <h1 className="text-lg md:text-xl font-bold font-serif tracking-tight text-white mt-0.5">
-                {t("Emergency Block (SOS) & Caution Order (TSR) Command Center", "आपातकालीन ब्लॉक (एसओएस) एवं संरक्षा नियंत्रण केंद्र")}
+                {t(
+                  "Emergency Block (SOS) & Caution Order (TSR) Command Center",
+                  "आपातकालीन ब्लॉक (एसओएस) एवं संरक्षा नियंत्रण केंद्र",
+                )}
               </h1>
             </div>
           </div>
@@ -417,7 +541,8 @@ function EmergencyPage() {
         </div>
         <div className="p-3 bg-red-50/60 border-t border-red-200 text-xs text-slate-700 flex flex-wrap items-center justify-between gap-2">
           <p>
-            Critical protocol interface for rail fracture, OHE snap, signalling blackout, and track obstruction. Immediately advises Section Controller and alerts Control Office (COA).
+            Critical protocol interface for rail fracture, OHE snap, signalling blackout, and track
+            obstruction. Immediately advises Section Controller and alerts Control Office (COA).
           </p>
           <div className="flex items-center gap-2 text-[11px] font-mono font-bold text-[#800000]">
             <Building2 className="size-3.5 text-[#800000]" />
@@ -444,9 +569,7 @@ function EmergencyPage() {
 
         <div
           className={`rounded-[2px] border p-3.5 shadow-sm flex items-center justify-between ${
-            criticalCount > 0
-              ? "border-[#800000]/40 bg-red-50/50"
-              : "border-slate-300 bg-white"
+            criticalCount > 0 ? "border-[#800000]/40 bg-red-50/50" : "border-slate-300 bg-white"
           }`}
         >
           <div>
@@ -571,18 +694,22 @@ function EmergencyPage() {
                   <SelectValue placeholder="Select emergency type..." />
                 </SelectTrigger>
                 <SelectContent className="rounded-[2px] border-slate-300">
-                  {Array.from(new Set(allowedEmergencyTypes.map((type) => type.group))).map((group) => (
-                    <div key={group}>
-                      <div className="px-2 py-1 text-[10px] font-bold text-slate-500 uppercase tracking-wider bg-slate-100">
-                        {group}
+                  {Array.from(new Set(allowedEmergencyTypes.map((type) => type.group))).map(
+                    (group) => (
+                      <div key={group}>
+                        <div className="px-2 py-1 text-[10px] font-bold text-slate-500 uppercase tracking-wider bg-slate-100">
+                          {group}
+                        </div>
+                        {allowedEmergencyTypes
+                          .filter((type) => type.group === group)
+                          .map((type) => (
+                            <SelectItem key={type.value} value={type.value} className="text-xs">
+                              {type.value}
+                            </SelectItem>
+                          ))}
                       </div>
-                      {allowedEmergencyTypes.filter((type) => type.group === group).map((type) => (
-                        <SelectItem key={type.value} value={type.value} className="text-xs">
-                          {type.value}
-                        </SelectItem>
-                      ))}
-                    </div>
-                  ))}
+                    ),
+                  )}
                 </SelectContent>
               </Select>
             </div>
@@ -619,7 +746,9 @@ function EmergencyPage() {
           <div className="mt-4 flex items-center gap-2 text-xs text-[#800000] bg-red-50 p-2.5 rounded-[2px] border border-red-200">
             <Info className="size-4 shrink-0 text-[#800000]" />
             <p>
-              <strong>Indian Railways Safety Note:</strong> Immediate emergency blocking generates high-priority caution orders in the Section Controller console. Physical protection by detonators/red banner flags must be executed as per G&SR Rule 3.68.
+              <strong>Indian Railways Safety Note:</strong> Immediate emergency blocking generates
+              high-priority caution orders in the Section Controller console. Physical protection by
+              detonators/red banner flags must be executed as per G&SR Rule 3.68.
             </p>
           </div>
         </div>
@@ -633,30 +762,32 @@ function EmergencyPage() {
             <div className="flex items-center gap-2">
               <Activity className="size-4 text-[#003366]" />
               <span className="text-xs font-bold uppercase tracking-wider text-[#003366]">
-                ACTIVE EMERGENCY BLOCKS & TSR ADVISORIES ({emergencies.length})
+                ACTIVE EMERGENCY BLOCKS & TSR ADVISORIES ({activeEmergencies.length})
               </span>
             </div>
-            <span className="text-[10px] font-mono text-slate-500">
-              REAL-TIME DATABASE FEED
-            </span>
+            <span className="text-[10px] font-mono text-slate-500">REAL-TIME DATABASE FEED</span>
           </div>
 
           {isLoading ? (
             <div className="p-8 text-center border border-slate-300 rounded-[2px] bg-white text-slate-500">
               <Activity className="size-8 mx-auto mb-2 text-[#003366] animate-pulse" />
-              <p className="font-bold text-slate-800 text-xs">Loading incident register from PostgreSQL...</p>
+              <p className="font-bold text-slate-800 text-xs">
+                Loading incident register from PostgreSQL...
+              </p>
             </div>
-          ) : emergencies.length === 0 ? (
+          ) : activeEmergencies.length === 0 ? (
             <div className="p-8 text-center border border-slate-300 rounded-[2px] bg-white text-slate-600">
               <ShieldCheck className="size-8 mx-auto mb-2 text-[#137547]" />
-              <p className="font-bold text-slate-800 text-sm">No Active Emergency Blocks on Corridor</p>
+              <p className="font-bold text-slate-800 text-sm">
+                No Active Emergency Blocks on Corridor
+              </p>
               <p className="text-xs text-slate-500 mt-1">
                 Normal traffic operation is currently maintained across all monitored sections.
               </p>
             </div>
           ) : (
             <div className="grid gap-3 sm:grid-cols-2">
-              {emergencies.map((emergency) => (
+              {activeEmergencies.map((emergency) => (
                 <div
                   key={emergency.id}
                   className={`rounded-[2px] border border-slate-300 bg-white shadow-sm overflow-hidden flex flex-col justify-between border-t-4 ${
@@ -681,7 +812,10 @@ function EmergencyPage() {
                         {emergency.id}
                       </span>
                     </div>
-                    <h3 className="text-xs font-bold text-slate-900 truncate" title={emergency.type}>
+                    <h3
+                      className="text-xs font-bold text-slate-900 truncate"
+                      title={emergency.type}
+                    >
                       {emergency.type}
                     </h3>
                     <p className="text-[11px] text-slate-600 flex items-center gap-1 mt-0.5 truncate">
@@ -692,21 +826,27 @@ function EmergencyPage() {
 
                   <div className="p-3 space-y-2 text-xs">
                     <div className="flex justify-between items-center text-[11px]">
-                      <span className="text-slate-500 uppercase font-bold text-[9px]">Logged Time</span>
+                      <span className="text-slate-500 uppercase font-bold text-[9px]">
+                        Logged Time
+                      </span>
                       <span className="font-medium font-mono text-slate-800 flex items-center gap-1">
                         <Clock className="size-3 text-slate-400" />
                         {getTimeAgo(emergency.startedAt)}
                       </span>
                     </div>
                     <div className="flex justify-between items-center text-[11px]">
-                      <span className="text-slate-500 uppercase font-bold text-[9px]">Section Control</span>
+                      <span className="text-slate-500 uppercase font-bold text-[9px]">
+                        Section Control
+                      </span>
                       <span className="font-bold font-mono text-[#137547] flex items-center gap-1">
                         <RadioTower className="size-3" />
                         {emergency.controlNotified ? "NOTIFIED" : "PENDING"}
                       </span>
                     </div>
                     <div className="flex justify-between items-center text-[11px]">
-                      <span className="text-slate-500 uppercase font-bold text-[9px]">Protection</span>
+                      <span className="text-slate-500 uppercase font-bold text-[9px]">
+                        Protection
+                      </span>
                       <span className="font-bold font-mono text-[#003366] flex items-center gap-1">
                         <ShieldCheck className="size-3" />
                         {emergency.trafficProtectionStatus}
@@ -736,6 +876,74 @@ function EmergencyPage() {
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+
+          {resolvedEmergencies.length > 0 && (
+            <div className="space-y-3 pt-2">
+              <div className="bg-emerald-50 px-4 py-2.5 border border-emerald-200 rounded-[2px] flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="size-4 text-[#137547]" />
+                  <span className="text-xs font-bold uppercase tracking-wider text-[#137547]">
+                    RECENTLY RESOLVED BLOCKS ({resolvedEmergencies.length})
+                  </span>
+                </div>
+                <span className="text-[10px] font-mono text-[#137547]">CLEARANCE RECORDED</span>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                {resolvedEmergencies.map((emergency) => (
+                  <div
+                    key={`resolved-${emergency.id}`}
+                    className="rounded-[2px] border border-emerald-200 bg-white shadow-sm overflow-hidden flex flex-col justify-between border-t-4 border-t-[#137547]"
+                  >
+                    <div className="bg-emerald-50/60 p-3 border-b border-emerald-100">
+                      <div className="flex items-center justify-between mb-1">
+                        <Badge
+                          variant="outline"
+                          className="text-[9px] font-bold uppercase tracking-wider rounded-[2px] bg-emerald-50 text-[#137547] border-emerald-300"
+                        >
+                          RESOLVED
+                        </Badge>
+                        <span className="text-[10px] font-mono font-bold text-slate-600">{emergency.id}</span>
+                      </div>
+                      <h3 className="text-xs font-bold text-slate-900 truncate" title={emergency.type}>
+                        {emergency.type}
+                      </h3>
+                      <p className="text-[11px] text-slate-600 flex items-center gap-1 mt-0.5 truncate">
+                        <Map className="size-3 shrink-0 text-slate-400" />
+                        {emergency.section} • {emergency.line}
+                      </p>
+                    </div>
+
+                    <div className="p-3 space-y-2 text-xs">
+                      <div className="flex justify-between items-center text-[11px]">
+                        <span className="text-slate-500 uppercase font-bold text-[9px]">Status</span>
+                        <span className="font-bold font-mono text-[#137547] flex items-center gap-1">
+                          <CheckCircle2 className="size-3" />
+                          CLEARANCE CONFIRMED
+                        </span>
+                      </div>
+
+                      <div className="flex justify-between items-center text-[11px]">
+                        <span className="text-slate-500 uppercase font-bold text-[9px]">Resolved</span>
+                        <span className="font-medium font-mono text-slate-800">
+                          {emergency.resolvedAt ? formatTime(emergency.resolvedAt) : "Recorded"}
+                        </span>
+                      </div>
+
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="w-full text-[11px] font-bold uppercase rounded-[2px] h-7 border-emerald-300 text-[#137547] bg-emerald-50 hover:bg-emerald-100"
+                        onClick={() => setDetailsDrawer(emergency.id)}
+                      >
+                        VIEW RESOLUTION DETAILS
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>
@@ -785,7 +993,9 @@ function EmergencyPage() {
             <div className="space-y-1.5 text-slate-600 leading-relaxed text-[11px]">
               <div className="flex items-start gap-1.5">
                 <CheckCircle2 className="size-3.5 text-[#137547] shrink-0 mt-0.5" />
-                <span>Confirm location with Station Master and Section Controller immediately.</span>
+                <span>
+                  Confirm location with Station Master and Section Controller immediately.
+                </span>
               </div>
               <div className="flex items-start gap-1.5">
                 <CheckCircle2 className="size-3.5 text-[#137547] shrink-0 mt-0.5" />
@@ -793,7 +1003,9 @@ function EmergencyPage() {
               </div>
               <div className="flex items-start gap-1.5">
                 <CheckCircle2 className="size-3.5 text-[#137547] shrink-0 mt-0.5" />
-                <span>Do not clear block until authorized written memo is received from field engineer.</span>
+                <span>
+                  Do not clear block until authorized written memo is received from field engineer.
+                </span>
               </div>
             </div>
           </div>
@@ -811,7 +1023,8 @@ function EmergencyPage() {
           </div>
           <div className="p-4 space-y-3">
             <DialogDescription className="text-xs text-slate-700">
-              You are about to record an emergency line block order in the official Indian Railways system:
+              You are about to record an emergency line block order in the official Indian Railways
+              system:
             </DialogDescription>
             <div className="p-3 bg-red-50 border border-red-200 rounded-[2px] space-y-1.5 text-xs font-mono">
               <div className="flex justify-between">
@@ -828,7 +1041,8 @@ function EmergencyPage() {
               </div>
             </div>
             <p className="text-[11px] text-slate-500 italic">
-              This action will register immediate protection status and broadcast to the Section Controller desk.
+              This action will register immediate protection status and broadcast to the Section
+              Controller desk.
             </p>
           </div>
           <DialogFooter className="bg-slate-100 px-4 py-2.5 border-t border-slate-200 flex justify-end gap-2">
@@ -944,12 +1158,38 @@ function EmergencyPage() {
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-500">STARTED AT:</span>
-                  <span className="font-bold text-slate-800">{formatTime(activeDrawerBlock.startedAt)}</span>
+                  <span className="font-bold text-slate-800">
+                    {formatTime(activeDrawerBlock.startedAt)}
+                  </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-500">ACTIVE DURATION:</span>
-                  <span className="font-bold text-slate-800">{getTimeAgo(activeDrawerBlock.startedAt)}</span>
+                  <span className="font-bold text-slate-800">
+                    {getTimeAgo(activeDrawerBlock.startedAt)}
+                  </span>
                 </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">STATUS:</span>
+                  <span
+                    className={`font-bold ${
+                      ["RESOLVED", "CLOSED", "CLEARED"].includes(
+                        String(activeDrawerBlock.status).toUpperCase(),
+                      )
+                        ? "text-[#137547]"
+                        : "text-[#D97706]"
+                    }`}
+                  >
+                    {String(activeDrawerBlock.status).toUpperCase()}
+                  </span>
+                </div>
+                {activeDrawerBlock.resolvedAt && (
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">RESOLVED AT:</span>
+                    <span className="font-bold text-[#137547]">
+                      {formatTime(activeDrawerBlock.resolvedAt)}
+                    </span>
+                  </div>
+                )}
               </div>
 
               <div className="space-y-2">
@@ -957,7 +1197,10 @@ function EmergencyPage() {
                   <span className="font-bold text-slate-700 flex items-center gap-1.5">
                     <RadioTower className="size-3.5 text-[#137547]" /> Control Desk Status
                   </span>
-                  <Badge variant="outline" className="text-[9px] font-bold uppercase bg-white border-emerald-300 text-[#137547]">
+                  <Badge
+                    variant="outline"
+                    className="text-[9px] font-bold uppercase bg-white border-emerald-300 text-[#137547]"
+                  >
                     {activeDrawerBlock.controlNotified ? "Notified" : "Pending"}
                   </Badge>
                 </div>
@@ -965,7 +1208,10 @@ function EmergencyPage() {
                   <span className="font-bold text-slate-700 flex items-center gap-1.5">
                     <ShieldCheck className="size-3.5 text-[#003366]" /> Traffic Protection
                   </span>
-                  <Badge variant="outline" className="text-[9px] font-bold uppercase bg-white border-sky-300 text-[#003366]">
+                  <Badge
+                    variant="outline"
+                    className="text-[9px] font-bold uppercase bg-white border-sky-300 text-[#003366]"
+                  >
                     {activeDrawerBlock.trafficProtectionStatus}
                   </Badge>
                 </div>
@@ -976,11 +1222,15 @@ function EmergencyPage() {
                   <Info className="size-3" /> Mandatory Safety Requirement
                 </span>
                 <p className="text-slate-700 leading-relaxed">
-                  Maintain speed restriction or total block until authorized field clearance is certified by the concerned Section Engineer.
+                  Maintain speed restriction or total block until authorized field clearance is
+                  certified by the concerned Section Engineer.
                 </p>
               </div>
 
-              {can("emergency.resolve") && (
+              {can("emergency.resolve") &&
+                !["RESOLVED", "CLOSED", "CLEARED"].includes(
+                  String(activeDrawerBlock.status).toUpperCase(),
+                ) && (
                 <div className="pt-2">
                   <Button
                     className="w-full bg-[#137547] hover:bg-[#0f5c37] text-white font-bold text-xs uppercase tracking-wider rounded-[2px] h-9 gap-1.5"

@@ -85,6 +85,52 @@ def criticality_to_level(value: str) -> int:
     return mapping.get(value, 2)
 
 
+def criticality_label(value: Any) -> str:
+    """Convert stored numeric/string criticality to the frontend label."""
+    if isinstance(value, (int, float)):
+        return {
+            5: "Critical",
+            4: "High",
+            3: "Medium",
+            2: "Low",
+        }.get(int(value), "Low")
+    return normalize_criticality(str(value or ""))
+
+
+def calculate_priority_score(
+    criticality: Any,
+    days_overdue: Any = 0,
+    safety_risk: Any = 0,
+    block_type: str = "Traffic Block",
+) -> float:
+    """Calculate the same transparent 0-100 score for create and GET."""
+    level = criticality_to_level(criticality_label(criticality))
+    criticality_score = {5: 50.0, 4: 40.0, 3: 25.0, 2: 12.0}.get(level, 12.0)
+
+    try:
+        overdue = max(float(days_overdue or 0), 0.0)
+    except (TypeError, ValueError):
+        overdue = 0.0
+
+    try:
+        safety = int(safety_risk or 0)
+    except (TypeError, ValueError):
+        safety = 0
+
+    overdue_score = min(overdue * 2.2, 30.0)
+    tsr_score = 18.0 if safety >= 3 else 0.0
+
+    block = str(block_type or "").strip().lower()
+    if block == "power block":
+        hazard_score = 8.0
+    elif block == "traffic block":
+        hazard_score = 10.0
+    else:
+        hazard_score = 6.0
+
+    return round(min(criticality_score + overdue_score + tsr_score + hazard_score, 100.0), 2)
+
+
 def resolve_user_id(cursor, requested_by: str):
     """
     Try to resolve the frontend's requestedBy value to an existing
@@ -182,6 +228,8 @@ def get_block_requests(user: CurrentUser = Depends(get_current_user)):
                     br.request_id,
                     br.task_id,
                     mt.asset_id,
+                    mt.overdue_days,
+                    mt.priority_score AS stored_priority_score,
                     br.team_id,
                     br.corridor_id,
                     br.requested_date,
@@ -220,6 +268,8 @@ def get_block_requests(user: CurrentUser = Depends(get_current_user)):
                     br.request_id,
                     br.task_id,
                     mt.asset_id,
+                    mt.overdue_days,
+                    mt.priority_score AS stored_priority_score,
                     br.team_id,
                     br.corridor_id,
                     br.requested_date,
@@ -257,27 +307,32 @@ def get_block_requests(user: CurrentUser = Depends(get_current_user)):
                 "request_id": row[0],
                 "task_id": row[1],
                 "asset_id": row[2],
-                "team_id": row[3],
-                "corridor_id": row[4],
-                "requested_date": str(row[5]) if row[5] else None,
-                "requested_start": str(row[6]) if row[6] else None,
-                "requested_end": str(row[7]) if row[7] else None,
-                "requested_duration_min": row[8],
-                "block_type": row[9],
-                "request_status": row[10],
-                "submitted_date": str(row[11]) if row[11] else None,
-                "requested_by": row[12],
-                "department_id": row[13],
-                "section_id": row[14],
-                "criticality": row[15],
-                "safety_risk": row[16],
-                "description": row[17],
-                "review_status": row[18],
-                "reviewed_by": row[19],
-                "reviewed_at": row[20].isoformat() if row[20] else None,
-                "rejection_reason": row[21],
-                "created_at": row[22].isoformat() if row[22] else None,
-                "updated_at": row[23].isoformat() if row[23] else None,
+                "days_overdue": row[3] or 0,
+                "stored_priority_score": row[4],
+                "team_id": row[5],
+                "corridor_id": row[6],
+                "requested_date": str(row[7]) if row[7] else None,
+                "requested_start": str(row[8]) if row[8] else None,
+                "requested_end": str(row[9]) if row[9] else None,
+                "requested_duration_min": row[10],
+                "block_type": row[11],
+                "request_status": row[12],
+                "submitted_date": str(row[13]) if row[13] else None,
+                "requested_by": row[14],
+                "department_id": row[15],
+                "section_id": row[16],
+                "criticality": criticality_label(row[17]),
+                "safety_risk": row[18],
+                "description": row[19],
+                "review_status": row[20],
+                "reviewed_by": row[21],
+                "reviewed_at": row[22].isoformat() if row[22] else None,
+                "rejection_reason": row[23],
+                "created_at": row[24].isoformat() if row[24] else None,
+                "updated_at": row[25].isoformat() if row[25] else None,
+                "score": calculate_priority_score(
+                    row[17], row[3] or 0, row[18] or 0, row[11] or "Traffic Block"
+                ),
             }
             for row in rows
         ]
@@ -458,6 +513,8 @@ def cancel_block_request(
     finally:
         cursor.close()
         conn.close()
+
+
 
 
 # =========================================================
@@ -792,10 +849,9 @@ def create_block_request(
         # 11. VALIDATE DURATION
         # =====================================================
 
-        # Frontend sends duration in minutes.
-        duration_minutes = int(
-            round(request.duration)
-        )
+        # The frontend form uses HOURS; the database stores MINUTES.
+        duration_hours = float(request.duration)
+        duration_minutes = int(round(duration_hours * 60))
 
         if duration_minutes <= 0:
             raise HTTPException(
@@ -1020,60 +1076,11 @@ def create_block_request(
         # 18. PRIORITY SCORE
         # =====================================================
 
-        if criticality == "Critical":
-
-            criticality_score = 50
-
-        elif criticality == "High":
-
-            criticality_score = 40
-
-        elif criticality == "Medium":
-
-            criticality_score = 25
-
-        else:
-
-            criticality_score = 12
-
-
-        overdue_score = min(
-            max(request.daysOverdue, 0) * 2.2,
-            30
-        )
-
-
-        tsr_score = (
-            18
-            if request.tsrRisk
-            else 0
-        )
-
-
-        if block_type == "Power Block":
-
-            hazard_score = 8
-
-        elif block_type == "Traffic Block":
-
-            hazard_score = 10
-
-        else:
-
-            hazard_score = 6
-
-
-        priority_score = (
-            criticality_score
-            + overdue_score
-            + tsr_score
-            + hazard_score
-        )
-
-
-        priority_score = round(
-            min(priority_score, 100),
-            2
+        priority_score = calculate_priority_score(
+            criticality,
+            request.daysOverdue,
+            3 if request.tsrRisk else 0,
+            block_type,
         )
 
 
