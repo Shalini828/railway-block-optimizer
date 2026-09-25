@@ -1373,77 +1373,7 @@ function RequestsPage() {
               </div>
 
               {/* REQUEST DETAILS */}
-              <div className="border border-slate-300 dark:border-slate-700 rounded-md overflow-hidden">
-                <div className="px-3 py-2 bg-slate-100 dark:bg-slate-800 border-b border-slate-300 dark:border-slate-700">
-                  <p className="text-[10px] font-bold uppercase tracking-wide text-slate-600 dark:text-slate-300">
-                    Request Details
-                  </p>
-                </div>
-
-                <div className="grid grid-cols-2 gap-x-6 gap-y-4 p-3">
-                  <div>
-                    <span className="text-[10px] font-bold uppercase text-slate-500">Section</span>
-                    <p className="font-semibold mt-0.5">{detail.section || "—"}</p>
-                  </div>
-
-                  <div>
-                    <span className="text-[10px] font-bold uppercase text-slate-500">Line</span>
-                    <p className="font-semibold mt-0.5">{detail.line || "—"}</p>
-                  </div>
-
-                  <div className="col-span-2">
-                    <span className="text-[10px] font-bold uppercase text-slate-500">Chainage</span>
-                    <p className="font-mono font-semibold mt-0.5">{detail.chainage || "—"}</p>
-                  </div>
-
-                  <div>
-                    <span className="text-[10px] font-bold uppercase text-slate-500">
-                      Block Type
-                    </span>
-                    <p className="font-semibold mt-0.5">{detail.blockType || "—"}</p>
-                  </div>
-
-                  <div>
-                    <span className="text-[10px] font-bold uppercase text-slate-500">Duration</span>
-                    <p className="font-mono font-bold text-blue-700 dark:text-blue-400 mt-0.5">
-                      {Number(detail.duration).toFixed(2)} hrs
-                    </p>
-                  </div>
-
-                  <div>
-                    <span className="text-[10px] font-bold uppercase text-slate-500">
-                      Crew Strength
-                    </span>
-                    <p className="font-semibold mt-0.5">{detail.crew || 0} staff</p>
-                  </div>
-
-                  <div>
-                    <span className="text-[10px] font-bold uppercase text-slate-500">
-                      Criticality
-                    </span>
-                    <p className="font-semibold mt-0.5">{detail.criticality || "—"}</p>
-                  </div>
-
-                  <div>
-                    <span className="text-[10px] font-bold uppercase text-slate-500">
-                      Days Overdue
-                    </span>
-                    <p className="font-semibold mt-0.5">{detail.daysOverdue || 0} days</p>
-                  </div>
-
-                  <div>
-                    <span className="text-[10px] font-bold uppercase text-slate-500">TSR Risk</span>
-                    <p className="font-semibold mt-0.5">
-                      {detail.tsrRisk ? "Imposed (Yes)" : "No"}
-                    </p>
-                  </div>
-
-                  <div className="col-span-2">
-                    <span className="text-[10px] font-bold uppercase text-slate-500">Filed By</span>
-                    <p className="font-semibold mt-0.5">{detail.requestedBy || "—"}</p>
-                  </div>
-                </div>
-              </div>
+              
 
               {/* RISK SUMMARY */}
               <div className="border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 rounded-md p-3">

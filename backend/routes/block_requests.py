@@ -85,52 +85,6 @@ def criticality_to_level(value: str) -> int:
     return mapping.get(value, 2)
 
 
-def criticality_label(value: Any) -> str:
-    """Convert stored numeric/string criticality to the frontend label."""
-    if isinstance(value, (int, float)):
-        return {
-            5: "Critical",
-            4: "High",
-            3: "Medium",
-            2: "Low",
-        }.get(int(value), "Low")
-    return normalize_criticality(str(value or ""))
-
-
-def calculate_priority_score(
-    criticality: Any,
-    days_overdue: Any = 0,
-    safety_risk: Any = 0,
-    block_type: str = "Traffic Block",
-) -> float:
-    """Calculate the same transparent 0-100 score for create and GET."""
-    level = criticality_to_level(criticality_label(criticality))
-    criticality_score = {5: 50.0, 4: 40.0, 3: 25.0, 2: 12.0}.get(level, 12.0)
-
-    try:
-        overdue = max(float(days_overdue or 0), 0.0)
-    except (TypeError, ValueError):
-        overdue = 0.0
-
-    try:
-        safety = int(safety_risk or 0)
-    except (TypeError, ValueError):
-        safety = 0
-
-    overdue_score = min(overdue * 2.2, 30.0)
-    tsr_score = 18.0 if safety >= 3 else 0.0
-
-    block = str(block_type or "").strip().lower()
-    if block == "power block":
-        hazard_score = 8.0
-    elif block == "traffic block":
-        hazard_score = 10.0
-    else:
-        hazard_score = 6.0
-
-    return round(min(criticality_score + overdue_score + tsr_score + hazard_score, 100.0), 2)
-
-
 def resolve_user_id(cursor, requested_by: str):
     """
     Try to resolve the frontend's requestedBy value to an existing
@@ -219,51 +173,15 @@ def get_block_requests(user: CurrentUser = Depends(get_current_user)):
     cursor = conn.cursor()
 
     try:
-        if user.scope == "network":
-            cursor.execute(
-                """
-                SELECT
-                    br.request_id,
-                    br.task_id,
-                    br.team_id,
-                    br.corridor_id,
-                    br.requested_date,
-                    br.requested_start,
-                    br.requested_end,
-                    br.requested_duration_min,
-                    br.block_type,
-                    br.request_status,
-                    br.submitted_date,
-                    br.created_by,
-                    br.reviewed_by,
-                    br.reviewed_at,
-                    br.priority,
-                    br.review_notes,
-                    mt.department,
-                    mt.description,
-                    mt.safety_risk,
-                    mt.priority_score
-                FROM block_requests br
-                LEFT JOIN maintenance_tasks mt ON mt.task_id = br.task_id
-                ORDER BY br.requested_date NULLS LAST, br.requested_start NULLS LAST
-                """
-            )
-        else:
-            clean_dept = (user.dept or "").replace("DEPT-", "").upper()
-            if clean_dept == "TMS":
-                allowed_departments = ("ENGINEERING", "TMS")
-            elif clean_dept == "SMMS":
-                allowed_departments = ("S&T",)
-            elif clean_dept == "TDMS":
-                allowed_departments = ("TRD",)
-            else:
-                allowed_departments = (clean_dept,)
+        if user.scope != "network":
+            clean_dept = user.dept.upper()
 
             cursor.execute(
                 """
                 SELECT
                     br.request_id,
                     br.task_id,
+                    mt.asset_id,
                     br.team_id,
                     br.corridor_id,
                     br.requested_date,
@@ -273,21 +191,63 @@ def get_block_requests(user: CurrentUser = Depends(get_current_user)):
                     br.block_type,
                     br.request_status,
                     br.submitted_date,
-                    br.created_by,
+                    br.requested_by,
+                    br.department_id,
+                    br.section_id,
+                    br.criticality,
+                    br.safety_risk,
+                    br.description,
+                    br.review_status,
                     br.reviewed_by,
                     br.reviewed_at,
-                    br.priority,
-                    br.review_notes,
-                    mt.department,
-                    mt.description,
-                    mt.safety_risk,
-                    mt.priority_score
+                    br.rejection_reason,
+                    br.created_at,
+                    br.updated_at
                 FROM block_requests br
-                LEFT JOIN maintenance_tasks mt ON mt.task_id = br.task_id
-                WHERE UPPER(COALESCE(mt.department, '')) = ANY(%s)
-                ORDER BY br.requested_date NULLS LAST, br.requested_start NULLS LAST
+                LEFT JOIN maintenance_tasks mt
+                    ON mt.task_id = br.task_id
+                WHERE UPPER(COALESCE(br.department_id, '')) IN (%s, %s)
+                ORDER BY
+                    br.requested_date NULLS LAST,
+                    br.requested_start NULLS LAST
                 """,
-                (list(allowed_departments),)
+                (f"DEPT-{clean_dept}", clean_dept),
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT
+                    br.request_id,
+                    br.task_id,
+                    mt.asset_id,
+                    br.team_id,
+                    br.corridor_id,
+                    br.requested_date,
+                    br.requested_start,
+                    br.requested_end,
+                    br.requested_duration_min,
+                    br.block_type,
+                    br.request_status,
+                    br.submitted_date,
+                    br.requested_by,
+                    br.department_id,
+                    br.section_id,
+                    br.criticality,
+                    br.safety_risk,
+                    br.description,
+                    br.review_status,
+                    br.reviewed_by,
+                    br.reviewed_at,
+                    br.rejection_reason,
+                    br.created_at,
+                    br.updated_at
+                FROM block_requests br
+                LEFT JOIN maintenance_tasks mt
+                    ON mt.task_id = br.task_id
+                ORDER BY
+                    br.requested_date NULLS LAST,
+                    br.requested_start NULLS LAST
+                """
             )
 
         rows = cursor.fetchall()
@@ -295,26 +255,29 @@ def get_block_requests(user: CurrentUser = Depends(get_current_user)):
         return [
             {
                 "request_id": row[0],
-            "task_id": row[1],
-            "team_id": row[2],
-            "corridor_id": row[3],
-            "requested_date": str(row[4]) if row[4] else None,
-            "requested_start": str(row[5]) if row[5] else None,
-            "requested_end": str(row[6]) if row[6] else None,
-            "requested_duration_min": row[7],
-            "block_type": row[8],
-            "request_status": row[9],
-            "submitted_date": str(row[10]) if row[10] else None,
-            "requested_by": row[11],
-            "reviewed_by": row[12],
-            "reviewed_at": row[13].isoformat() if row[13] else None,
-            "priority": row[14],
-            "review_notes": row[15],
-
-            "department": row[16],
-            "description": row[17],
-            "safety_risk": row[18],
-            "priority_score": float(row[19]) if row[19] is not None else None,
+                "task_id": row[1],
+                "asset_id": row[2],
+                "team_id": row[3],
+                "corridor_id": row[4],
+                "requested_date": str(row[5]) if row[5] else None,
+                "requested_start": str(row[6]) if row[6] else None,
+                "requested_end": str(row[7]) if row[7] else None,
+                "requested_duration_min": row[8],
+                "block_type": row[9],
+                "request_status": row[10],
+                "submitted_date": str(row[11]) if row[11] else None,
+                "requested_by": row[12],
+                "department_id": row[13],
+                "section_id": row[14],
+                "criticality": row[15],
+                "safety_risk": row[16],
+                "description": row[17],
+                "review_status": row[18],
+                "reviewed_by": row[19],
+                "reviewed_at": row[20].isoformat() if row[20] else None,
+                "rejection_reason": row[21],
+                "created_at": row[22].isoformat() if row[22] else None,
+                "updated_at": row[23].isoformat() if row[23] else None,
             }
             for row in rows
         ]
@@ -349,15 +312,10 @@ def update_block_request(
     try:
         cursor.execute(
             """
-            SELECT
-        br.request_id,
-        br.request_status,
-        mt.department
-    FROM block_requests br
-    LEFT JOIN maintenance_tasks mt
-        ON mt.task_id = br.task_id
-    WHERE br.request_id = %s
-    """,
+            SELECT request_id, request_status, department_id
+            FROM block_requests
+            WHERE request_id = %s
+            """,
             (request_id,),
         )
         row = cursor.fetchone()
@@ -407,6 +365,7 @@ def update_block_request(
             params.append(criticality_to_level(crit))
 
         if updates:
+            updates.append("updated_at = CURRENT_TIMESTAMP")
             params.append(request_id)
             cursor.execute(
                 f"UPDATE block_requests SET {', '.join(updates)} WHERE request_id = %s",
@@ -446,15 +405,10 @@ def cancel_block_request(
     try:
         cursor.execute(
             """
-             SELECT
-        br.request_id,
-        br.request_status,
-        mt.department
-    FROM block_requests br
-    LEFT JOIN maintenance_tasks mt
-        ON mt.task_id = br.task_id
-    WHERE br.request_id = %s
-    """,
+            SELECT request_id, request_status, department_id
+            FROM block_requests
+            WHERE request_id = %s
+            """,
             (request_id,),
         )
         row = cursor.fetchone()
@@ -470,18 +424,8 @@ def cancel_block_request(
 
         if user.scope != "network":
             dept_id = (row[2] or "").upper()
-            user_dept = (user.dept or "").replace("DEPT-", "").upper()
-
-            if user_dept == "TMS":
-                allowed_departments = ("ENGINEERING", "TMS")
-            elif user_dept == "SMMS":
-                allowed_departments = ("S&T",)
-            elif user_dept == "TDMS":
-                allowed_departments = ("TRD",)
-            else:
-                allowed_departments = (user_dept,)
-
-            if dept_id not in allowed_departments:
+            user_dept = user.dept.upper()
+            if dept_id not in (f"DEPT-{user_dept}", user_dept):
                 raise RBACForbiddenException(
                     required=f"department.{user.dept}",
                     role=user.role_id,
@@ -491,7 +435,7 @@ def cancel_block_request(
         cursor.execute(
             """
             UPDATE block_requests
-            SET request_status = 'CANCELLED'
+            SET request_status = 'CANCELLED', updated_at = CURRENT_TIMESTAMP
             WHERE request_id = %s
             """,
             (request_id,),
@@ -516,6 +460,178 @@ def cancel_block_request(
         conn.close()
 
 
+# =========================================================
+# APPROVE BLOCK REQUEST
+# =========================================================
+
+@router.post("/{request_id}/approve", dependencies=[Depends(require_permission("requests.reject"))])
+def approve_block_request(
+    request_id: str,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Approve a requisition after review/optimization."""
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute(
+            """
+            SELECT request_id, request_status, department_id
+            FROM block_requests
+            WHERE request_id = %s
+            """,
+            (request_id,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Block request not found")
+
+        req_status = (row[1] or "").upper()
+        if req_status in ("CANCELLED", "REJECTED", "COMPLETED", "OPTIMIZED"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot approve request in status {req_status}",
+            )
+
+        if user.scope != "network":
+            dept_id = (row[2] or "").upper()
+            user_dept = user.dept.upper()
+            if dept_id not in (f"DEPT-{user_dept}", user_dept):
+                raise RBACForbiddenException(
+                    required=f"department.{user.dept}",
+                    role=user.role_id,
+                    detail="Cannot approve requisitions from other departments",
+                )
+
+        approver_identity = (user.name or user.title or "SYSTEM")[:30]
+        cursor.execute(
+            """
+            UPDATE block_requests
+            SET
+                request_status = 'OPTIMIZED',
+                review_status = 'APPROVED',
+                reviewed_by = %s,
+                reviewed_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE request_id = %s
+            """,
+            (approver_identity, request_id),
+        )
+        conn.commit()
+
+        return {
+            "status": "success",
+            "message": "Block request approved and optimized",
+            "request_id": request_id,
+            "request_status": "OPTIMIZED",
+        }
+
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        cursor.close()
+        conn.close()
+
+
+# =========================================================
+# SEND BLOCK REQUEST FOR REWORK
+# =========================================================
+@router.post("/{request_id}/rework", dependencies=[Depends(require_permission("requests.reject"))])
+def rework_block_request(
+    request_id: str,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Send a requisition back for rework after officer review."""
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute(
+            """
+            SELECT request_id, request_status, department_id
+            FROM block_requests
+            WHERE request_id = %s
+            """,
+            (request_id,),
+        )
+        row = cursor.fetchone()
+
+        if not row:
+            raise HTTPException(
+                status_code=404,
+                detail="Block request not found",
+            )
+
+        req_status = (row[1] or "").upper()
+
+        # Rework is not allowed for already-final requests
+        if req_status in ("CANCELLED", "REJECTED", "COMPLETED"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot rework request in status {req_status}",
+            )
+
+        # Department-level authorization
+        if user.scope != "network":
+            dept_id = (row[2] or "").upper()
+            user_dept = user.dept.upper()
+
+            if dept_id not in (f"DEPT-{user_dept}", user_dept):
+                raise RBACForbiddenException(
+                    required=f"department.{user.dept}",
+                    role=user.role_id,
+                    detail="Cannot rework requisitions from other departments",
+                )
+
+        reviewer_identity = (
+            user.name or user.title or "SYSTEM"
+        )[:30]
+
+        cursor.execute(
+            """
+            UPDATE block_requests
+            SET
+                request_status = 'PENDING',
+                review_status = 'REWORK',
+                reviewed_by = %s,
+                reviewed_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE request_id = %s
+            """,
+            (
+                reviewer_identity,
+                request_id,
+            ),
+        )
+
+        conn.commit()
+
+        return {
+            "status": "success",
+            "message": "Block request sent for rework",
+            "request_id": request_id,
+            "request_status": "PENDING",
+            "review_status": "REWORK",
+        }
+
+    except HTTPException:
+        conn.rollback()
+        raise
+
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=str(e),
+        )
+
+    finally:
+        cursor.close()
+        conn.close()
 
 
 # =========================================================
@@ -546,7 +662,7 @@ def reject_block_request(
         if not cursor.fetchone():
             raise HTTPException(status_code=404, detail="Block request not found")
 
-        approver_identity = f"{user.name} ({user.title})"
+        approver_identity = (user.name or user.title or "SYSTEM")[:30]
         cursor.execute(
             """
             UPDATE block_requests
@@ -850,9 +966,10 @@ def create_block_request(
         # 11. VALIDATE DURATION
         # =====================================================
 
-        # The frontend form uses HOURS; the database stores MINUTES.
-        duration_hours = float(request.duration)
-        duration_minutes = int(round(duration_hours * 60))
+        # Frontend sends duration in minutes.
+        duration_minutes = int(
+            round(request.duration)
+        )
 
         if duration_minutes <= 0:
             raise HTTPException(
@@ -1077,11 +1194,60 @@ def create_block_request(
         # 18. PRIORITY SCORE
         # =====================================================
 
-        priority_score = calculate_priority_score(
-            criticality,
-            request.daysOverdue,
-            3 if request.tsrRisk else 0,
-            block_type,
+        if criticality == "Critical":
+
+            criticality_score = 50
+
+        elif criticality == "High":
+
+            criticality_score = 40
+
+        elif criticality == "Medium":
+
+            criticality_score = 25
+
+        else:
+
+            criticality_score = 12
+
+
+        overdue_score = min(
+            max(request.daysOverdue, 0) * 2.2,
+            30
+        )
+
+
+        tsr_score = (
+            18
+            if request.tsrRisk
+            else 0
+        )
+
+
+        if block_type == "Power Block":
+
+            hazard_score = 8
+
+        elif block_type == "Traffic Block":
+
+            hazard_score = 10
+
+        else:
+
+            hazard_score = 6
+
+
+        priority_score = (
+            criticality_score
+            + overdue_score
+            + tsr_score
+            + hazard_score
+        )
+
+
+        priority_score = round(
+            min(priority_score, 100),
+            2
         )
 
 
