@@ -533,13 +533,14 @@ function AnalyticsPage() {
       efficiency: 94,
     },
     "7d": {
-      availability: analytics?.asset_availability_percent || 94.2,
-      blockHours: analytics?.total_block_hours || 18.5,
-      delayAvoided: analytics?.train_delay_impact_minutes || 142,
-      coordinated: analytics?.coordinated_blocks || 12,
-      optimised: analytics?.total_maintenance_tasks || 67,
-      efficiency: analytics?.average_optimization_score || 91,
-    },
+  availability: analytics?.asset_availability_percent ?? 0,
+  blockHours: analytics?.total_block_hours ?? 0,
+  delayAvoided: analytics?.train_delay_impact_minutes ?? 0,
+  coordinated: analytics?.coordinated_blocks ?? 0,
+  optimised: analytics?.total_maintenance_tasks ?? 0,
+  efficiency: analytics?.average_optimization_score ?? 0,
+},
+    
     "30d": {
       availability: 93.8,
       blockHours: 78.4,
@@ -550,8 +551,69 @@ function AnalyticsPage() {
     },
   }[timeRange];
 
-  const comparisonData = timeRangeComparisonData[timeRange];
-  const availabilityTrendData = timeRangeAvailabilityTrendData[timeRange];
+  const comparisonData = (() => {
+  const baseData = timeRangeComparisonData[timeRange];
+
+  if (!analytics) {
+    return baseData;
+  }
+
+  if (timeRange === "7d") {
+    return [
+      {
+        metric: "Block Hours",
+        traditional: baseData[0]?.traditional ?? 0,
+        ai: analytics.total_block_hours ?? 0,
+      },
+      {
+        metric: "Train Delay (m)",
+        traditional: baseData[1]?.traditional ?? 0,
+        ai: analytics.train_delay_impact_minutes ?? 0,
+      },
+      {
+        metric: "Separate Blocks",
+        traditional: baseData[2]?.traditional ?? 0,
+        ai: analytics.single_department_blocks ?? 0,
+      },
+    ];
+  }
+
+  return baseData;
+})();
+  const availabilityTrendData = (() => {
+  const baseData = timeRangeAvailabilityTrendData[timeRange];
+
+  if (!analytics) {
+    return baseData;
+  }
+
+  if (timeRange === "7d") {
+    return baseData.map((point, index) => ({
+      ...point,
+      overall: analytics.asset_availability_percent ?? 0,
+      ...(index === baseData.length - 1
+        ? {
+            eng:
+  String(role).toLowerCase() === "engineering"
+    ? analytics.asset_availability_percent ?? 0
+    : point.eng,
+
+snt:
+  String(role).toLowerCase() === "signal"
+    ? analytics.asset_availability_percent ?? 0
+    : point.snt,
+
+trd:
+  String(role).toLowerCase() === "traction"
+    ? analytics.asset_availability_percent ?? 0
+    : point.trd,
+          }
+        : {}),
+    }));
+  }
+
+  return baseData;
+})();
 
   const pieData = [
     { name: "Score", value: safeAnalytics.efficiency || 87, color: "#003366" },
@@ -775,13 +837,19 @@ function AnalyticsPage() {
                 </PieChart>
               </ResponsiveContainer>
               <div className="absolute inset-0 flex flex-col items-center justify-center">
-                <span className="text-3xl font-bold font-mono text-[#003366]">87</span>
+                <span className="text-3xl font-bold font-mono text-[#003366]">
+  {safeAnalytics.efficiency}
+</span>
                 <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Out of 100</span>
               </div>
             </div>
 
             <div className="w-full space-y-2.5 mb-4">
-              <ImpactBar label="Operational Efficiency" value={92} color="bg-[#003366]" />
+              <ImpactBar
+  label="Operational Efficiency"
+  value={safeAnalytics.efficiency}
+  color="bg-[#003366]"
+/>
               <ImpactBar label="Safety Rule Compliance" value={96} color="bg-[#137547]" />
               <ImpactBar label="Multi-Department Shadowing" value={84} color="bg-[#FF9933]" />
               <ImpactBar label="Train Delay Mitigation" value={81} color="bg-[#003366]" />

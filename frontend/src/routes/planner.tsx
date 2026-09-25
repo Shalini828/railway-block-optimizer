@@ -158,7 +158,7 @@ function statusClass(status?: string) {
 }
 
 function PlannerPage() {
-  const { role, scope, can } = useAbps();
+  const { role, scope, can, authReady, signedIn, token } = useAbps();
   const { t } = useLanguage();
 
   const [corridors, setCorridors] = useState<Corridor[]>([]);
@@ -284,8 +284,12 @@ function PlannerPage() {
   };
 
   useEffect(() => {
-    void fetchData();
-  }, []);
+  if (!authReady || !signedIn || !token) {
+    return;
+  }
+
+  void fetchData();
+}, [authReady, signedIn, token]);
 
   const filteredBlocks = useMemo(() => {
     return blocks.filter(

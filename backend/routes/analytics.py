@@ -34,6 +34,15 @@ def get_analytics(user: CurrentUser = Depends(get_current_user)):
         dept = department_of(user.role_id)
         is_dept = not is_network_scope(user.role_id) and bool(dept)
 
+        if dept == "TMS":
+            allowed_departments = ("ENGINEERING", "TMS")
+        elif dept == "SMMS":
+            allowed_departments = ("S&T",)
+        elif dept == "TDMS":
+            allowed_departments = ("TRD",)
+        else:
+            allowed_departments = (dept,) if dept else ()
+
         # ==========================================
         # ASSET AVAILABILITY
         # ==========================================
@@ -41,13 +50,19 @@ def get_analytics(user: CurrentUser = Depends(get_current_user)):
         if is_dept:
             cursor.execute("""
                 SELECT
-                    COUNT(*) AS total_assets,
-                    COUNT(*) FILTER (
-                        WHERE operational_status = 'OPERATIONAL'
+                    COUNT(DISTINCT a.asset_id) AS total_assets,
+                    COUNT(DISTINCT a.asset_id) FILTER (
+                        WHERE UPPER(COALESCE(a.operational_status, '')) = 'OPERATIONAL'
                     ) AS operational_assets
-                FROM assets
-                WHERE department = %s
-            """, (dept,))
+                FROM assets a
+                WHERE UPPER(COALESCE(a.department, '')) = ANY(%s)
+                OR EXISTS (
+                        SELECT 1
+                        FROM maintenance_tasks mt
+                        WHERE mt.asset_id = a.asset_id
+                        AND UPPER(COALESCE(mt.department, '')) = ANY(%s)
+                )
+            """, (list(allowed_departments), list(allowed_departments)))
         else:
             cursor.execute("""
                 SELECT
@@ -84,8 +99,8 @@ def get_analytics(user: CurrentUser = Depends(get_current_user)):
                 FROM optimized_blocks ob
                 JOIN block_tasks bt ON ob.block_id = bt.block_id
                 JOIN maintenance_tasks mt ON bt.task_id = mt.task_id
-                WHERE mt.department = %s
-            """, (dept,))
+                WHERE UPPER(COALESCE(mt.department, '')) = ANY(%s)
+            """, (list(allowed_departments),))
         else:
             cursor.execute("""
                 SELECT
@@ -137,9 +152,9 @@ def get_analytics(user: CurrentUser = Depends(get_current_user)):
                     SELECT bt.block_id
                     FROM block_tasks bt
                     JOIN maintenance_tasks mt ON bt.task_id = mt.task_id
-                    WHERE mt.department = %s
+                    WHERE UPPER(COALESCE(mt.department, '')) = ANY(%s)
                 )
-            """, (dept,))
+            """, (list(allowed_departments),))
         else:
             cursor.execute("""
                 SELECT
@@ -173,21 +188,20 @@ def get_analytics(user: CurrentUser = Depends(get_current_user)):
                 FROM (
                     SELECT
                         bt.block_id,
-                        COUNT(
-                            DISTINCT mt.department
-                        ) AS department_count
+                        COUNT(DISTINCT mt.department) AS department_count
                     FROM block_tasks bt
                     JOIN maintenance_tasks mt
                         ON bt.task_id = mt.task_id
                     WHERE bt.block_id IN (
                         SELECT bt2.block_id
                         FROM block_tasks bt2
-                        JOIN maintenance_tasks mt2 ON bt2.task_id = mt2.task_id
-                        WHERE mt2.department = %s
+                        JOIN maintenance_tasks mt2
+                            ON bt2.task_id = mt2.task_id
+                        WHERE UPPER(COALESCE(mt2.department, '')) = ANY(%s)
                     )
                     GROUP BY bt.block_id
                 ) AS block_departments
-            """, (dept,))
+            """, (list(allowed_departments),))
         else:
             cursor.execute("""
                 SELECT
@@ -239,8 +253,8 @@ def get_analytics(user: CurrentUser = Depends(get_current_user)):
                         WHERE priority_category = 'CRITICAL'
                     ) AS critical_tasks
                 FROM maintenance_tasks
-                WHERE department = %s
-            """, (dept,))
+                 WHERE UPPER(COALESCE(department, '')) = ANY(%s)
+            """, (list(allowed_departments),))
         else:
             cursor.execute("""
                 SELECT
@@ -284,7 +298,7 @@ def get_analytics(user: CurrentUser = Depends(get_current_user)):
                 WHERE department = %s
                 GROUP BY department
                 ORDER BY department
-            """, (dept,))
+             """, (list(allowed_departments),))
         else:
             cursor.execute("""
                 SELECT
@@ -356,7 +370,7 @@ def get_analytics(user: CurrentUser = Depends(get_current_user)):
                     SELECT bt2.block_id
                     FROM block_tasks bt2
                     JOIN maintenance_tasks mt2 ON bt2.task_id = mt2.task_id
-                    WHERE mt2.department = %s
+                    WHERE UPPER(COALESCE(mt2.department, '')) = ANY(%s)
                 )
                 GROUP BY
                     ob.block_id,
@@ -373,7 +387,7 @@ def get_analytics(user: CurrentUser = Depends(get_current_user)):
                 ORDER BY
                     ob.block_date,
                     ob.start_time
-            """, (dept,))
+              """, (list(allowed_departments),))
         else:
             cursor.execute("""
                 SELECT

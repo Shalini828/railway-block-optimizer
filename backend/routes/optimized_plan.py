@@ -270,6 +270,7 @@ def get_optimized_plan(
             # Fetch optimized blocks
             # ------------------------------------------------
             cursor.execute("""
+                
                 SELECT
                     block_id,
                     corridor_id,
@@ -279,29 +280,13 @@ def get_optimized_plan(
                     duration_min,
                     utilization_percent,
                     train_impact_score,
-                    optimization_score,
                     number_of_tasks,
                     number_of_departments,
-
-                    maintenance_priority,
-                    asset_risk_score,
-                    traffic_impact_score,
-                    goods_impact_score,
-                    consolidation_score,
-                    estimated_delay_min,
-
-                    ai_decision_confidence,
-                    ai_reasons,
-                    ai_explanation,
-                    traffic_prediction,
-                    optimization_reason,
-
+                    optimization_score,
                     block_status,
                     approved_by,
                     approved_at
-
                 FROM optimized_blocks
-
                 ORDER BY block_date, start_time
             """)
 

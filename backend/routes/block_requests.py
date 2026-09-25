@@ -238,16 +238,18 @@ def get_block_requests(user: CurrentUser = Depends(get_current_user)):
                     br.reviewed_by,
                     br.reviewed_at,
                     br.priority,
-                    br.review_notes
+                    br.review_notes,
+                    mt.department,
+                    mt.description,
+                    mt.safety_risk,
+                    mt.priority_score
                 FROM block_requests br
-                ORDER BY
-                    br.requested_date NULLS LAST,
-                    br.requested_start NULLS LAST
+                LEFT JOIN maintenance_tasks mt ON mt.task_id = br.task_id
+                ORDER BY br.requested_date NULLS LAST, br.requested_start NULLS LAST
                 """
             )
         else:
             clean_dept = (user.dept or "").replace("DEPT-", "").upper()
-
             if clean_dept == "TMS":
                 allowed_departments = ("ENGINEERING", "TMS")
             elif clean_dept == "SMMS":
@@ -275,14 +277,15 @@ def get_block_requests(user: CurrentUser = Depends(get_current_user)):
                     br.reviewed_by,
                     br.reviewed_at,
                     br.priority,
-                    br.review_notes
+                    br.review_notes,
+                    mt.department,
+                    mt.description,
+                    mt.safety_risk,
+                    mt.priority_score
                 FROM block_requests br
-                JOIN maintenance_tasks mt
-                ON mt.task_id = br.task_id
+                LEFT JOIN maintenance_tasks mt ON mt.task_id = br.task_id
                 WHERE UPPER(COALESCE(mt.department, '')) = ANY(%s)
-                ORDER BY
-                    br.requested_date NULLS LAST,
-                    br.requested_start NULLS LAST
+                ORDER BY br.requested_date NULLS LAST, br.requested_start NULLS LAST
                 """,
                 (list(allowed_departments),)
             )
@@ -292,34 +295,26 @@ def get_block_requests(user: CurrentUser = Depends(get_current_user)):
         return [
             {
                 "request_id": row[0],
-                "task_id": row[1],
-                "asset_id": row[2],
-                "days_overdue": row[3] or 0,
-                "stored_priority_score": row[4],
-                "team_id": row[5],
-                "corridor_id": row[6],
-                "requested_date": str(row[7]) if row[7] else None,
-                "requested_start": str(row[8]) if row[8] else None,
-                "requested_end": str(row[9]) if row[9] else None,
-                "requested_duration_min": row[10],
-                "block_type": row[11],
-                "request_status": row[12],
-                "submitted_date": str(row[13]) if row[13] else None,
-                "requested_by": row[14],
-                "department_id": row[15],
-                "section_id": row[16],
-                "criticality": criticality_label(row[17]),
-                "safety_risk": row[18],
-                "description": row[19],
-                "review_status": row[20],
-                "reviewed_by": row[21],
-                "reviewed_at": row[22].isoformat() if row[22] else None,
-                "rejection_reason": row[23],
-                "created_at": row[24].isoformat() if row[24] else None,
-                "updated_at": row[25].isoformat() if row[25] else None,
-                "score": calculate_priority_score(
-                    row[17], row[3] or 0, row[18] or 0, row[11] or "Traffic Block"
-                ),
+            "task_id": row[1],
+            "team_id": row[2],
+            "corridor_id": row[3],
+            "requested_date": str(row[4]) if row[4] else None,
+            "requested_start": str(row[5]) if row[5] else None,
+            "requested_end": str(row[6]) if row[6] else None,
+            "requested_duration_min": row[7],
+            "block_type": row[8],
+            "request_status": row[9],
+            "submitted_date": str(row[10]) if row[10] else None,
+            "requested_by": row[11],
+            "reviewed_by": row[12],
+            "reviewed_at": row[13].isoformat() if row[13] else None,
+            "priority": row[14],
+            "review_notes": row[15],
+
+            "department": row[16],
+            "description": row[17],
+            "safety_risk": row[18],
+            "priority_score": float(row[19]) if row[19] is not None else None,
             }
             for row in rows
         ]
