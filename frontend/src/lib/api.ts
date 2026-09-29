@@ -1,7 +1,11 @@
 import { toast } from "sonner";
 
+const LOCAL_API_BASE = "http://127.0.0.1:8000";
+const PRODUCTION_API_BASE = "https://railway-block-optimizer-backend.vercel.app";
+
 export const API_BASE =
-  import.meta.env["VITE_API_BASE_URL"] ?? "http://127.0.0.1:8000";
+  import.meta.env["VITE_API_BASE_URL"] ||
+  (import.meta.env.DEV ? LOCAL_API_BASE : PRODUCTION_API_BASE);
 
 let authToken: string | null = null;
 let unauthorizedHandler: (() => void) | null = null;
@@ -25,6 +29,10 @@ export async function apiFetch(path: string, init?: RequestInit): Promise<Respon
     cleanPath = cleanPath.replace("http://localhost:8000", "");
   } else if (cleanPath.startsWith("http://127.0.0.1:8000")) {
     cleanPath = cleanPath.replace("http://127.0.0.1:8000", "");
+  } else if (cleanPath.startsWith("https://railway-block-optimizer-backend.vercel.app")) {
+    cleanPath = cleanPath.replace("https://railway-block-optimizer-backend.vercel.app", "");
+  } else if (cleanPath.startsWith("https://railway-block-optimizer-backend.onrender.com")) {
+    cleanPath = cleanPath.replace("https://railway-block-optimizer-backend.onrender.com", "");
   }
 
   if (!cleanPath.startsWith("/")) {
