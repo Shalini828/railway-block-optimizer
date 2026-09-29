@@ -39,6 +39,48 @@ async def rbac_forbidden_handler(request, exc: RBACForbiddenException):
 
 
 # ============================================================
+# DEBUG: DATABASE USER & CONNECTION (FOR VERCEL DEPLOYMENT)
+# ============================================================
+
+@app.get("/debug/db-user")
+def debug_db_user():
+    import os
+    env_user = os.getenv("DB_USER")
+    config_user = DB_CONFIG.get("user")
+    return {
+        "env_user_exists": env_user is not None,
+        "env_user_is_pooler_format": (
+            env_user.startswith("postgres.") if env_user else False
+        ),
+        "config_user_exists": config_user is not None,
+        "config_user_is_pooler_format": (
+            config_user.startswith("postgres.") if config_user else False
+        ),
+        "config_user_is_plain_postgres": (config_user == "postgres"),
+    }
+
+
+@app.get("/debug/db-connection")
+def debug_db_connection():
+    connection = None
+    try:
+        connection = psycopg.connect(**DB_CONFIG)
+        return {
+            "database_connection": "success",
+            "db_user_configured": True,
+        }
+    except Exception as exc:
+        return {
+            "database_connection": "failed",
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+        }
+    finally:
+        if connection:
+            connection.close()
+
+
+# ============================================================
 # CORS
 # ============================================================
 
@@ -47,8 +89,13 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:8080",
         "http://127.0.0.1:8080",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
         "https://railway-block-optimizer-frontend.vercel.app",
     ],
+    allow_origin_regex=r"^https://.*\.vercel\.app$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -56,10 +103,11 @@ app.add_middleware(
 
 
 # ============================================================
-# ROOT
+# ROOT & HEALTH
 # ============================================================
 
 @app.get("/")
+@app.get("/api")
 def root():
     return {
         "status": "success",
@@ -68,6 +116,7 @@ def root():
 
 
 @app.get("/health")
+@app.get("/api/health")
 def health():
     return {
         "status": "healthy",
@@ -81,41 +130,34 @@ def health():
 #
 # Every Python file inside backend/routes that exposes
 #   router = APIRouter(...)
-# will automatically be registered.
-#
-# This avoids hard-coding filenames such as:
-# routes.requests
-# routes.maintenance
-# etc.
+# will automatically be registered under both / and /api.
 #
 # ============================================================
 
 def register_routers():
-
     import routes
 
     registered = []
 
     for module_info in pkgutil.iter_modules(routes.__path__):
-
         module_name = module_info.name
 
-        # Skip Python cache / private modules
-        if module_name.startswith("_"):
+        # Skip Python cache / private modules / backup files
+        if module_name.startswith("_") or "WORKING" in module_name:
             continue
 
         try:
-            module = importlib.import_module(
-                f"routes.{module_name}"
-            )
-
+            module = importlib.import_module(f"routes.{module_name}")
             router = getattr(module, "router", None)
 
             if router is not None:
                 app.include_router(router)
+                app.include_router(router, prefix="/api")
                 registered.append(module_name)
 
         except Exception as exc:
+            import traceback
+            traceback.print_exc()
             print(
                 f"[WARNING] Could not load router "
                 f"'routes.{module_name}': {exc}"
