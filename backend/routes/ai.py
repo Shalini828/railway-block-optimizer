@@ -997,9 +997,12 @@ def get_block_intelligence(block_id: str):
     - Overall pressure assessment
     """
 
-    conn = psycopg.connect(**DB_CONFIG)
-
+    conn = None
     try:
+        try:
+            conn = psycopg.connect(**DB_CONFIG)
+        except Exception as db_err:
+            raise ValueError(f"Database unavailable: {db_err}")
         cur = conn.cursor()
 
         # Get optimized block

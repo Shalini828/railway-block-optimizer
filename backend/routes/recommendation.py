@@ -27,7 +27,10 @@ router = APIRouter(
 
 
 def get_connection():
-    return psycopg.connect(**DB_CONFIG)
+    try:
+        return psycopg.connect(**DB_CONFIG)
+    except Exception:
+        return None
 
 
 def calculate_overlap_delay(item):

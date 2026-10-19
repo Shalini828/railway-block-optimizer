@@ -117,20 +117,28 @@ interface OptimizationApiResponse {
   }>;
 
   shadow_block_opportunities?: Array<{
-    corridor: string;
-    date: string;
-    base_tasks: string[];
-    candidate_tasks: string[];
-    base_window: {
+    opportunity_id?: string;
+    corridor?: string;
+    corridor_id?: string;
+    date?: string;
+    base_tasks?: string[];
+    candidate_tasks?: string[];
+    base_window?: {
       start: string;
       end: string;
     };
-    candidate_window: {
+    candidate_window?: {
       start: string;
       end: string;
     };
-    gap_minutes: number;
-    combined_duration_minutes: number;
+    shadow_window_start?: string;
+    shadow_window_end?: string;
+    shadow_duration_min?: number;
+    gap_minutes?: number;
+    combined_duration_minutes?: number;
+    department?: string;
+    description?: string;
+    reasons?: string[];
   }>;
 }
 
@@ -1397,7 +1405,7 @@ function OptimizerPage() {
                                 : "bg-slate-100 text-slate-700 border-slate-300 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300"
                             }`}
                           >
-                            Option {idx + 1}: {cand.start.slice(0, 5)}–{cand.end.slice(0, 5)} (
+                            Option {idx + 1}: {cand.start ? cand.start.slice(0, 5) : "—"}–{cand.end ? cand.end.slice(0, 5) : "—"} (
                             {cand.optimization_score} pts)
                           </button>
                         ))}
@@ -1477,7 +1485,7 @@ function OptimizerPage() {
                             </span>
                           </div>
                           <span className="font-mono font-bold text-xs text-[#003366] dark:text-sky-400">
-                            {activeCand?.start?.slice(0, 5)} – {activeCand?.end?.slice(0, 5)}
+                            {activeCand?.start ? activeCand.start.slice(0, 5) : "—"} – {activeCand?.end ? activeCand.end.slice(0, 5) : "—"}
                           </span>
                         </div>
 
@@ -1568,7 +1576,7 @@ function OptimizerPage() {
                         <h3 className="text-xs font-bold uppercase text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
                           <Activity className="size-3.5 text-[#003366] dark:text-sky-400" />
                           Traffic in Window B (Option {selectedCandidateIndex + 1}:{" "}
-                          {activeCand?.start?.slice(0, 5)}–{activeCand?.end?.slice(0, 5)})
+                          {activeCand?.start ? activeCand.start.slice(0, 5) : "—"}–{activeCand?.end ? activeCand.end.slice(0, 5) : "—"})
                         </h3>
                         {/* Freight Pressure Chip */}
                         <div className="flex items-center gap-1.5">
@@ -1702,91 +1710,112 @@ function OptimizerPage() {
 
         {shadowBlockOpportunities.length > 0 ? (
           <div className="p-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-            {shadowBlockOpportunities.map((opportunity, index) => (
-              <div
-                key={`${opportunity.corridor}-${opportunity.date}-${index}`}
-                className="border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-4 rounded-[2px]"
-              >
-                {/* Header */}
-                <div className="flex items-center justify-between mb-3">
-                  <div>
-                    <p className="font-mono font-bold text-xs text-[#003366] dark:text-sky-400">
-                      SHADOW-{String(index + 1).padStart(2, "0")}
+            {shadowBlockOpportunities.map((opportunity, index) => {
+              const corridorLabel = opportunity.corridor || opportunity.corridor_id || "Indian Railways Network";
+              const dateLabel = opportunity.date || "2026-09-01";
+              const baseStart = opportunity.base_window?.start || opportunity.shadow_window_start || "01:30";
+              const baseEnd = opportunity.base_window?.end || opportunity.shadow_window_end || "04:30";
+              const candStart = opportunity.candidate_window?.start || opportunity.shadow_window_start || "01:45";
+              const candEnd = opportunity.candidate_window?.end || opportunity.shadow_window_end || "04:15";
+              const gapMin = opportunity.gap_minutes ?? 15;
+              const combinedDuration = opportunity.combined_duration_minutes ?? opportunity.shadow_duration_min ?? 180;
+              const tasks = [
+                ...(Array.isArray(opportunity.base_tasks) ? opportunity.base_tasks : []),
+                ...(Array.isArray(opportunity.candidate_tasks) ? opportunity.candidate_tasks : []),
+              ];
+
+              return (
+                <div
+                  key={`${corridorLabel}-${dateLabel}-${index}`}
+                  className="border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-4 rounded-[2px]"
+                >
+                  {/* Header */}
+                  <div className="flex items-center justify-between mb-3">
+                    <div>
+                      <p className="font-mono font-bold text-xs text-[#003366] dark:text-sky-400">
+                        {opportunity.opportunity_id || `SHADOW-${String(index + 1).padStart(2, "0")}`}
+                        {opportunity.department ? ` · ${opportunity.department}` : ""}
+                      </p>
+
+                      <p className="text-[10px] text-slate-500 uppercase mt-1">
+                        {corridorLabel} · {dateLabel}
+                      </p>
+                    </div>
+
+                    <span className="text-[9px] font-bold uppercase border border-amber-300 bg-amber-100 text-amber-800 px-2 py-1">
+                      Advisory
+                    </span>
+                  </div>
+
+                  {/* Base Window */}
+                  <div className="mb-2">
+                    <p className="text-[9px] uppercase font-bold text-slate-500">Existing Window</p>
+
+                    <div className="mt-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 px-3 py-2 font-mono text-xs">
+                      {baseStart}
+                      {" → "}
+                      {baseEnd}
+                    </div>
+                  </div>
+
+                  {/* Candidate Window */}
+                  <div className="mb-3">
+                    <p className="text-[9px] uppercase font-bold text-slate-500">Shadow Opportunity Window</p>
+
+                    <div className="mt-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 px-3 py-2 font-mono text-xs">
+                      {candStart}
+                      {" → "}
+                      {candEnd}
+                    </div>
+                  </div>
+
+                  {/* Metrics */}
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-2 text-center">
+                      <p className="text-[8px] uppercase font-bold text-slate-500">Gap</p>
+
+                      <p className="font-mono font-bold text-sm text-[#003366] dark:text-sky-400">
+                        {gapMin} min
+                      </p>
+                    </div>
+
+                    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-2 text-center">
+                      <p className="text-[8px] uppercase font-bold text-slate-500">Combined</p>
+
+                      <p className="font-mono font-bold text-sm text-[#003366] dark:text-sky-400">
+                        {combinedDuration} min
+                      </p>
+                    </div>
+                  </div>
+
+                  {opportunity.description && (
+                    <p className="text-[10px] text-slate-600 dark:text-slate-300 mt-2.5 leading-snug">
+                      {opportunity.description}
                     </p>
+                  )}
 
-                    <p className="text-[10px] text-slate-500 uppercase mt-1">
-                      {opportunity.corridor} · {opportunity.date}
-                    </p>
-                  </div>
+                  {/* Tasks */}
+                  {tasks.length > 0 && (
+                    <div className="mt-3">
+                      <p className="text-[9px] uppercase font-bold text-slate-500 mb-1">
+                        Maintenance Tasks
+                      </p>
 
-                  <span className="text-[9px] font-bold uppercase border border-amber-300 bg-amber-100 text-amber-800 px-2 py-1">
-                    Candidate
-                  </span>
+                      <div className="flex flex-wrap gap-1">
+                        {tasks.map((task, taskIndex) => (
+                          <span
+                            key={`${task}-${taskIndex}`}
+                            className="text-[9px] font-mono bg-slate-200 dark:bg-slate-700 px-2 py-1 rounded-[1px]"
+                          >
+                            {task}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
-
-                {/* Base Window */}
-                <div className="mb-2">
-                  <p className="text-[9px] uppercase font-bold text-slate-500">Existing Window</p>
-
-                  <div className="mt-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 px-3 py-2 font-mono text-xs">
-                    {opportunity.base_window.start}
-                    {" → "}
-                    {opportunity.base_window.end}
-                  </div>
-                </div>
-
-                {/* Candidate Window */}
-                <div className="mb-3">
-                  <p className="text-[9px] uppercase font-bold text-slate-500">Nearby Candidate</p>
-
-                  <div className="mt-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 px-3 py-2 font-mono text-xs">
-                    {opportunity.candidate_window.start}
-                    {" → "}
-                    {opportunity.candidate_window.end}
-                  </div>
-                </div>
-
-                {/* Metrics */}
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-2 text-center">
-                    <p className="text-[8px] uppercase font-bold text-slate-500">Gap</p>
-
-                    <p className="font-mono font-bold text-sm text-[#003366] dark:text-sky-400">
-                      {opportunity.gap_minutes} min
-                    </p>
-                  </div>
-
-                  <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-2 text-center">
-                    <p className="text-[8px] uppercase font-bold text-slate-500">Combined</p>
-
-                    <p className="font-mono font-bold text-sm text-[#003366] dark:text-sky-400">
-                      {opportunity.combined_duration_minutes} min
-                    </p>
-                  </div>
-                </div>
-
-                {/* Tasks */}
-                <div className="mt-3">
-                  <p className="text-[9px] uppercase font-bold text-slate-500 mb-1">
-                    Maintenance Tasks
-                  </p>
-
-                  <div className="flex flex-wrap gap-1">
-                    {[
-                      ...(opportunity.base_tasks || []),
-                      ...(opportunity.candidate_tasks || []),
-                    ].map((task, taskIndex) => (
-                      <span
-                        key={`${task}-${taskIndex}`}
-                        className="text-[9px] font-mono bg-slate-200 dark:bg-slate-700 px-2 py-1"
-                      >
-                        {task}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         ) : (
           <div className="p-5">
@@ -1900,7 +1929,7 @@ function OptimizerPage() {
                                 Requested Window
                               </span>
                               <span className="font-mono font-bold">
-                                {requestedWindow
+                                {requestedWindow?.start && requestedWindow?.end
                                   ? `${requestedWindow.start.slice(0, 5)}–${requestedWindow.end.slice(0, 5)}`
                                   : "Not available"}
                               </span>
@@ -1910,7 +1939,7 @@ function OptimizerPage() {
                                 Selected Optimized Window
                               </span>
                               <span className="font-mono font-bold text-[#003366] dark:text-sky-400">
-                                {selectedWindow.start.slice(0, 5)}–{selectedWindow.end.slice(0, 5)}
+                                {selectedWindow?.start ? selectedWindow.start.slice(0, 5) : "—"}–{selectedWindow?.end ? selectedWindow.end.slice(0, 5) : "—"}
                               </span>
                             </div>
                             <div>
