@@ -640,6 +640,9 @@ def run_optimization():
         exec_time = round(time.time() - start_time, 2)
         return {
             "status": "success",
+            "is_demo": True,
+            "data_source": "SYNTHETIC_DEMO",
+            "notice": "DEMO MODE: Synthetic Offline Optimization Plan (PostgreSQL disconnected)",
             "message": "Optimization completed successfully (resilient fallback mode)",
             "requests_processed": 7,
             "blocks_generated": len(saved_blocks),

@@ -80,10 +80,13 @@ def get_connection():
 def get_trains(user: CurrentUser = Depends(get_current_user)):
     conn = get_connection()
     if not conn:
+        demo_trains = [{**t, "is_demo": True, "data_source": "SYNTHETIC_DEMO"} for t in FALLBACK_TRAINS]
         return {
             "status": "success",
-            "train_count": len(FALLBACK_TRAINS),
-            "trains": FALLBACK_TRAINS,
+            "is_demo": True,
+            "data_source": "SYNTHETIC_DEMO",
+            "train_count": len(demo_trains),
+            "trains": demo_trains,
             "scope": user.scope,
             "department": user.dept,
         }
@@ -98,6 +101,8 @@ def get_trains(user: CurrentUser = Depends(get_current_user)):
                 conn.close()
                 return {
                     "status": "success",
+                    "is_demo": False,
+                    "data_source": "POSTGRESQL",
                     "train_count": 0,
                     "trains": [],
                     "scope": user.scope,
@@ -145,19 +150,26 @@ def get_trains(user: CurrentUser = Depends(get_current_user)):
             train = {}
             for column, value in zip(columns, row):
                 train[column] = str(value) if value is not None else None
+            train["is_demo"] = False
+            train["data_source"] = "POSTGRESQL"
             trains.append(train)
 
         return {
             "status": "success",
+            "is_demo": False,
+            "data_source": "POSTGRESQL",
             "train_count": len(trains),
             "trains": trains
         }
     except Exception as exc:
         print("Trains API info: Database query error, returning fallback trains:", repr(exc))
+        demo_trains = [{**t, "is_demo": True, "data_source": "SYNTHETIC_DEMO"} for t in FALLBACK_TRAINS]
         return {
             "status": "success",
-            "train_count": len(FALLBACK_TRAINS),
-            "trains": FALLBACK_TRAINS,
+            "is_demo": True,
+            "data_source": "SYNTHETIC_DEMO",
+            "train_count": len(demo_trains),
+            "trains": demo_trains,
             "scope": user.scope,
             "department": user.dept,
         }

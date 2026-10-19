@@ -91,6 +91,7 @@ function MaintenanceTasksPage() {
   const { t } = useLanguage();
   const { role, scope, can } = useAbps();
   const [tasks, setTasks] = useState<MaintenanceTask[]>([]);
+  const [isDemo, setIsDemo] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [updating, setUpdating] = useState<string | null>(null);
@@ -120,7 +121,10 @@ function MaintenanceTasksPage() {
         if (!res.ok) throw new Error("Failed to fetch");
         return res.json();
       })
-      .then((data) => setTasks(data.tasks ?? []))
+      .then((data) => {
+        setTasks(data.tasks ?? []);
+        setIsDemo(Boolean(data.is_demo));
+      })
       .catch((err) => {
         console.error("Maintenance Tasks API error:", err);
         setError(true);
@@ -319,6 +323,15 @@ function MaintenanceTasksPage() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {isDemo ? (
+              <Badge className="bg-amber-500/20 text-amber-200 border-amber-400/40 text-[10px] font-mono px-2 py-0.5">
+                DEMO MODE: SIMULATED ASSET REGISTER
+              </Badge>
+            ) : (
+              <Badge className="bg-emerald-500/20 text-emerald-200 border-emerald-400/40 text-[10px] font-mono px-2 py-0.5">
+                POSTGRESQL LIVE: PRODUCTION REGISTER
+              </Badge>
+            )}
             <Button
               asChild
               className="bg-[#FF9933] hover:bg-[#e68524] text-slate-950 font-bold text-xs uppercase tracking-wider rounded-[2px] h-9 px-4 shadow-sm"
@@ -348,7 +361,7 @@ function MaintenanceTasksPage() {
         <MetricCard
           label="TOTAL REGISTERED"
           value={tasks.length}
-          desc="Active database records"
+          desc={isDemo ? "Simulated records (DB offline)" : "Verified database records"}
           icon={LayoutList}
           borderColor="border-slate-300"
           tone="text-[#003366]"

@@ -410,7 +410,10 @@ def get_emergency_incidents(
 ):
     conn = get_connection()
     if not conn:
-        return FALLBACK_EMERGENCIES
+        return [
+            {**em, "is_demo": True, "data_source": "SYNTHETIC_DEMO"}
+            for em in FALLBACK_EMERGENCIES
+        ]
 
     try:
         cursor = conn.cursor()
@@ -438,10 +441,13 @@ def get_emergency_incidents(
         conn.close()
 
         if not rows:
-            return FALLBACK_EMERGENCIES
+            return [
+                {**em, "is_demo": True, "data_source": "SYNTHETIC_DEMO"}
+                for em in FALLBACK_EMERGENCIES
+            ]
 
         return [
-            serialize_incident(row)
+            {**serialize_incident(row), "is_demo": False, "data_source": "POSTGRESQL"}
             for row in rows
         ]
 

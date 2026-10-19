@@ -6,7 +6,7 @@ import { useLanguage } from "@/context/LanguageContext";
 import { Button } from "@/components/ui/button";
 
 export function GovtHeader({ onOpenLoginModal }: { onOpenLoginModal?: () => void }) {
-  const { role, signedIn, signOut } = useAbps();
+  const { role, signedIn, signOut, isDemoMode } = useAbps();
   const { t } = useLanguage();
 
   return (
@@ -35,6 +35,43 @@ export function GovtHeader({ onOpenLoginModal }: { onOpenLoginModal?: () => void
 
         {/* Right: Hotline, Corridor Live status & Auth */}
         <div className="flex flex-wrap items-center gap-3 sm:gap-4">
+          {/* Environment Status Badge */}
+          {isDemoMode ? (
+            <div
+              className="hidden md:flex items-center gap-2 rounded border border-amber-300 dark:border-amber-700/60 bg-amber-50 dark:bg-amber-950/40 px-2.5 py-1 text-xs"
+              title="Database offline: Active data source is synthetic demonstration dataset"
+            >
+              <span className="relative flex size-2">
+                <span className="inline-flex size-2 rounded-full bg-amber-500"></span>
+              </span>
+              <div>
+                <p className="text-[10px] font-bold uppercase text-amber-800 dark:text-amber-300 leading-none">
+                  {t("Demo Mode", "डेमो मोड")}
+                </p>
+                <p className="text-[10px] font-medium text-amber-900 dark:text-amber-400 leading-none">
+                  {t("Simulated Records", "सिम्युलेटेड रिकॉर्ड")}
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div
+              className="hidden md:flex items-center gap-2 rounded border border-emerald-300 dark:border-emerald-700/60 bg-emerald-50 dark:bg-emerald-950/40 px-2.5 py-1 text-xs"
+              title="PostgreSQL connected: Active data source is verified railway records"
+            >
+              <span className="relative flex size-2">
+                <span className="inline-flex size-2 rounded-full bg-emerald-500"></span>
+              </span>
+              <div>
+                <p className="text-[10px] font-bold uppercase text-emerald-800 dark:text-emerald-300 leading-none">
+                  {t("PostgreSQL Live", "पोस्टग्रेस लाइव")}
+                </p>
+                <p className="text-[10px] font-medium text-emerald-900 dark:text-emerald-400 leading-none">
+                  {t("Production DB", "उत्पादन डेटाबेस")}
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Rail Madad 139 Hotline */}
           <div className="hidden lg:flex items-center gap-2 rounded border border-orange-200 dark:border-orange-900/50 bg-orange-50 dark:bg-orange-950/40 px-2.5 py-1 text-xs">
             <PhoneCall className="size-3.5 text-orange-600 dark:text-orange-400" />

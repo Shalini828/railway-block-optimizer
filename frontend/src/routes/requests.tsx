@@ -1,4 +1,4 @@
-﻿import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState, useMemo, useEffect } from "react";
 import {
   Send,
@@ -198,6 +198,7 @@ function RequestsPage() {
   const [rejectingReq, setRejectingReq] = useState<Requisition | null>(null);
   const [rejectionReason, setRejectionReason] = useState("");
 
+  const [isDemo, setIsDemo] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showForm, setShowForm] = useState(true);
 
@@ -310,7 +311,7 @@ function RequestsPage() {
       }
 
       const rows = Array.isArray(data) ? data : Array.isArray(data?.requests) ? data.requests : [];
-
+      setIsDemo(Boolean(data?.is_demo));
       setBackendReqs(rows.map(mapBackendRequisition));
     } catch (error) {
       console.error("Failed to load requisitions:", error);
@@ -767,6 +768,15 @@ function RequestsPage() {
                     <span className="bg-[#FF9933] text-slate-950 text-[9px] font-bold px-1.5 py-0.5 rounded-[2px] uppercase">
                       Official
                     </span>
+                    {isDemo ? (
+                      <span className="bg-amber-400 text-amber-950 text-[9px] font-bold px-1.5 py-0.5 rounded-[2px] uppercase">
+                        Demo Records (DB Offline)
+                      </span>
+                    ) : (
+                      <span className="bg-emerald-400 text-emerald-950 text-[9px] font-bold px-1.5 py-0.5 rounded-[2px] uppercase">
+                        PostgreSQL Live
+                      </span>
+                    )}
                   </div>
                   <p className="text-[10px] text-slate-300">
                     {t(

@@ -283,6 +283,9 @@ def _build_fallback_plan_response(user):
     total_train_impact = sum(float(b.get("train_impact") or 0) for b in fallback_blocks)
     return {
         "status": "success",
+        "is_demo": True,
+        "data_source": "SYNTHETIC_DEMO",
+        "notice": "DEMO MODE: Synthetic Offline Plan (PostgreSQL disconnected)",
         "message": "Loaded the latest saved optimized plan",
         "block_count": len(fallback_blocks),
         "requests_processed": 7,
@@ -307,7 +310,7 @@ def _build_fallback_plan_response(user):
             "compute_time_seconds": 1.15,
             "execution_latency_seconds": 1.15,
         },
-        "blocks": fallback_blocks,
+        "blocks": [{**b, "is_demo": True, "data_source": "SYNTHETIC_DEMO"} for b in fallback_blocks],
         "scope": getattr(user, "scope", "network") if user else "network",
         "shadow_block_opportunities": FALLBACK_SHADOW_OPPORTUNITIES,
     }
@@ -677,6 +680,8 @@ def get_optimized_plan(
                 "total_train_conflicts": engine_metrics["total_train_conflicts"],
             },
             "engine_metrics": engine_metrics,
+            "is_demo": False,
+            "data_source": "POSTGRESQL",
             "blocks": formatted_blocks if formatted_blocks else _build_fallback_plan_response(user)["blocks"],
             "scope": user.scope,
             "shadow_block_opportunities": shadow_block_opportunities if shadow_block_opportunities else FALLBACK_SHADOW_OPPORTUNITIES,

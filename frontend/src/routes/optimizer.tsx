@@ -76,6 +76,9 @@ export const Route = createFileRoute("/optimizer")({
 
 interface OptimizationApiResponse {
   status: string;
+  is_demo?: boolean;
+  data_source?: string;
+  notice?: string;
   message?: string;
   requests_processed?: number;
   blocks_generated?: number;
@@ -407,7 +410,10 @@ async function fetchSavedOptimization(): Promise<OptimizationApiResponse | null>
 
   return {
     status: "success",
-    message: "Loaded saved optimized blocks from PostgreSQL",
+    is_demo: payload.is_demo,
+    data_source: payload.data_source,
+    notice: payload.notice,
+    message: payload.message || "Loaded saved optimized blocks",
     requests_processed: requestsProcessed,
     blocks_generated: blocks.length,
     run_metrics: {
@@ -989,6 +995,47 @@ function OptimizerPage() {
               {t(
                 "Departmental engineers may review AI schedule recommendations and shadow clusters for their division.",
                 "विभागीय इंजीनियर अपने प्रभाग के लिए एआई शेड्यूल सिफारिशों और शैडो समूहों की समीक्षा कर सकते हैं।",
+              )}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Data Source Provenance Indicator */}
+      {apiData?.is_demo && (
+        <div className="mb-5 bg-amber-50 dark:bg-amber-950/40 border-2 border-amber-300 dark:border-amber-800 p-3.5 rounded-[2px] flex items-center gap-3">
+          <AlertTriangle className="size-5 text-amber-700 dark:text-amber-400 shrink-0" />
+          <div>
+            <h4 className="text-xs font-bold uppercase tracking-wider text-amber-950 dark:text-amber-100">
+              {t(
+                "DEMO MODE: Simulated Optimization Dataset (PostgreSQL Offline)",
+                "डेमो मोड: सिमुलेटेड ऑप्टिमाइज़ेशन डेटासेट (पोस्टग्रेस ऑफ़लाइन)",
+              )}
+            </h4>
+            <p className="text-[11px] text-amber-800 dark:text-amber-300 mt-0.5">
+              {apiData.notice ||
+                t(
+                  "Central database is disconnected. The optimization metrics and blocks shown are computed from fallback demonstration datasets.",
+                  "केंद्रीय डेटाबेस डिस्कनेक्ट है। दिखाए गए ऑप्टिमाइज़ेशन मेट्रिक्स और ब्लॉक फॉलबैक डिमॉन्स्ट्रेशन डेटासेट से गणना किए गए हैं।",
+                )}
+            </p>
+          </div>
+        </div>
+      )}
+      {apiData && apiData.is_demo === false && (
+        <div className="mb-5 bg-emerald-50 dark:bg-emerald-950/40 border-2 border-emerald-300 dark:border-emerald-800 p-3.5 rounded-[2px] flex items-center gap-3">
+          <ShieldCheck className="size-5 text-emerald-700 dark:text-emerald-400 shrink-0" />
+          <div>
+            <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-950 dark:text-emerald-100">
+              {t(
+                "LIVE PRODUCTION PLAN: Verified PostgreSQL Ledger",
+                "लाइव प्रोडक्शन प्लान: सत्यापित पोस्टग्रेस खाता बही",
+              )}
+            </h4>
+            <p className="text-[11px] text-emerald-800 dark:text-emerald-300 mt-0.5">
+              {t(
+                "Optimization plan is verified and loaded from PostgreSQL central database.",
+                "ऑप्टिमाइज़ेशन प्लान सत्यापित है और पोस्टग्रेस केंद्रीय डेटाबेस से लोड किया गया है।",
               )}
             </p>
           </div>

@@ -127,20 +127,20 @@ def get_maintenance_tasks(user: CurrentUser = Depends(get_current_user)):
     conn = get_connection()
     if not conn:
         clean_dept = (user.dept or "").upper() if user and hasattr(user, "dept") else "ALL"
+        raw_tasks = FALLBACK_TASKS
         if user and getattr(user, "scope", "network") != "network":
-            filtered = [
+            raw_tasks = [
                 t for t in FALLBACK_TASKS
                 if t.get("department", "").upper() == clean_dept
             ]
-            return {
-                "status": "success",
-                "task_count": len(filtered),
-                "tasks": filtered,
-            }
+        demo_tasks = [{**t, "is_demo": True, "data_source": "SYNTHETIC_DEMO"} for t in raw_tasks]
         return {
             "status": "success",
-            "task_count": len(FALLBACK_TASKS),
-            "tasks": FALLBACK_TASKS,
+            "is_demo": True,
+            "data_source": "SYNTHETIC_DEMO",
+            "notice": "DEMO MODE: Synthetic Railway Test Data (PostgreSQL disconnected)",
+            "task_count": len(demo_tasks),
+            "tasks": demo_tasks,
         }
 
     cursor = conn.cursor()
@@ -209,6 +209,8 @@ def get_maintenance_tasks(user: CurrentUser = Depends(get_current_user)):
 
         return {
             "status": "success",
+            "is_demo": False,
+            "data_source": "POSTGRESQL",
             "task_count": len(tasks),
             "tasks": tasks
         }

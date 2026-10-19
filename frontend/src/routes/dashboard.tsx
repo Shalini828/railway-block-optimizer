@@ -250,8 +250,8 @@ function DashboardPage() {
       setError(false);
       setLastRefreshed(new Date());
     } catch (err) {
-      console.warn("Dashboard API error, falling back to mock data:", err);
-      setData(MOCK_DATA);
+      console.warn("Dashboard API unreachable:", err);
+      setData(null);
       setError(true);
       setLastRefreshed(new Date());
     } finally {
@@ -411,6 +411,69 @@ function DashboardPage() {
           </div>
         }
       />
+
+      {/* Real-time Data Source Provenance Banner */}
+      {data && (data as any).is_demo && (
+        <div className="mb-4 rounded border-l-4 border-amber-500 bg-amber-50 dark:bg-amber-950/40 p-3 text-xs text-amber-900 dark:text-amber-200">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="size-4 text-amber-600 shrink-0" />
+            <div>
+              <p className="font-bold uppercase tracking-wider text-[11px] text-amber-800 dark:text-amber-300">
+                {t("DEMO MODE ACTIVE: Database Disconnected", "डेमो मोड सक्रिय: डेटाबेस डिस्कनेक्ट")}
+              </p>
+              <p className="mt-0.5 text-amber-700 dark:text-amber-300">
+                {(data as any).demo_notice ||
+                  t(
+                    "PostgreSQL Central Database is offline. Operational KPIs, trains, and corridor feeds reflect synthetic simulation datasets.",
+                    "पोस्टग्रेस सेंट्रल डेटाबेस ऑफ़लाइन है। परिचालन मेट्रिक्स, ट्रेनें और कॉरिडोर फ़ीड कृत्रिम सिमुलेशन डेटासेट दर्शाते हैं।"
+                  )}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+      {data && (data as any).is_demo === false && (
+        <div className="mb-4 rounded border-l-4 border-emerald-500 bg-emerald-50 dark:bg-emerald-950/40 p-3 text-xs text-emerald-900 dark:text-emerald-200">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="size-4 text-emerald-600 shrink-0" />
+            <div>
+              <p className="font-bold uppercase tracking-wider text-[11px] text-emerald-800 dark:text-emerald-300">
+                {t("LIVE PRODUCTION FEED: PostgreSQL Connected", "लाइव प्रोडक्शन फ़ीड: पोस्टग्रेस कनेक्टेड")}
+              </p>
+              <p className="mt-0.5 text-emerald-700 dark:text-emerald-300">
+                {t(
+                  "Displaying verified operational records directly from Central Railway Database.",
+                  "सेंट्रल रेलवे डेटाबेस से सीधे सत्यापित परिचालन रिकॉर्ड प्रदर्शित किए जा रहे हैं।"
+                )}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {error && !data && (
+        <Card className="p-8 text-center border-red-200 bg-red-50/50 dark:bg-red-950/20 mb-6">
+          <AlertCircle className="size-10 text-red-600 mx-auto mb-3" />
+          <h3 className="text-base font-bold text-red-900 dark:text-red-200">
+            {t("Unable to Load Operations Telemetry", "परिचालन टेलीमेट्री लोड करने में असमर्थ")}
+          </h3>
+          <p className="text-xs text-red-700 dark:text-red-300 max-w-md mx-auto mt-1 mb-4">
+            {t(
+              "Central operations API is currently unreachable. Mock records have been disabled to ensure operational authenticity.",
+              "केंद्रीय परिचालन एपीआई वर्तमान में अनुपलब्ध है। परिचालन प्रामाणिकता सुनिश्चित करने के लिए मॉक रिकॉर्ड अक्षम कर दिए गए हैं।"
+            )}
+          </p>
+          <Button
+            size="sm"
+            onClick={fetchData}
+            disabled={isRefreshing}
+            className="bg-[#003366] text-white hover:bg-[#002244]"
+          >
+            <RefreshCw className={`mr-2 size-3.5 ${isRefreshing ? "animate-spin" : ""}`} />
+            {t("Retry Connection", "पुनः प्रयास करें")}
+          </Button>
+        </Card>
+      )}
 
       {/* Top Banner & KPI Matrix */}
       <div className="grid gap-4 lg:grid-cols-4 mb-6">

@@ -429,12 +429,16 @@ def get_block_requests(user: CurrentUser = Depends(get_current_user)):
     conn = get_connection()
     if not conn:
         clean_dept = (user.dept or "").upper() if user and hasattr(user, "dept") else "ALL"
+        raw_list = FALLBACK_BLOCK_REQUESTS
         if user and getattr(user, "scope", "network") != "network":
-            return [
+            raw_list = [
                 req for req in FALLBACK_BLOCK_REQUESTS
                 if req.get("department_id") in (f"DEPT-{clean_dept}", clean_dept, user.dept)
             ]
-        return FALLBACK_BLOCK_REQUESTS
+        return [
+            {**r, "is_demo": True, "data_source": "SYNTHETIC_DEMO"}
+            for r in raw_list
+        ]
 
     cursor = conn.cursor()
 

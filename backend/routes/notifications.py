@@ -105,11 +105,10 @@ def get_notifications(user_id: str | None = None):
 def mark_notification_read(notification_id: int):
     conn = get_connection()
     if not conn:
-        return {
-            "status": "success",
-            "message": "Notification marked as read (offline mode)",
-            "notification_id": notification_id
-        }
+        raise HTTPException(
+            status_code=503,
+            detail="Database offline: cannot persist notification status without database connection"
+        )
 
     cursor = conn.cursor()
 

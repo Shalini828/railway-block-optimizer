@@ -64,6 +64,8 @@ export type Ctx = {
   approveAll: () => void;
   signedOff: string[];
   savedMinutes: number;
+  isDemoMode: boolean;
+  refreshAll: () => Promise<void>;
   kpis: {
     availability: string;
     scheduled: number;
@@ -87,6 +89,7 @@ export function AbpsProvider({ children }: { children: ReactNode }) {
   const [signedIn, setSignedIn] = useState(false);
   const [authReady, setAuthReady] = useState(false);
 
+  const [isDemoMode, setIsDemoMode] = useState<boolean>(true);
   const [reqs, setReqs] = useState<Requisition[]>(REQUISITIONS);
   const [trains, setTrains] = useState<Train[]>([]);
   const [kpis, setKpis] = useState<{
@@ -108,6 +111,112 @@ export function AbpsProvider({ children }: { children: ReactNode }) {
   const [signedOff, setSignedOff] = useState<string[]>([]);
   const [counter, setCounter] = useState(9000);
   const [restored, setRestored] = useState(false);
+
+  const refreshAll = async () => {
+    try {
+      const [kpiRes, trainRes, reqsRes] = await Promise.all([
+        apiFetch("/dashboard/kpis"),
+        apiFetch("/trains/"),
+        apiFetch("/block-requests/"),
+      ]);
+
+      if (kpiRes.ok) {
+        const data = await kpiRes.json();
+        setIsDemoMode(Boolean(data.is_demo));
+        setKpis({
+          availability: String(data.kpis?.overall_asset_availability ?? 0),
+          scheduled: data.kpis?.scheduled_blocks ?? 0,
+          blockHours: String(data.kpis?.shadow_block_savings ?? 0),
+          trainDelay: data.kpis?.punctuality_impact_index ?? 0,
+          scope: data.scope,
+          department_kpis: data.department_kpis,
+        });
+      }
+
+      if (trainRes.ok) {
+        const trainData = await trainRes.json();
+        const trainList = Array.isArray(trainData)
+          ? trainData
+          : Array.isArray(trainData?.trains)
+            ? trainData.trains
+            : [];
+        setTrains(trainList);
+      }
+
+      if (reqsRes.ok) {
+        const reqData = await reqsRes.json();
+        const rows = Array.isArray(reqData)
+          ? reqData
+          : Array.isArray(reqData?.requests)
+            ? reqData.requests
+            : [];
+        if (rows.length > 0) {
+          const mapped: Requisition[] = rows.map((item: any) => {
+            const minutes = Number(item?.requested_duration_min ?? item?.duration_min ?? 0);
+            const crit =
+              item?.criticality === "Medium"
+                ? "Medium"
+                : item?.criticality === "Low"
+                  ? "Low"
+                  : "High";
+            const daysOverdue = Number(item?.days_overdue ?? item?.overdue_days ?? 0);
+            const tsrRisk = Boolean(item?.tsr_risk ?? item?.safety_risk ?? false);
+            const blockType = (item?.block_type as any) ?? "Traffic Block";
+            const rawStatus = (item?.request_status ?? "").toUpperCase();
+            const status: Status =
+              rawStatus === "APPROVED" || rawStatus === "OPTIMIZED"
+                ? "Approved"
+                : rawStatus === "ACTIVE"
+                  ? "Active"
+                  : rawStatus === "COMPLETED"
+                    ? "Completed"
+                    : rawStatus === "CANCELLED"
+                      ? "Cancelled"
+                      : rawStatus === "REJECTED"
+                        ? "Rejected"
+                        : "Pending AI Scheduling";
+
+            const deptStr = String(item?.department_id ?? item?.dept ?? "").toUpperCase();
+            const dept: Dept = deptStr.includes("SMMS")
+              ? "SMMS"
+              : deptStr.includes("TDMS")
+                ? "TDMS"
+                : "TMS";
+
+            return {
+              id: String(item?.request_id ?? item?.id ?? "REQ-UNKNOWN"),
+              backendId: String(item?.request_id ?? item?.id ?? ""),
+              dept,
+              assetId: String(item?.asset_id ?? item?.task_id ?? "ASSET-01"),
+              work: String(item?.description ?? item?.work ?? "Track maintenance"),
+              section: String(item?.corridor_id ?? item?.section_id ?? "NDLS-CNB"),
+              line: String(item?.line ?? "Up Main"),
+              chainage: String(item?.chainage ?? "KM 100/00 - 102/00"),
+              blockType,
+              duration: minutes ? minutes / 60 : 3,
+              crew: Number(item?.crew ?? 12),
+              criticality: crit,
+              daysOverdue,
+              tsrRisk,
+              status,
+              score: item?.score
+                ? Number(item.score)
+                : criticalityScore({
+                    criticality: crit,
+                    daysOverdue,
+                    tsrRisk,
+                    blockType,
+                  } as Requisition),
+              requestedBy: String(item?.requested_by ?? "SSE / Incharge"),
+            };
+          });
+          setReqs(mapped);
+        }
+      }
+    } catch (e) {
+      console.warn("refreshAll failed:", e);
+    }
+  };
 
   // Setup unauth handler
   useEffect(() => {
@@ -264,40 +373,10 @@ export function AbpsProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  // Fetch KPIs and Trains only when authenticated token changes
+  // Fetch KPIs, Trains and Requisitions when authenticated token changes
   useEffect(() => {
     if (!token || !signedIn) return;
-
-    apiFetch("/dashboard/kpis")
-      .then((res) => {
-        if (!res.ok) throw new Error("Failed to fetch dashboard KPIs");
-        return res.json();
-      })
-      .then((data) => {
-        setKpis({
-          availability: String(data.kpis?.overall_asset_availability ?? 0),
-          scheduled: data.kpis?.scheduled_blocks ?? 0,
-          blockHours: String(data.kpis?.shadow_block_savings ?? 0),
-          trainDelay: data.kpis?.punctuality_impact_index ?? 0,
-          scope: data.scope,
-          department_kpis: data.department_kpis,
-        });
-      })
-      .catch((error) => {
-        console.error("Dashboard KPI API error:", error);
-      });
-
-    apiFetch("/trains/")
-      .then((res) => {
-        if (!res.ok) throw new Error("Failed to fetch trains");
-        return res.json();
-      })
-      .then((data: Train[]) => {
-        setTrains(data);
-      })
-      .catch((error) => {
-        console.error("Train API error:", error);
-      });
+    void refreshAll();
   }, [token, signedIn]);
 
   // Scoped selectors for department roles
@@ -347,15 +426,32 @@ export function AbpsProvider({ children }: { children: ReactNode }) {
     addReq: (r) => {
       const id = `REQ-${r.dept}-${counter}`;
       setCounter((c) => c + 1);
-      setReqs((prev) => [
-        {
-          ...r,
-          id,
-          status: "Pending AI Scheduling" as const,
-          score: criticalityScore({ ...r, id, status: "Pending AI Scheduling" } as Requisition),
-        },
-        ...prev,
-      ]);
+      const newReq: Requisition = {
+        ...r,
+        id,
+        status: "Pending AI Scheduling" as const,
+        score: criticalityScore({ ...r, id, status: "Pending AI Scheduling" } as Requisition),
+      };
+      setReqs((prev) => [newReq, ...prev]);
+
+      // Persist to backend asynchronously
+      apiFetch("/block-requests/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          corridor_id: r.section,
+          department_id: `DEPT-${r.dept}`,
+          requested_duration_min: Math.round(r.duration * 60),
+          criticality: r.criticality,
+          block_type: r.blockType,
+          description: r.work,
+          line: r.line,
+          chainage: r.chainage,
+          safety_risk: r.tsrRisk,
+        }),
+      })
+        .then(() => refreshAll())
+        .catch((err) => console.warn("Backend addReq error:", err));
     },
     plan,
     visiblePlan,
@@ -366,6 +462,10 @@ export function AbpsProvider({ children }: { children: ReactNode }) {
       setReqs(res.updated);
       setPlan(res.plan);
       setConflicts(res.conflicts);
+      // Trigger backend optimizer run asynchronously
+      apiFetch("/optimization/", { method: "POST" })
+        .then(() => refreshAll())
+        .catch((err) => console.warn("Backend optimizer trigger error:", err));
       return {
         clusters: res.plan.filter((p) => p.reqIds.length > 1).length,
         saved: res.plan.reduce((s, p) => s + p.savedMinutes, 0),
@@ -374,12 +474,18 @@ export function AbpsProvider({ children }: { children: ReactNode }) {
     },
     resolveConflict: (id) => {
       setConflicts((prev) => prev.map((c) => (c.id === id ? { ...c, resolved: true } : c)));
+      apiFetch(`/conflicts/${id}/resolve`, { method: "POST" }).catch(() => {});
     },
     approve: (id) => {
       setSignedOff((prev) => (prev.includes(id) ? prev : [...prev, id]));
       setReqs((prev) =>
         prev.map((r) => (r.clusterId === id ? { ...r, status: "Approved" as const } : r)),
       );
+      apiFetch(`/optimized-plan/${id}/approve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      }).catch((e) => console.warn("Approve API error:", e));
     },
     approveAll: () => {
       setSignedOff(plan.map((p) => p.clusterId));
@@ -388,9 +494,18 @@ export function AbpsProvider({ children }: { children: ReactNode }) {
           r.status === "Clustered / Shadowed" ? { ...r, status: "Approved" as const } : r,
         ),
       );
+      plan.forEach((p) => {
+        apiFetch(`/optimized-plan/${p.clusterId}/approve`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        }).catch(() => {});
+      });
     },
     signedOff,
     savedMinutes: plan.reduce((s, p) => s + p.savedMinutes, 0),
+    isDemoMode,
+    refreshAll,
     kpis,
   };
 

@@ -130,6 +130,7 @@ function EmergencyPage() {
   const { t } = useLanguage();
   const { role, can } = useAbps();
   const [emergencies, setEmergencies] = useState<Emergency[]>([]);
+  const [isDemo, setIsDemo] = useState(false);
 
   const allowedEmergencyTypes = useMemo(() => {
     if (role.id === "engineering") {
@@ -180,6 +181,8 @@ function EmergencyPage() {
           data?.detail || data?.message || `Emergency API failed with status ${response.status}`,
         );
       }
+
+      setIsDemo(Boolean(data?.is_demo));
 
       // The emergency backend has returned more than one valid envelope
       // shape during development. Accept all of them so the UI stays
@@ -526,6 +529,15 @@ function EmergencyPage() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {isDemo ? (
+              <span className="border border-amber-300 bg-amber-50 text-amber-800 px-2.5 py-1 text-xs font-bold rounded-[2px] uppercase">
+                DEMO MODE: SIMULATED INCIDENTS
+              </span>
+            ) : (
+              <span className="border border-emerald-300 bg-emerald-50 text-emerald-800 px-2.5 py-1 text-xs font-bold rounded-[2px] uppercase">
+                POSTGRESQL LIVE
+              </span>
+            )}
             <Button
               className="bg-[#FF9933] hover:bg-[#e68524] text-slate-950 font-bold text-xs uppercase tracking-wider rounded-[2px] h-9 px-4 shadow-sm"
               onClick={() => {

@@ -89,6 +89,7 @@ function ConflictsPage() {
   const { t } = useLanguage();
 
   const [blocks, setBlocks] = useState<OptimizedBlock[]>([]);
+  const [isDemo, setIsDemo] = useState(false);
   const [loading, setLoading] = useState(true);
 
   // Filters
@@ -110,6 +111,7 @@ function ConflictsPage() {
       const res = await apiFetch("/optimized-plan/");
       const data = await res.json();
       setBlocks(data.blocks || []);
+      setIsDemo(Boolean(data.is_demo));
     } catch (err) {
       console.error(err);
       toast.error("Failed to load optimized plan data.");
@@ -310,6 +312,15 @@ function ConflictsPage() {
         }
         action={
           <div className="flex flex-wrap items-center gap-2">
+            {isDemo ? (
+              <span className="border border-amber-300 bg-amber-50 text-amber-800 px-2.5 py-1 text-xs font-bold rounded-[2px] uppercase">
+                DEMO PLAN: SIMULATED CONFLICTS
+              </span>
+            ) : (
+              <span className="border border-emerald-300 bg-emerald-50 text-emerald-800 px-2.5 py-1 text-xs font-bold rounded-[2px] uppercase">
+                POSTGRESQL LIVE
+              </span>
+            )}
             <span className="border border-amber-300 bg-amber-100 text-amber-900 px-2.5 py-1 text-xs font-bold rounded-[2px] uppercase">
               {stats.awaitingApproval} {t("Awaiting Scrutiny", "संवीक्षा लंबित")}
             </span>

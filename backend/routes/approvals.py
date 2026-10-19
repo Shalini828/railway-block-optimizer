@@ -36,6 +36,8 @@ def process_approval(request: ApprovalRequest):
         new_status = "APPROVED" if request.action.strip().upper() == "APPROVE" else "REJECTED"
         return {
             "status": "success",
+            "is_demo": True,
+            "data_source": "SYNTHETIC_DEMO",
             "message": f"Block {new_status.lower()} successfully (offline mode)",
             "block_id": request.block_id,
             "block_status": new_status

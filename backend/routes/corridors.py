@@ -86,10 +86,13 @@ DEFAULT_CORRIDORS = [
 def get_corridors(user: CurrentUser = Depends(get_current_user)):
     conn = get_connection()
     if not conn:
+        demo_corridors = [{**c, "is_demo": True, "data_source": "SYNTHETIC_DEMO"} for c in DEFAULT_CORRIDORS]
         return {
             "status": "success",
-            "corridor_count": len(DEFAULT_CORRIDORS),
-            "corridors": DEFAULT_CORRIDORS,
+            "is_demo": True,
+            "data_source": "SYNTHETIC_DEMO",
+            "corridor_count": len(demo_corridors),
+            "corridors": demo_corridors,
             "scope": user.scope,
             "department": user.dept,
         }
@@ -103,6 +106,8 @@ def get_corridors(user: CurrentUser = Depends(get_current_user)):
             if not relevant_corridors:
                 return {
                     "status": "success",
+                    "is_demo": False,
+                    "data_source": "POSTGRESQL",
                     "corridor_count": 0,
                     "corridors": [],
                     "scope": user.scope,
@@ -148,18 +153,25 @@ def get_corridors(user: CurrentUser = Depends(get_current_user)):
             corridor = {}
             for column, value in zip(columns, row):
                 corridor[column] = str(value) if value is not None else None
+            corridor["is_demo"] = False
+            corridor["data_source"] = "POSTGRESQL"
             corridors.append(corridor)
 
         return {
             "status": "success",
+            "is_demo": False,
+            "data_source": "POSTGRESQL",
             "corridor_count": len(corridors),
             "corridors": corridors
         }
     except Exception:
+        demo_corridors = [{**c, "is_demo": True, "data_source": "SYNTHETIC_DEMO"} for c in DEFAULT_CORRIDORS]
         return {
             "status": "success",
-            "corridor_count": len(DEFAULT_CORRIDORS),
-            "corridors": DEFAULT_CORRIDORS,
+            "is_demo": True,
+            "data_source": "SYNTHETIC_DEMO",
+            "corridor_count": len(demo_corridors),
+            "corridors": demo_corridors,
             "scope": user.scope,
             "department": user.dept,
         }

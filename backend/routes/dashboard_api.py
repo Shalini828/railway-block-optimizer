@@ -934,6 +934,9 @@ def get_dashboard_kpis(user: CurrentUser = Depends(get_current_user)):
                 datetime.now().isoformat()
         }
 
+        response_data["is_demo"] = False
+        response_data["data_source"] = "POSTGRESQL"
+
         if user.scope != "network":
             response_data["department"] = user.dept
             response_data["department_kpis"] = department_kpis
@@ -947,6 +950,9 @@ def get_dashboard_kpis(user: CurrentUser = Depends(get_current_user)):
         scope = getattr(user, "scope", "network") or "network"
         return {
             "status": "success",
+            "is_demo": True,
+            "data_source": "SYNTHETIC_DEMO",
+            "notice": "DEMO MODE: Synthetic Railway Test Data (PostgreSQL offline)",
             "scope": scope,
             "department": dept_name if scope != "network" else None,
             "kpis": {

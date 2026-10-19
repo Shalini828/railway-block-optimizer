@@ -303,6 +303,8 @@ def resolve_conflict(
     if not conn:
         return {
             "status": "success",
+            "is_demo": True,
+            "data_source": "SYNTHETIC_DEMO",
             "message": "Conflict resolved successfully (offline mode)",
             "conflict_id": conflict_id,
             "conflict_status": "RESOLVED",
