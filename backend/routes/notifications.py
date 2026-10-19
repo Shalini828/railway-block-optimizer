@@ -13,20 +13,22 @@ router = APIRouter(
 )
 
 
+from db_config import DB_CONFIG
+
+
 def get_connection():
-    return psycopg.connect(
-        host=os.getenv("DB_HOST"),
-        port=os.getenv("DB_PORT"),
-        dbname=os.getenv("DB_NAME"),
-        user=os.getenv("DB_USER"),
-        password=os.getenv("DB_PASSWORD")
-    )
+    try:
+        return psycopg.connect(**DB_CONFIG)
+    except Exception:
+        return None
 
 
 @router.get("/")
 def get_notifications(user_id: str | None = None):
-
     conn = get_connection()
+    if not conn:
+        return []
+
     cursor = conn.cursor()
 
     try:
@@ -88,8 +90,12 @@ def get_notifications(user_id: str | None = None):
         )
 
     finally:
-        cursor.close()
-        conn.close()
+        if cursor:
+            try: cursor.close()
+            except Exception: pass
+        if conn:
+            try: conn.close()
+            except Exception: pass
 
 # ==========================================
 # MARK NOTIFICATION AS READ
@@ -97,8 +103,14 @@ def get_notifications(user_id: str | None = None):
 
 @router.patch("/{notification_id}/read")
 def mark_notification_read(notification_id: int):
-
     conn = get_connection()
+    if not conn:
+        return {
+            "status": "success",
+            "message": "Notification marked as read (offline mode)",
+            "notification_id": notification_id
+        }
+
     cursor = conn.cursor()
 
     try:
@@ -137,5 +149,9 @@ def mark_notification_read(notification_id: int):
         )
 
     finally:
-        cursor.close()
-        conn.close()        
+        if cursor:
+            try: cursor.close()
+            except Exception: pass
+        if conn:
+            try: conn.close()
+            except Exception: pass        

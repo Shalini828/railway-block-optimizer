@@ -214,7 +214,7 @@ const DEFAULT_CORRIDORS: CorridorOption[] = [
   { corridor_id: "C05", corridor_name: "Agra Cantt - Jhansi (AGC-VGLB)" },
 ];
 
-export function WhatIfSimulationPage() {
+function WhatIfSimulationPage() {
   const { user } = useAbps();
   const { t } = useLanguage();
 

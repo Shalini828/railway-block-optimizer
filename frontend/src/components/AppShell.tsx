@@ -77,8 +77,8 @@ export function AppShell({ children }: { children: ReactNode }) {
     }
   };
 
-  // 0. VERIFYING SESSION SPLASH
-  if (!authReady) {
+  // 0. VERIFYING SESSION SPLASH (ONLY FOR PROTECTED / NON-HOME ROUTES)
+  if (!authReady && !isHomePage) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center bg-[#f4f6f9] dark:bg-[#0b1320] text-foreground">
         <GovtNationalEmblem className="size-12 animate-pulse mb-3" />

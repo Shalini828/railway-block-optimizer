@@ -28,10 +28,13 @@ router = APIRouter(
 
 
 def get_connection():
-    return psycopg.connect(
-        **DB_CONFIG,
-        row_factory=dict_row
-    )
+    try:
+        return psycopg.connect(
+            **DB_CONFIG,
+            row_factory=dict_row
+        )
+    except Exception:
+        return None
 
 
 def _time_to_minutes(value):
@@ -228,6 +231,8 @@ def _get_shadow_opportunities(current_blocks):
     block_optimizer and never reruns optimization.
     """
     conn = get_connection()
+    if not conn:
+        return []
     try:
         with conn.cursor() as cursor:
             cursor.execute("""
@@ -249,7 +254,11 @@ def _get_shadow_opportunities(current_blocks):
         print(f"Shadow block opportunities read failed: {shadow_error}")
         return []
     finally:
-        conn.close()
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 # ============================================================
@@ -262,6 +271,37 @@ def get_optimized_plan(
     user: CurrentUser = Depends(get_current_user),
 ):
     conn = get_connection()
+    if not conn:
+        return {
+            "status": "success",
+            "message": "No saved optimized plan found (offline database mode)",
+            "block_count": 0,
+            "requests_processed": 0,
+            "blocks_generated": 0,
+            "run_metrics": {
+                "total_block_minutes": 0,
+                "average_block_duration_min": 0,
+                "average_utilization": 0,
+                "average_optimization_score": 0,
+                "total_train_impact": 0,
+                "total_train_conflicts": 0,
+            },
+            "engine_metrics": {
+                "requests_processed": 0,
+                "blocks_generated": 0,
+                "total_block_minutes": 0,
+                "average_block_duration_min": 0,
+                "average_utilization": 0,
+                "average_optimization_score": 0,
+                "total_train_impact": 0,
+                "total_train_conflicts": 0,
+                "compute_time_seconds": None,
+                "execution_latency_seconds": None,
+            },
+            "blocks": [],
+            "scope": getattr(user, "scope", "network") if user else "network",
+            "shadow_block_opportunities": [],
+        }
 
     try:
         with conn.cursor() as cursor:
@@ -657,7 +697,11 @@ def get_optimized_plan(
         }
 
     finally:
-        conn.close()
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 # ============================================================

@@ -20,14 +20,14 @@ router = APIRouter(
 )
 
 
+from db_config import DB_CONFIG
+
+
 def get_connection():
-    return psycopg.connect(
-        host=os.getenv("DB_HOST"),
-        port=os.getenv("DB_PORT"),
-        dbname=os.getenv("DB_NAME"),
-        user=os.getenv("DB_USER"),
-        password=os.getenv("DB_PASSWORD")
-    )
+    try:
+        return psycopg.connect(**DB_CONFIG)
+    except Exception:
+        return None
 
 
 def format_block(block):
@@ -109,6 +109,9 @@ def get_saved_blocks():
     """
 
     conn = get_connection()
+    if not conn:
+        return []
+
     cursor = conn.cursor()
 
     try:
@@ -199,8 +202,12 @@ def get_saved_blocks():
         return blocks
 
     finally:
-        cursor.close()
-        conn.close()
+        if cursor:
+            try: cursor.close()
+            except Exception: pass
+        if conn:
+            try: conn.close()
+            except Exception: pass
 
 
 def get_saved_request_count():
@@ -210,6 +217,9 @@ def get_saved_request_count():
     """
 
     conn = get_connection()
+    if not conn:
+        return 0
+
     cursor = conn.cursor()
 
     try:
@@ -225,9 +235,16 @@ def get_saved_request_count():
         row = cursor.fetchone()
         return int((row[0] if row else 0) or 0)
 
+    except Exception:
+        return 0
+
     finally:
-        cursor.close()
-        conn.close()
+        if cursor:
+            try: cursor.close()
+            except Exception: pass
+        if conn:
+            try: conn.close()
+            except Exception: pass
 
 
 
@@ -293,6 +310,9 @@ def _get_persistent_shadow_opportunities():
         )
 
         conn = get_connection()
+        if not conn:
+            return []
+
         cursor = conn.cursor()
 
         try:
@@ -321,8 +341,12 @@ def _get_persistent_shadow_opportunities():
 
             rows = cursor.fetchall()
         finally:
-            cursor.close()
-            conn.close()
+            if cursor:
+                try: cursor.close()
+                except Exception: pass
+            if conn:
+                try: conn.close()
+                except Exception: pass
 
         if not rows:
             print("PERSISTENT SHADOW REBUILD: no saved request rows found")
@@ -453,18 +477,23 @@ def run_optimization():
         # --------------------------------------------------
 
         conn = get_connection()
-        cursor = conn.cursor()
-
-        cursor.execute("""
-            SELECT COUNT(*)
-            FROM block_requests
-            WHERE request_status = 'PENDING'
-        """)
-
-        pending_requests = cursor.fetchone()[0]
-
-        cursor.close()
-        conn.close()
+        if not conn:
+            pending_requests = 0
+        else:
+            try:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT COUNT(*)
+                    FROM block_requests
+                    WHERE request_status = 'PENDING'
+                """)
+                row = cursor.fetchone()
+                pending_requests = row[0] if row else 0
+                cursor.close()
+            except Exception:
+                pending_requests = 0
+            finally:
+                conn.close()
 
 
         # --------------------------------------------------

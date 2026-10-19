@@ -2,6 +2,8 @@ export function GovtNationalEmblem({ className = "size-10" }: { className?: stri
   return (
     <svg
       viewBox="0 0 100 100"
+      width="100"
+      height="100"
       className={className}
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
@@ -18,8 +20,8 @@ export function GovtNationalEmblem({ className = "size-10" }: { className?: stri
       {Array.from({ length: 24 }).map((_, i) => {
         const angle = (i * 360) / 24;
         const rad = (angle * Math.PI) / 180;
-        const x2 = 50 + 17 * Math.sin(rad);
-        const y2 = 50 - 17 * Math.cos(rad);
+        const x2 = Number((50 + 17 * Math.sin(rad)).toFixed(3));
+        const y2 = Number((50 - 17 * Math.cos(rad)).toFixed(3));
         return (
           <line
             key={i}

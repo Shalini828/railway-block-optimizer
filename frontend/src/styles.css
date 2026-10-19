@@ -199,6 +199,10 @@
 
   html {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans", Helvetica, Arial, sans-serif;
+    text-rendering: optimizeSpeed;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    scroll-behavior: smooth;
   }
 
   body {
@@ -206,7 +210,14 @@
     color: var(--color-foreground);
     font-size: 0.875rem; /* 14px utilitarian base size */
     line-height: 1.4;
+    overflow-x: hidden;
   }
+}
+
+/* Performance: modern off-screen content containment */
+.content-visibility-auto {
+  content-visibility: auto;
+  contain-intrinsic-size: 1px 600px;
 }
 
 /* Government Portal Utility Classes */

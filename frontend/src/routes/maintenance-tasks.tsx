@@ -87,7 +87,7 @@ type MaintenanceTask = {
 
 const ITEMS_PER_PAGE = 10;
 
-export default function MaintenanceTasksPage() {
+function MaintenanceTasksPage() {
   const { t } = useLanguage();
   const { role, scope, can } = useAbps();
   const [tasks, setTasks] = useState<MaintenanceTask[]>([]);

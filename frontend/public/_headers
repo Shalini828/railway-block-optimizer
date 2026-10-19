@@ -1,0 +1,17 @@
+# Cache immutable static assets for 1 year
+/icon-48.webp
+  Cache-Control: public, max-age=31536000, immutable
+/icon-192.webp
+  Cache-Control: public, max-age=31536000, immutable
+/icon-192.png
+  Cache-Control: public, max-age=31536000, immutable
+/icon.webp
+  Cache-Control: public, max-age=31536000, immutable
+/icon.png
+  Cache-Control: public, max-age=31536000, immutable
+/favicon.ico
+  Cache-Control: public, max-age=86400
+
+# Cache all static JS and CSS
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable

@@ -14,14 +14,14 @@ router = APIRouter(
 )
 
 
+from db_config import DB_CONFIG
+
+
 def get_connection():
-    return psycopg.connect(
-        host=os.getenv("DB_HOST"),
-        port=os.getenv("DB_PORT"),
-        dbname=os.getenv("DB_NAME"),
-        user=os.getenv("DB_USER"),
-        password=os.getenv("DB_PASSWORD")
-    )
+    try:
+        return psycopg.connect(**DB_CONFIG)
+    except Exception:
+        return None
 
 
 DEFAULT_CORRIDORS = [
@@ -84,10 +84,8 @@ DEFAULT_CORRIDORS = [
 
 @router.get("/", dependencies=[Depends(require_permission("corridors.view"))])
 def get_corridors(user: CurrentUser = Depends(get_current_user)):
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
-    except Exception:
+    conn = get_connection()
+    if not conn:
         return {
             "status": "success",
             "corridor_count": len(DEFAULT_CORRIDORS),
@@ -96,69 +94,79 @@ def get_corridors(user: CurrentUser = Depends(get_current_user)):
             "department": user.dept,
         }
 
-    if user.scope != "network":
-        relevant_corridors = get_relevant_corridor_ids(cursor, user.dept)
-        if not relevant_corridors:
-            cursor.close()
-            conn.close()
-            return {
-                "status": "success",
-                "corridor_count": 0,
-                "corridors": [],
-                "scope": user.scope,
-                "department": user.dept,
-            }
+    cursor = None
+    try:
+        cursor = conn.cursor()
 
-        cursor.execute("""
-            SELECT
-                corridor_id,
-                division_id,
-                corridor_name,
-                source_station,
-                destination_station,
-                distance_km,
-                traffic_level,
-                electrified,
-                max_block_duration_min
-            FROM corridors
-            WHERE corridor_id = ANY(%s)
-            ORDER BY corridor_id
-        """, (relevant_corridors,))
-    else:
-        cursor.execute("""
-            SELECT
-                corridor_id,
-                division_id,
-                corridor_name,
-                source_station,
-                destination_station,
-                distance_km,
-                traffic_level,
-                electrified,
-                max_block_duration_min
-            FROM corridors
-            ORDER BY corridor_id
-        """)
+        if user.scope != "network":
+            relevant_corridors = get_relevant_corridor_ids(cursor, user.dept)
+            if not relevant_corridors:
+                return {
+                    "status": "success",
+                    "corridor_count": 0,
+                    "corridors": [],
+                    "scope": user.scope,
+                    "department": user.dept,
+                }
 
-    rows = cursor.fetchall()
+            cursor.execute("""
+                SELECT
+                    corridor_id,
+                    division_id,
+                    corridor_name,
+                    source_station,
+                    destination_station,
+                    distance_km,
+                    traffic_level,
+                    electrified,
+                    max_block_duration_min
+                FROM corridors
+                WHERE corridor_id = ANY(%s)
+                ORDER BY corridor_id
+            """, (relevant_corridors,))
+        else:
+            cursor.execute("""
+                SELECT
+                    corridor_id,
+                    division_id,
+                    corridor_name,
+                    source_station,
+                    destination_station,
+                    distance_km,
+                    traffic_level,
+                    electrified,
+                    max_block_duration_min
+                FROM corridors
+                ORDER BY corridor_id
+            """)
 
-    columns = [desc[0] for desc in cursor.description]
+        rows = cursor.fetchall()
+        columns = [desc[0] for desc in cursor.description]
 
-    cursor.close()
-    conn.close()
+        corridors = []
+        for row in rows:
+            corridor = {}
+            for column, value in zip(columns, row):
+                corridor[column] = str(value) if value is not None else None
+            corridors.append(corridor)
 
-    corridors = []
-
-    for row in rows:
-        corridor = {}
-
-        for column, value in zip(columns, row):
-            corridor[column] = str(value) if value is not None else None
-
-        corridors.append(corridor)
-
-    return {
-        "status": "success",
-        "corridor_count": len(corridors),
-        "corridors": corridors
-    }
+        return {
+            "status": "success",
+            "corridor_count": len(corridors),
+            "corridors": corridors
+        }
+    except Exception:
+        return {
+            "status": "success",
+            "corridor_count": len(DEFAULT_CORRIDORS),
+            "corridors": DEFAULT_CORRIDORS,
+            "scope": user.scope,
+            "department": user.dept,
+        }
+    finally:
+        if cursor:
+            try: cursor.close()
+            except Exception: pass
+        if conn:
+            try: conn.close()
+            except Exception: pass

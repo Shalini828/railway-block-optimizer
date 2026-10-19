@@ -207,7 +207,7 @@ function LandingPage() {
       ========================================================= */}
       <section
         id="challenge"
-        className="border-b border-slate-200 bg-[#f6f8fb] dark:border-slate-800 dark:bg-slate-950 py-16 sm:py-20 lg:py-22"
+        className="content-visibility-auto border-b border-slate-200 bg-[#f6f8fb] dark:border-slate-800 dark:bg-slate-950 py-16 sm:py-20 lg:py-22"
       >
         <div className="mx-auto max-w-[1480px] px-5 sm:px-8 lg:px-10">
           <SectionIntro
@@ -275,7 +275,7 @@ function LandingPage() {
       ========================================================= */}
       <section
         id="solution"
-        className="border-b border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 py-16 sm:py-20 lg:py-22"
+        className="content-visibility-auto border-b border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 py-16 sm:py-20 lg:py-22"
       >
         <div className="mx-auto max-w-[1480px] px-5 sm:px-8 lg:px-10">
           <SectionIntro
@@ -332,7 +332,7 @@ function LandingPage() {
       ========================================================= */}
       <section
         id="how-it-works"
-        className="border-b border-slate-200 bg-[#f6f8fb] dark:border-slate-800 dark:bg-slate-950 py-16 sm:py-20 lg:py-22"
+        className="content-visibility-auto border-b border-slate-200 bg-[#f6f8fb] dark:border-slate-800 dark:bg-slate-950 py-16 sm:py-20 lg:py-22"
       >
         <div className="mx-auto max-w-[1480px] px-5 sm:px-8 lg:px-10">
           <SectionIntro
@@ -406,7 +406,7 @@ function LandingPage() {
       ========================================================= */}
       <section
         id="ai-capabilities"
-        className="border-b border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 py-16 sm:py-20 lg:py-22"
+        className="content-visibility-auto border-b border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 py-16 sm:py-20 lg:py-22"
       >
         <div className="mx-auto max-w-[1480px] px-5 sm:px-8 lg:px-10">
           <SectionIntro
@@ -470,7 +470,7 @@ function LandingPage() {
       ========================================================= */}
       <section
         id="why-it-matters"
-        className="border-b border-slate-200 bg-[#f6f8fb] dark:border-slate-800 dark:bg-slate-950 py-16 sm:py-20 lg:py-22"
+        className="content-visibility-auto border-b border-slate-200 bg-[#f6f8fb] dark:border-slate-800 dark:bg-slate-950 py-16 sm:py-20 lg:py-22"
       >
         <div className="mx-auto max-w-[1480px] px-5 sm:px-8 lg:px-10">
           <div className="grid gap-10 lg:grid-cols-[0.85fr_1.15fr] lg:items-center">

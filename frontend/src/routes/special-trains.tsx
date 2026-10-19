@@ -1222,4 +1222,3 @@ toast.success(
     </div>
   );
 }
-export default SpecialTrainsPage;

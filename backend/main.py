@@ -157,7 +157,9 @@ def ensure_database_schema():
 
 
 # Run migration on startup
-ensure_database_schema()
+@app.on_event("startup")
+async def startup_event():
+    ensure_database_schema()
 
 
 from fastapi import Request

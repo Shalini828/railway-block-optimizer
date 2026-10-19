@@ -49,6 +49,10 @@ export default {
     try {
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);
+      const url = new URL(request.url);
+      if (url.pathname.match(/\.(png|webp|ico|svg|jpg|jpeg|woff2|woff|css|js)$/)) {
+        response.headers.set("Cache-Control", "public, max-age=31536000, immutable");
+      }
       return await normalizeCatastrophicSsrResponse(response);
     } catch (error) {
       console.error(error);
