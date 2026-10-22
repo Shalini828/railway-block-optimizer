@@ -164,7 +164,9 @@ function PlannerPage() {
   const [corridors, setCorridors] = useState<Corridor[]>([]);
   const [blocks, setBlocks] = useState<OptimizedBlock[]>([]);
   const [trains, setTrains] = useState<Train[]>([]);
+  const [hasSavedPlan, setHasSavedPlan] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
   const [dateStr, setDateStr] = useState("");
   const [selectedCorridor, setSelectedCorridor] = useState("ALL");
@@ -238,6 +240,7 @@ function PlannerPage() {
 
   const fetchData = async () => {
     setLoading(true);
+    setLoadError(null);
 
     try {
       const [corridorResponse, blockResponse, trainResponse] =
@@ -247,25 +250,53 @@ function PlannerPage() {
           apiFetch("/trains/"),
         ]);
 
-      if (
-        !corridorResponse.ok ||
-        !blockResponse.ok ||
-        !trainResponse.ok
-      ) {
-        throw new Error("One or more planner APIs failed.");
+      const responses = [corridorResponse, blockResponse, trainResponse];
+      const failedResponse = responses.find((response) => !response.ok);
+      if (failedResponse) {
+        const errorData = await failedResponse.json().catch(() => ({}));
+        throw new Error(
+          errorData?.detail || `Planner API failed (${failedResponse.status}).`,
+        );
       }
 
-      const corridorData = await corridorResponse.json();
-      const blockData = await blockResponse.json();
-      const trainData = await trainResponse.json();
+      const [corridorData, blockData, trainData] = await Promise.all(
+        responses.map((response) => response.json()),
+      );
+      if (!Array.isArray(corridorData?.corridors) || !Array.isArray(trainData?.trains)) {
+        throw new Error("Planner API returned an unexpected corridor or train response.");
+      }
+      const hasSyntheticData = [corridorData, blockData, trainData].some(
+        (data) => data?.is_demo || data?.data_source === "SYNTHETIC_DEMO",
+      ) || [...corridorData.corridors, ...trainData.trains].some(
+        (row: { is_demo?: boolean; data_source?: string }) =>
+          row.is_demo || row.data_source === "SYNTHETIC_DEMO",
+      );
+      if (hasSyntheticData) {
+        throw new Error("Planner APIs returned demo data; saved PostgreSQL data could not be verified.");
+      }
+      if (!Array.isArray(blockData?.blocks)) {
+        throw new Error("Saved optimized plan response did not include a block list.");
+      }
 
-      const nextCorridors: Corridor[] = corridorData.corridors ?? [];
-      const nextBlocks: OptimizedBlock[] = blockData.blocks ?? [];
-      const nextTrains: Train[] = trainData.trains ?? [];
+      const nextCorridors: Corridor[] = Array.isArray(corridorData.corridors)
+        ? corridorData.corridors
+        : [];
+      // The API can include marked demo rows when a saved plan is empty. Never
+      // put those rows into the planner timeline as if they were persisted.
+      const nextBlocks: OptimizedBlock[] = Array.isArray(blockData.blocks)
+        ? blockData.blocks.filter(
+            (block: OptimizedBlock & { is_demo?: boolean; data_source?: string }) =>
+              !block.is_demo && block.data_source !== "SYNTHETIC_DEMO",
+          )
+        : [];
+      const nextTrains: Train[] = Array.isArray(trainData.trains)
+        ? trainData.trains
+        : [];
 
       setCorridors(nextCorridors);
       setBlocks(nextBlocks);
       setTrains(nextTrains);
+      setHasSavedPlan(nextBlocks.length > 0);
 
       // Prefer the first date that actually exists in the backend data.
       if (!dateStr) {
@@ -277,19 +308,35 @@ function PlannerPage() {
       }
     } catch (error) {
       console.error(error);
-      toast.error("Failed to load planner data.");
+      const message = error instanceof Error ? error.message : "Failed to load planner data.";
+      setLoadError(message);
+      setCorridors([]);
+      setBlocks([]);
+      setTrains([]);
+      setHasSavedPlan(false);
+      setTimelineItems([]);
+      toast.error(message);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-  if (!authReady || !signedIn || !token) {
-    return;
-  }
+    if (!authReady) return;
+    if (!signedIn || !token) {
+      setLoading(false);
+      setLoadError("Sign in to load the saved plan.");
+      return;
+    }
+    void fetchData();
+  }, [authReady, signedIn, token]);
 
-  void fetchData();
-}, [authReady, signedIn, token]);
+  useEffect(() => {
+    if (!authReady || !signedIn || !token) return;
+    const refreshSavedPlan = () => void fetchData();
+    window.addEventListener("railway:optimization-saved", refreshSavedPlan);
+    return () => window.removeEventListener("railway:optimization-saved", refreshSavedPlan);
+  }, [authReady, signedIn, token]);
 
   const filteredBlocks = useMemo(() => {
     return blocks.filter(
@@ -768,27 +815,41 @@ function PlannerPage() {
         }
       />
 
+      {loadError && (
+        <div role="alert" className="mb-4 border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-900 dark:bg-red-950/30 dark:text-red-200">
+          Planner data could not be loaded: {loadError}
+        </div>
+      )}
+      {!loading && !loadError && !hasSavedPlan && (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950 dark:bg-amber-950/30 dark:text-amber-100">
+          <span>No saved optimized blocks are available. The timeline shows train data only.</span>
+          <Button asChild size="sm" variant="outline" className="border-amber-400 text-xs font-bold">
+            <Link to="/optimizer">Run Optimizer</Link>
+          </Button>
+        </div>
+      )}
+
       <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <MetricCard
           label="Planned Megablocks"
-          value={filteredBlocks.length}
+          value={loadError ? "—" : filteredBlocks.length}
         />
         <MetricCard
           label="Block Hours"
-          value={`${(totalBlockMinutes / 60).toFixed(1)}h`}
+          value={loadError ? "—" : `${(totalBlockMinutes / 60).toFixed(1)}h`}
         />
         <MetricCard
           label="Trains in Corridor"
-          value={filteredTrains.length}
+          value={loadError ? "—" : filteredTrains.length}
         />
         <MetricCard
           label="Avg Utilization"
-          value={`${avgUtilization.toFixed(1)}%`}
+          value={loadError ? "—" : `${avgUtilization.toFixed(1)}%`}
           tone="text-emerald-700 dark:text-emerald-400"
         />
         <MetricCard
           label="Path Conflicts"
-          value={overlaps.count}
+          value={loadError ? "—" : overlaps.count}
           tone={
             overlaps.count > 0
               ? "font-bold text-red-700 dark:text-red-400"
@@ -797,7 +858,7 @@ function PlannerPage() {
         />
         <MetricCard
           label="Active Corridors"
-          value={activeCorridors.length}
+          value={loadError ? "—" : activeCorridors.length}
         />
       </div>
 
@@ -821,10 +882,14 @@ function PlannerPage() {
                 <p className="font-semibold text-slate-700 dark:text-slate-300">
                   {loading
                     ? "Loading planner data..."
-                    : "No maintenance blocks scheduled for this date."}
+                    : loadError
+                      ? "Planner data is unavailable. Refresh to try again."
+                      : !hasSavedPlan
+                        ? "No saved optimized blocks are available."
+                        : "No maintenance blocks scheduled for this date."}
                 </p>
 
-                {!loading && (
+                {!loading && !loadError && (
                   <Button
                     asChild
                     variant="outline"

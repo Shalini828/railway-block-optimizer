@@ -252,7 +252,7 @@ def get_dashboard_kpis(user: CurrentUser = Depends(get_current_user)):
 
                     COUNT(*) FILTER (
                         WHERE UPPER(COALESCE(request_status, ''))
-                        IN ('PENDING', 'SUBMITTED')
+                        = 'PENDING'
                     ) AS pending,
 
                     COUNT(*) FILTER (
@@ -646,6 +646,7 @@ def get_dashboard_kpis(user: CurrentUser = Depends(get_current_user)):
 
             urgent_risks.append({
                 "id": str(task["asset_id"] or task["task_id"]),
+                "record_key": f"task:{task['task_id']}",
                 "title": str(title),
                 "severity": severity,
                 "location": (
@@ -723,6 +724,7 @@ def get_dashboard_kpis(user: CurrentUser = Depends(get_current_user)):
 
                 urgent_risks.append({
                     "id": asset_id,
+                    "record_key": f"asset:{asset_id}",
                     "title": (
                         f"{asset['asset_type'] or 'Asset'} "
                         f"Health Risk"

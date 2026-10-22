@@ -223,7 +223,7 @@ function WhatIfSimulationPage() {
   const [maintenanceDate, setMaintenanceDate] = useState<string>(() => {
     const tomorrow = new Date();
     tomorrow.setDate(tomorrow.getDate() + 1);
-    return tomorrow.toISOString().split("T")[0];
+    return tomorrow.toISOString().split("T")[0] ?? "";
   });
   const [proposedStartTime, setProposedStartTime] = useState<string>("11:00");
   const [durationMin, setDurationMin] = useState<number>(120);
@@ -295,7 +295,7 @@ function WhatIfSimulationPage() {
       };
 
       if (taskId && taskId !== "NONE") {
-        payload.task_id = taskId;
+        payload["task_id"] = taskId;
       }
 
       const res = await apiFetch("/optimization/simulate", {
@@ -361,7 +361,7 @@ function WhatIfSimulationPage() {
     setCorridor("C02");
     const tomorrow = new Date();
     tomorrow.setDate(tomorrow.getDate() + 1);
-    setMaintenanceDate(tomorrow.toISOString().split("T")[0]);
+    setMaintenanceDate(tomorrow.toISOString().split("T")[0] ?? "");
     setProposedStartTime("11:00");
     setDurationMin(120);
     setPriority("HIGH");

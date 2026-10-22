@@ -80,6 +80,9 @@ export type Requisition = {
   daysOverdue: number;
   tsrRisk: boolean;
   status: Status;
+  backendStatus?: string;
+  optimizationEligible?: boolean;
+  reviewStatus?: string;
   score?: number;
   slot?: { day: number; start: number; end: number }; // day 0..6, hours
   clusterId?: string;
@@ -435,10 +438,18 @@ export type AiPlanItem = {
 };
 
 export function criticalityScore(r: Requisition): number {
-  const crit = r.criticality === "High" ? 40 : r.criticality === "Medium" ? 25 : 12;
-  const overdue = Math.min(r.daysOverdue * 2.2, 30);
+  const crit =
+    r.criticality === "High" ? 40 :
+    r.criticality === "Medium" ? 25 : 12;
+
+  const overdue = Math.min(Math.max(Number(r.daysOverdue) || 0, 0) * 2.2, 30);
   const tsr = r.tsrRisk ? 18 : 0;
-  const hazard = r.blockType === "Power Block" ? 8 : r.blockType === "Traffic Block" ? 10 : 6;
+
+  const blockType = String(r.blockType ?? "").toLowerCase();
+  const hazard =
+    blockType.includes("power") ? 8 :
+    blockType.includes("traffic") ? 10 : 6;
+
   return Math.round(Math.min(crit + overdue + tsr + hazard, 100));
 }
 

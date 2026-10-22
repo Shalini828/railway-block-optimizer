@@ -1,5 +1,6 @@
 import sys
 import os
+import uuid
 
 VERBOSE_OPTIMIZER_LOGS = os.getenv(
     "VERBOSE_OPTIMIZER_LOGS",
@@ -23,6 +24,20 @@ import psycopg
 from psycopg.types.json import Jsonb
 from dotenv import load_dotenv
 from db_config import DB_CONFIG
+from logic.optimization_eligibility import (
+    OPTIMIZATION_ELIGIBLE_STATUS,
+    commit_or_rollback,
+    lock_pending_requests,
+    mark_request_optimized,
+)
+from logic.ir_abps_pipeline import (
+    InfeasibleOptimizationError,
+    group_compatible_requests,
+    maintenance_windows_conflict,
+    require_timetable_availability,
+    validate_optimizer_requests,
+    validate_request_coverage,
+)
 from logic.traffic_intelligence import evaluate_window
 
 from ml.predict_service import predict_asset_risk
@@ -80,21 +95,86 @@ cursor.execute("""
         br.requested_end,
         br.requested_duration_min,
         COALESCE(mt.priority_score, 0)
+        , br.block_type
+        , mt.department
+        , mt.asset_id
+        , mt.description
+        , br.section_id
+        , (c.corridor_id IS NOT NULL) AS corridor_exists
+        , (a.asset_id IS NOT NULL) AS asset_exists
+        , (cs.section_id IS NOT NULL) AS section_exists
+        , br.criticality
+        , br.safety_risk
+        , mt.overdue_days
+        , mt.task_type
     FROM block_requests br
 
     LEFT JOIN maintenance_tasks mt
         ON br.task_id = mt.task_id
+    LEFT JOIN corridors c
+        ON c.corridor_id = br.corridor_id
+    LEFT JOIN assets a
+        ON a.asset_id = mt.asset_id
+    LEFT JOIN corridor_sections cs
+        ON cs.section_id = br.section_id
 
-    WHERE br.request_status = 'PENDING'
+    WHERE br.request_status = %s
 
     ORDER BY
         br.corridor_id,
         br.requested_date,
         mt.priority_score DESC,
         br.requested_start
-""")
+""", (OPTIMIZATION_ELIGIBLE_STATUS,))
 
 requests = cursor.fetchall()
+
+ingested_request_rows = [
+    {
+        "request_id": row[0],
+        "task_id": row[1],
+        "team_id": row[2],
+        "corridor_id": row[3],
+        "requested_date": row[4],
+        "requested_start": row[5],
+        "requested_end": row[6],
+        "requested_duration_min": row[7],
+        "request_status": OPTIMIZATION_ELIGIBLE_STATUS,
+        "priority_score": row[8],
+        "block_type": row[9],
+        "department": row[10],
+        "asset_id": row[11],
+        "description": row[12],
+        "section_id": row[13],
+        "corridor_exists": row[14],
+        "asset_exists": row[15],
+        "section_exists": row[16],
+        "criticality": row[17],
+        "safety_risk": row[18],
+        "overdue_days": row[19],
+        "task_type": row[20],
+        "raw_request": row,
+    }
+    for row in requests
+]
+validated_ingested_rows, ingestion_exclusions = validate_optimizer_requests(ingested_request_rows)
+if ingestion_exclusions:
+    raise InfeasibleOptimizationError(
+        "Pending requisitions failed optimizer ingestion validation: "
+        + "; ".join(f"{item['request_id']}: {item['reason']}" for item in ingestion_exclusions),
+        stage="BDMS_INGESTION",
+        details={
+            "loaded": len(ingested_request_rows),
+            "eligible": len(validated_ingested_rows),
+            "excluded": ingestion_exclusions,
+        },
+    )
+if len({str(row[0]) for row in requests}) != len(requests):
+    raise InfeasibleOptimizationError(
+        "Duplicate request IDs were returned during optimizer ingestion.",
+        stage="BDMS_INGESTION",
+        details={"loaded": len(requests)},
+    )
 
 # ==========================================
 # DEBUG REQUEST STATUS
@@ -270,12 +350,13 @@ def calculate_goods_impact(
     corridor_id,
     block_date,
     start_hour,
+    require_observed_forecast=False,
 ):
     """
     Get predicted goods traffic for this corridor/time.
     """
 
-    previous_day_demand = 20.0
+    previous_day_demand = None
 
     cursor.execute("""
         SELECT expected_goods_trains
@@ -294,8 +375,14 @@ def calculate_goods_impact(
     if previous_row:
         previous_day_demand = safe_float(
             previous_row[0],
-            20.0
+            0.0
         )
+    elif require_observed_forecast:
+        raise RuntimeError(
+            f"No persisted goods forecast is available for corridor {corridor_id} before {block_date}."
+        )
+    else:
+        previous_day_demand = 20.0
 
     cursor.execute("""
         SELECT traffic_level
@@ -1705,22 +1792,8 @@ def score_candidate_window(
 
         task_id = request[1]
 
-        try:
-
-            risk = calculate_asset_risk_for_task(
-                task_id
-            )
-
-            asset_risks.append(risk)
-
-        except Exception as exc:
-
-            print(
-                "CANDIDATE ASSET RISK ERROR:",
-                task_id,
-                exc
-            )
-            rollback_safely()
+        risk = calculate_asset_risk_for_task(task_id)
+        asset_risks.append(risk)
 
     asset_risk_score = (
         max(asset_risks)
@@ -1743,7 +1816,7 @@ def score_candidate_window(
     traffic_level = (
         str(corridor_row[0]).upper()
         if corridor_row and corridor_row[0]
-        else "MEDIUM"
+        else None
     )
 
     traffic_map = {
@@ -1754,18 +1827,15 @@ def score_candidate_window(
         "CRITICAL": 100
     }
 
-    corridor_congestion = traffic_map.get(
-        traffic_level,
-        50
-    )
+    if traffic_level is None or traffic_level not in traffic_map:
+        raise RuntimeError(f"Corridor {corridor} has no valid persisted traffic level.")
+    corridor_congestion = traffic_map[traffic_level]
 
     # --------------------------------------
     # Traffic ML
     # --------------------------------------
 
-    try:
-
-        traffic_prediction = predict_traffic_impact(
+    traffic_prediction = predict_traffic_impact(
             block_duration_min=int(duration),
             start_hour=int(
                 str(candidate_start)[:2]
@@ -1780,49 +1850,25 @@ def score_candidate_window(
                 maintenance_priority
             )
         )
-
-        traffic_impact = safe_float(
-            traffic_prediction.get(
-                "traffic_impact_score",
-                traffic_prediction.get(
-                    "impact_score",
-                    0
-                )
-            ),
-            0
-        )
-
-    except Exception as exc:
-
-        print(
-            "CANDIDATE TRAFFIC ML ERROR:",
-            exc
-        )
-
-        traffic_impact = 0
+    traffic_value = traffic_prediction.get("traffic_impact_score", traffic_prediction.get("impact_score"))
+    if traffic_value is None:
+        raise RuntimeError("Traffic impact scoring returned no score.")
+    traffic_impact = safe_float(traffic_value, float("nan"))
+    if traffic_impact != traffic_impact or traffic_impact in (float("inf"), float("-inf")):
+        raise RuntimeError("Traffic impact scoring returned an invalid score.")
 
     # --------------------------------------
     # Goods ML
     # --------------------------------------
 
-    try:
-
-        goods_impact = calculate_goods_impact(
+    goods_impact = calculate_goods_impact(
             corridor_id=corridor,
             block_date=block_date,
             start_hour=int(
                 str(candidate_start)[:2]
-            )
+            ),
+            require_observed_forecast=True,
         )
-
-    except Exception as exc:
-
-        print(
-            "CANDIDATE GOODS ML ERROR:",
-            exc
-        )
-        rollback_safely()
-        goods_impact = 0
 
     # --------------------------------------
     # Conflict penalty
@@ -1932,127 +1978,30 @@ def score_candidate_window(
 
 
 # ==========================================
-# GROUP COMPATIBLE REQUESTS
+# STAGE 3: COMPATIBLE CROSS-DEPARTMENT CLUSTERS
 # ==========================================
 
+compatible_groups = group_compatible_requests(
+    validated_ingested_rows,
+    max_gap_minutes=MAX_CONSOLIDATION_GAP,
+    max_block_minutes=MAX_BLOCK_DURATION,
+)
 groups = []
-
-for request in requests:
-
-    (
-        request_id,
-        task_id,
-        team_id,
-        corridor_id,
-        request_date,
-        request_start,
-        request_end,
-        duration,
-        priority
-    ) = request
-
-
-    start = time_to_minutes(request_start)
-    end = time_to_minutes(request_end)
-
-
-    placed = False
-
-
-    for group in groups:
-
-        # Same corridor
-        if group["corridor"] != corridor_id:
-            continue
-
-        # Same date
-        if group["date"] != request_date:
-            continue
-
-
-        group_start = time_to_minutes(
-            group["start"]
-        )
-
-        group_end = time_to_minutes(
-            group["end"]
-        )
-
-
-        # Distance between request and group
-
-        if start > group_end:
-
-            gap = start - group_end
-
-        elif group_start > end:
-
-            gap = group_start - end
-
-        else:
-
-            gap = 0
-
-
-        # New combined window
-
-        combined_start = min(
-            group_start,
-            start
-        )
-
-        combined_end = max(
-            group_end,
-            end
-        )
-
-
-        combined_duration = (
-            combined_end - combined_start
-        )
-
-
-        # ----------------------------------
-        # CONSOLIDATION CONDITIONS
-        # ----------------------------------
-
-        if (
-            gap <= MAX_CONSOLIDATION_GAP
-            and combined_duration <= MAX_BLOCK_DURATION
-        ):
-
-            group["start"] = min(
-                group["start"],
-                request_start
-            )
-
-            group["end"] = max(
-                group["end"],
-                request_end
-            )
-
-            group["requests"].append(request)
-
-            placed = True
-
-            break
-
-
-    # --------------------------------------
-    # CREATE NEW GROUP
-    # --------------------------------------
-
-    if not placed:
-
-        groups.append(
-            {
-                "corridor": corridor_id,
-                "date": request_date,
-                "start": request_start,
-                "end": request_end,
-                "requests": [request]
-            }
-        )
+for compatible_group in compatible_groups:
+    groups.append({
+        "corridor": compatible_group["corridor_id"],
+        "date": compatible_group["requested_date"],
+        "start": minutes_to_time(compatible_group["start_minutes"]),
+        "end": minutes_to_time(compatible_group["end_minutes"]),
+        "requests": [row["raw_request"] for row in compatible_group["requests"]],
+        "cluster_id": compatible_group["cluster_id"],
+        "departments": compatible_group["departments"],
+        "cross_department": compatible_group["cross_department"],
+        "request_ids": compatible_group["request_ids"],
+        "cluster_reasons": compatible_group["reasons"],
+        "track_line": compatible_group["line"],
+        "chainage_interval": compatible_group["chainage_interval"],
+    })
 
 print("GROUPS CREATED:", len(groups))
 
@@ -2341,6 +2290,7 @@ def build_window_explanation(
 
 
 optimized_blocks = []
+selected_maintenance_windows = []
 
 
 block_number = 1
@@ -2368,6 +2318,33 @@ for group in groups:
 
     if duration < 0:
         duration += 1440
+
+    # Do not interpret an empty conflict result as a verified safe window
+    # when there is no persisted timetable for this corridor and date.
+    try:
+        cursor.execute(
+            "SELECT COUNT(*) FROM trains WHERE corridor_id = %s AND travel_date = %s",
+            (corridor, block_date),
+        )
+        regular_train_count = int((cursor.fetchone() or [0])[0] or 0)
+        cursor.execute(
+            "SELECT COUNT(*) FROM special_train_services WHERE corridor_id = %s AND service_date = %s AND active = TRUE",
+            (corridor, block_date),
+        )
+        special_train_count = int((cursor.fetchone() or [0])[0] or 0)
+    except Exception as exc:
+        rollback_safely()
+        raise InfeasibleOptimizationError(
+            f"Train timetable availability could not be checked for corridor {corridor} on {block_date}: {exc}",
+            stage="CORRIDOR_MATCHING",
+            details={"corridor_id": str(corridor), "service_date": str(block_date)},
+        ) from exc
+    require_timetable_availability(
+        regular_train_count,
+        special_train_count,
+        corridor,
+        block_date,
+    )
 
     # ======================================
     # CANDIDATE WINDOW OPTIMIZATION
@@ -2477,6 +2454,10 @@ for group in groups:
         )
 
     candidate_results = []
+    candidate_windows_evaluated = 0
+    candidate_windows_rejected_for_train_conflict = 0
+    candidate_windows_rejected_for_block_overlap = 0
+    candidate_scoring_errors = []
 
     print()
     print(
@@ -2504,6 +2485,7 @@ for group in groups:
         )
 
         try:
+            candidate_windows_evaluated += 1
 
             result = score_candidate_window(
                 corridor=corridor,
@@ -2514,18 +2496,53 @@ for group in groups:
                 utilization=candidate_utilization
             )
 
+        except psycopg.Error as exc:
+            rollback_safely()
+            raise InfeasibleOptimizationError(
+                f"Operational database data could not be evaluated for candidate {candidate.get('start')}-{candidate.get('end')}: {exc}",
+                stage="CORRIDOR_MATCHING",
+                details={"corridor_id": str(corridor), "service_date": str(block_date)},
+            ) from exc
         except Exception as exc:
-
-            print(
-                "CANDIDATE SCORING ERROR:",
-                exc
-            )
-
+            candidate_scoring_errors.append({
+                "start": str(candidate.get("start")),
+                "end": str(candidate.get("end")),
+                "reason": str(exc),
+            })
             continue
 
         candidate_results.append(
             result
         )
+
+        if result.get("conflict_check_status") != "VERIFIED":
+            candidate_results.pop()
+            continue
+        if int(result.get("conflict_count", 0) or 0) > 0:
+            candidate_results.pop()
+            candidate_windows_rejected_for_train_conflict += 1
+            continue
+        candidate_start_minutes = time_to_minutes(result["start"])
+        candidate_end_minutes = time_to_minutes(result["end"])
+        if candidate_end_minutes <= candidate_start_minutes:
+            candidate_end_minutes += 1440
+        line, interval = group["track_line"], group["chainage_interval"]
+        candidate_window = {
+            "corridor": corridor,
+            "date": block_date,
+            "line": line,
+            "chainage_interval": interval,
+            "start_minutes": candidate_start_minutes,
+            "end_minutes": candidate_end_minutes,
+        }
+        overlaps_existing_block = any(
+            maintenance_windows_conflict(candidate_window, existing)
+            for existing in selected_maintenance_windows
+        )
+        if overlaps_existing_block:
+            candidate_results.pop()
+            candidate_windows_rejected_for_block_overlap += 1
+            continue
 
         print(
             f"  {str(result['start'])[:5]}-"
@@ -2542,58 +2559,21 @@ for group in groups:
     # ======================================
 
     if not candidate_results:
-
-        # Never silently drop a maintenance group.
-        # Preserve the requested window as a reviewable fallback.
-        print(
-            "NO FEASIBLE CANDIDATE - USING REQUESTED WINDOW FALLBACK:",
-            corridor,
-            block_date
+        request_ids = [str(request[0]) for request in group["requests"]]
+        raise InfeasibleOptimizationError(
+            f"No verified conflict-free maintenance window was found for requests {request_ids} "
+            f"on corridor {corridor} at {block_date}. "
+            f"Evaluated {candidate_windows_evaluated} candidate(s); "
+            f"{candidate_windows_rejected_for_train_conflict} had train conflicts. No plan was saved.",
+            stage="CORRIDOR_MATCHING",
+            details={
+                "request_ids": request_ids,
+                "candidate_windows_evaluated": candidate_windows_evaluated,
+                "candidate_windows_rejected_for_train_conflict": candidate_windows_rejected_for_train_conflict,
+                "candidate_windows_rejected_for_block_overlap": candidate_windows_rejected_for_block_overlap,
+                "candidate_scoring_errors": candidate_scoring_errors,
+            },
         )
-
-        try:
-            connection.rollback()
-        except Exception:
-            pass
-
-        fallback_start = group["start"]
-        fallback_end = group["end"]
-        fallback_duration = duration
-
-        # Candidate scoring failed for this group. Do not run another
-        # potentially failing DB query here. The fallback is explicitly
-        # marked for manual review; an empty conflict list must NOT be
-        # interpreted as a verified zero-conflict window.
-        fallback_conflicts = []
-        fallback_conflict_check = "NOT_VERIFIED"
-
-        fallback_utilization = (
-            round(
-                min(
-                    (occupied_minutes / fallback_duration) * 100,
-                    100
-                ),
-                2
-            )
-            if fallback_duration > 0
-            else 0.0
-        )
-
-        candidate_results.append({
-            "start": fallback_start,
-            "end": fallback_end,
-            "duration": fallback_duration,
-            "score": 0.0,
-            "asset_risk": 0.0,
-            "traffic_impact": 0.0,
-            "goods_impact": 0.0,
-            "conflicts": fallback_conflicts,
-            "conflict_count": len(fallback_conflicts),
-            "utilization": fallback_utilization,
-            "consolidation_score": min(100, len(group["requests"]) * 25),
-            "fallback": True,
-            "conflict_check_status": fallback_conflict_check,
-        })
 
     # Higher AI score is better.
     # If scores are tied:
@@ -2732,10 +2712,18 @@ for group in groups:
         )
         estimated_delay = assessment.get("estimated_delay_min", 0)
     except Exception as exc:
-        print("SELECTED WINDOW EVALUATION ERROR:", exc)
         rollback_safely()
-        assessment = {}
-        estimated_delay = 0
+        raise InfeasibleOptimizationError(
+            f"Selected window could not be verified against train data for corridor {corridor} on {block_date}: {exc}",
+            stage="CORRIDOR_MATCHING",
+            details={"corridor_id": str(corridor), "service_date": str(block_date)},
+        ) from exc
+    if assessment.get("conflicts"):
+        raise InfeasibleOptimizationError(
+            f"Train conflicts changed during verification for corridor {corridor} on {block_date}; no plan was saved.",
+            stage="CORRIDOR_MATCHING",
+            details={"corridor_id": str(corridor), "service_date": str(block_date)},
+        )
 
     # ======================================
     # BUILD AI EXPLANATION
@@ -2966,10 +2954,7 @@ for group in groups:
     # BLOCK ID
     # ======================================
 
-    block_id = (
-        f"OPT-{block_date}-"
-        f"{block_number:03d}"
-    )
+    block_id = f"OPT-{block_date}-{uuid.uuid4().hex[:8]}-{block_number:03d}"
 
 
    # ======================================
@@ -3262,6 +3247,17 @@ for group in groups:
 
             "optimization_score": optimization_score,
 
+            "cluster_id": group["cluster_id"],
+            "request_ids": group["request_ids"],
+            "departments": group["departments"],
+            "cross_department_cluster": group["cross_department"],
+            "cluster_reasons": group["cluster_reasons"],
+            "candidate_windows_evaluated": candidate_windows_evaluated,
+            "candidate_windows_rejected_for_train_conflict": candidate_windows_rejected_for_train_conflict,
+            "candidate_windows_rejected_for_block_overlap": candidate_windows_rejected_for_block_overlap,
+            "candidate_scoring_errors": candidate_scoring_errors,
+            "timetable_verified": True,
+
             "tasks": group["requests"],
 
             "train_conflicts": train_conflicts,
@@ -3281,6 +3277,19 @@ for group in groups:
             ),
         }
     )
+
+    selected_start_minutes = time_to_minutes(start_time)
+    selected_end_minutes = time_to_minutes(end_time)
+    if selected_end_minutes <= selected_start_minutes:
+        selected_end_minutes += 1440
+    selected_maintenance_windows.append({
+        "corridor": corridor,
+        "date": block_date,
+        "line": group["track_line"],
+        "chainage_interval": group["chainage_interval"],
+        "start_minutes": selected_start_minutes,
+        "end_minutes": selected_end_minutes,
+    })
 
     block_number += 1
 
@@ -3302,30 +3311,24 @@ optimized_request_ids = [
     for request in block.get("tasks", [])
 ]
 
-group_request_set = set(group_request_ids)
-optimized_request_set = set(optimized_request_ids)
-
-missing_request_ids = sorted(
-    group_request_set - optimized_request_set
+coverage = validate_request_coverage(
+    [str(request[0]) for request in requests],
+    optimized_request_ids,
 )
-
-duplicate_request_ids = sorted(
-    {
-        request_id
-        for request_id in optimized_request_ids
-        if optimized_request_ids.count(request_id) > 1
-    }
-)
+missing_request_ids = coverage["missing"]
+duplicate_request_ids = coverage["duplicates"]
+unexpected_request_ids = coverage["unexpected"]
 
 print()
 print("==========================================")
 print("OPTIMIZATION COVERAGE CHECK")
 print("==========================================")
-print("REQUESTS IN GROUPS:", len(group_request_set))
+print("REQUESTS IN GROUPS:", len(set(group_request_ids)))
 print("OPTIMIZED BLOCKS:", len(optimized_blocks))
-print("REQUESTS ASSIGNED TO BLOCKS:", len(optimized_request_set))
+print("REQUESTS ASSIGNED TO BLOCKS:", len(set(optimized_request_ids)))
 print("MISSING REQUESTS:", missing_request_ids)
 print("DUPLICATE REQUESTS:", duplicate_request_ids)
+print("UNEXPECTED REQUESTS:", unexpected_request_ids)
 
 if missing_request_ids:
     print(
@@ -3336,8 +3339,15 @@ if missing_request_ids:
 else:
     print(
         "✅ COVERAGE PASS:",
-        len(group_request_set),
+        len(set(group_request_ids)),
         "request(s) are represented in optimized blocks."
+    )
+
+if missing_request_ids or duplicate_request_ids or unexpected_request_ids:
+    raise RuntimeError(
+        "Optimization coverage validation failed: "
+        f"missing={missing_request_ids}, duplicates={duplicate_request_ids}, "
+        f"unexpected={unexpected_request_ids}"
     )
 
 print("==========================================")
@@ -3360,216 +3370,337 @@ optimizer_log(
 # ==========================================
 # INSERT OPTIMIZED BLOCKS
 # ==========================================
-for block in optimized_blocks:
-
-    department_count = 0
-
-    if block["tasks"]:
-
-        task_ids = [
-            request[1]
-            for request in block["tasks"]
-        ]
-
-        cursor.execute(
-            """
-            SELECT COUNT(DISTINCT department)
-            FROM maintenance_tasks
-            WHERE task_id = ANY(%s)
-            """,
-            (task_ids,)
-        )
-
-        department_count = cursor.fetchone()[0]
-        print("DEPARTMENT COUNT:", department_count)
-
-    print(
-        "BEFORE INSERT:",
-        block["block_id"],
-        "CORRIDOR =", block["corridor"],
-        "DATE =", block["date"],
-        "START =", block["start"],
-        "END =", block["end"],
-        "DURATION =", block["duration"],
-        "UTILIZATION =", block["utilization"],
-        "TRAIN IMPACT =", block.get(
-            "traffic_impact_score",
-            0
-        ),
-        "TASKS =", len(block["tasks"]),
-        "DEPARTMENTS =", department_count
+try:
+    lock_pending_requests(
+        cursor,
+        {str(request[0]) for request in requests},
     )
+    with commit_or_rollback(connection):
+        for block in optimized_blocks:
 
-    cursor.execute(
-        """
-        INSERT INTO optimized_blocks
-        (
-            block_id,
-            corridor_id,
-            block_date,
-            start_time,
-            end_time,
-            duration_min,
-            utilization_percent,
-            train_impact_score,
-            estimated_delay_min,
-            ai_decision_confidence,
-            ai_reasons,
-            ai_explanation,
-            optimization_score,
-            number_of_tasks,
-            number_of_departments
+            department_count = 0
+
+            if block["tasks"]:
+
+                task_ids = [
+                    request[1]
+                    for request in block["tasks"]
+                ]
+
+                cursor.execute(
+                    """
+                    SELECT COUNT(DISTINCT department)
+                    FROM maintenance_tasks
+                    WHERE task_id = ANY(%s)
+                    """,
+                    (task_ids,)
+                )
+
+                department_count = cursor.fetchone()[0]
+                print("DEPARTMENT COUNT:", department_count)
+
+            print(
+                "BEFORE INSERT:",
+                block["block_id"],
+                "CORRIDOR =", block["corridor"],
+                "DATE =", block["date"],
+                "START =", block["start"],
+                "END =", block["end"],
+                "DURATION =", block["duration"],
+                "UTILIZATION =", block["utilization"],
+                "TRAIN IMPACT =", block.get(
+                    "traffic_impact_score",
+                    0
+                ),
+                "TASKS =", len(block["tasks"]),
+                "DEPARTMENTS =", department_count
+            )
+
+            cursor.execute(
+                """
+                INSERT INTO optimized_blocks
+                (
+                    block_id,
+                    corridor_id,
+                    block_date,
+                    start_time,
+                    end_time,
+                    duration_min,
+                    utilization_percent,
+                    train_impact_score,
+                    estimated_delay_min,
+                    ai_decision_confidence,
+                    ai_reasons,
+                    ai_explanation,
+                    optimization_score,
+                    number_of_tasks,
+                    number_of_departments
+                )
+                VALUES (
+                    %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s
+                )
+                ON CONFLICT (block_id) DO UPDATE SET
+                corridor_id = EXCLUDED.corridor_id,
+                block_date = EXCLUDED.block_date,
+                start_time = EXCLUDED.start_time,
+                end_time = EXCLUDED.end_time,
+                duration_min = EXCLUDED.duration_min,
+                utilization_percent = EXCLUDED.utilization_percent,
+                train_impact_score = EXCLUDED.train_impact_score,
+                estimated_delay_min = EXCLUDED.estimated_delay_min,
+                ai_decision_confidence = EXCLUDED.ai_decision_confidence,
+                ai_reasons = EXCLUDED.ai_reasons,
+                ai_explanation = EXCLUDED.ai_explanation,
+                optimization_score = EXCLUDED.optimization_score,
+                number_of_tasks = EXCLUDED.number_of_tasks,
+                number_of_departments = EXCLUDED.number_of_departments;
+                """,
+                (
+                    block["block_id"],
+                    block["corridor"],
+                    block["date"],
+                    block["start"],
+                    block["end"],
+                    block["duration"],
+                    block["utilization"],
+                    block.get(
+                        "train_impact_score",
+                        block.get("traffic_impact_score", 0)
+                    ),
+                    block.get("estimated_delay", 0),
+                    Jsonb(block.get("ai_decision_confidence", {})),
+                    Jsonb(block.get("ai_reasons", [])),
+                    Jsonb(block.get("ai_explanation", {})),
+                    block["optimization_score"],
+                    len(block["tasks"]),
+                    department_count
+                )
+            )
+
+            print("OPTIMIZED BLOCK INSERTED:", block["block_id"])
+
+
+            # ======================================
+            # BLOCK <-> TASK
+            # ======================================
+
+            for request in block["tasks"]:
+
+                task_id = request[1]
+
+                cursor.execute(
+                    """
+                    INSERT INTO block_tasks
+                    (
+                        block_id,
+                        task_id
+                    )
+                    VALUES (%s, %s)
+                    ON CONFLICT DO NOTHING
+                    """,
+                    (
+                        block["block_id"],
+                        task_id
+                    )
+                )
+            cursor.execute(
+            """
+            UPDATE optimized_blocks ob
+            SET number_of_departments = (
+                SELECT COUNT(DISTINCT mt.department)
+                FROM block_tasks bt
+                JOIN maintenance_tasks mt
+                    ON bt.task_id = mt.task_id
+                WHERE bt.block_id = ob.block_id
+            )
+            WHERE ob.block_id = %s
+            """,
+            (block["block_id"],)
         )
-        VALUES
-            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
-            %s, %s, %s, %s, %s,
-            %s, %s, %s, %s, %s, %s, %s
-        )
-        ON CONFLICT (block_id) DO UPDATE SET
-        corridor_id = EXCLUDED.corridor_id,
-        block_date = EXCLUDED.block_date,
-        start_time = EXCLUDED.start_time,
-        end_time = EXCLUDED.end_time,
-        duration_min = EXCLUDED.duration_min,
-        utilization_percent = EXCLUDED.utilization_percent,
-        train_impact_score = EXCLUDED.train_impact_score,
-        estimated_delay_min = EXCLUDED.estimated_delay_min,
-        ai_decision_confidence = EXCLUDED.ai_decision_confidence,
-        ai_reasons = EXCLUDED.ai_reasons,
-        ai_explanation = EXCLUDED.ai_explanation,
-        optimization_score = EXCLUDED.optimization_score,
-        number_of_tasks = EXCLUDED.number_of_tasks,
-        number_of_departments = EXCLUDED.number_of_departments;
-        """,
-        (
+
+
+            # ======================================
+            # BLOCK <-> TRAIN
+            # ======================================
+            # Remove old train-impact records for this block
+            # ======================================
+            # BLOCK <-> TRAIN
+            # ======================================
+
+            # Remove old train-impact records for this block
+            print(
+            "TRAIN CONFLICT DEBUG:",
             block["block_id"],
-            block["corridor"],
-            block["date"],
-            block["start"],
-            block["end"],
-            block["duration"],
-            block["utilization"],
-            block.get(
-                "train_impact_score",
-                block.get("traffic_impact_score", 0)
-            ),
-            block.get("estimated_delay", 0),
-            Jsonb(block.get("ai_decision_confidence", {})),
-            Jsonb(block.get("ai_reasons", [])),
-            Jsonb(block.get("ai_explanation", {})),
-            block["optimization_score"],
-            len(block["tasks"]),
-            department_count
+            block["train_conflicts"]
         )
-    )
-
-    print("OPTIMIZED BLOCK INSERTED:", block["block_id"])
-
-
-    # ======================================
-    # BLOCK <-> TASK
-    # ======================================
-
-    for request in block["tasks"]:
-
-        task_id = request[1]
-
-        cursor.execute(
-            """
-            INSERT INTO block_tasks
-            (
-                block_id,
-                task_id
-            )
-            VALUES (%s, %s)
-            ON CONFLICT DO NOTHING
-            """,
-            (
-                block["block_id"],
-                task_id
-            )
-        )
-    cursor.execute(
-    """
-    UPDATE optimized_blocks ob
-    SET number_of_departments = (
-        SELECT COUNT(DISTINCT mt.department)
-        FROM block_tasks bt
-        JOIN maintenance_tasks mt
-            ON bt.task_id = mt.task_id
-        WHERE bt.block_id = ob.block_id
-    )
-    WHERE ob.block_id = %s
-    """,
-    (block["block_id"],)
-)
-
-
-    # ======================================
-    # BLOCK <-> TRAIN
-    # ======================================
-    # Remove old train-impact records for this block
-    # ======================================
-    # BLOCK <-> TRAIN
-    # ======================================
-
-    # Remove old train-impact records for this block
-    print(
-    "TRAIN CONFLICT DEBUG:",
-    block["block_id"],
-    block["train_conflicts"]
-)
     
-    cursor.execute(
-        """
-        DELETE FROM block_train_impact
-        WHERE block_id = %s
-        """,
-        (block["block_id"],)
-    )
-
-    for train in block["train_conflicts"]:
-
-        cursor.execute(
-            """
-            INSERT INTO block_train_impact
-            (
-                block_id,
-                train_id,
-                impact_type,
-                estimated_delay_min
+            cursor.execute(
+                """
+                DELETE FROM block_train_impact
+                WHERE block_id = %s
+                """,
+                (block["block_id"],)
             )
-            VALUES (%s, %s, %s, %s)
-            ON CONFLICT DO NOTHING
-            """,
-            (
-                block["block_id"],
-                train["train_id"],
-                "SCHEDULE_CONFLICT",
-                train.get("estimated_delay_min", 5)
-            )
-        )
-# ==========================================
-# SAVE
-# ==========================================
 
-# MARK PROCESSED REQUESTS AS OPTIMIZED
-# Only requests that actually appear in an optimized block are marked.
-# The coverage check above prevents silent request loss.
-for block in optimized_blocks:
-    for request in block["tasks"]:
-        request_id = request[0]
+            for train in block["train_conflicts"]:
 
-        cursor.execute(
-            """
-            UPDATE block_requests
-            SET request_status = 'OPTIMIZED'
-            WHERE request_id = %s
-            """,
-            (request_id,)
-        )
+                cursor.execute(
+                    """
+                    INSERT INTO block_train_impact
+                    (
+                        block_id,
+                        train_id,
+                        impact_type,
+                        estimated_delay_min
+                    )
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT DO NOTHING
+                    """,
+                    (
+                        block["block_id"],
+                        train["train_id"],
+                        "SCHEDULE_CONFLICT",
+                        train.get("estimated_delay_min", 5)
+                    )
+                )
+        # ==========================================
+        # SAVE
+        # ==========================================
 
-connection.commit()
+        # MARK PROCESSED REQUESTS AS OPTIMIZED
+        # Only requests that actually appear in an optimized block are marked.
+        # The coverage check above prevents silent request loss.
+        for block in optimized_blocks:
+            for request in block["tasks"]:
+                request_id = request[0]
+
+                mark_request_optimized(cursor, request_id)
+
+except Exception:
+    connection.rollback()
+    try:
+        cursor.close()
+    finally:
+        connection.close()
+    raise
+
+
+pipeline_result = {
+    "stages": [
+        {
+            "id": "BDMS_INGESTION",
+            "name": "BDMS Ingestion",
+            "status": "COMPLETED",
+            "loaded": len(requests),
+            "eligible": len(validated_ingested_rows),
+            "skipped": 0,
+            "rejected": 0,
+            "details": "Loaded unique persisted PENDING requisitions and validated task, department, asset, section, corridor, duration, and request status.",
+        },
+        {
+            "id": "CRITICALITY_SCORING",
+            "name": "Criticality Scoring",
+            "status": "COMPLETED",
+            "scored": len(validated_ingested_rows),
+            "scores": [
+                {
+                    "request_id": str(row[0]),
+                    "priority_score": safe_float(row[8], 0),
+                    "score_source": "Persisted maintenance_tasks.priority_score, calculated by the existing requisition priority rules.",
+                    "factors": {
+                        "criticality": row[17],
+                        "safety_risk": row[18],
+                        "overdue_days": row[19],
+                        "department": row[10],
+                        "task_type": row[20],
+                        "duration_min": row[7],
+                        "block_type": row[9],
+                        "tsr_risk": "Included when the requisition priority was calculated; not persisted as a separate field.",
+                    },
+                    "criticality": row[17],
+                    "safety_risk": row[18],
+                    "overdue_days": row[19],
+                    "scoring_source": "Persisted maintenance priority; asset/traffic factors are evaluated at block window scoring.",
+                }
+                for row in requests
+            ],
+        },
+        {
+            "id": "SHADOW_CLUSTERING",
+            "name": "Cross-department clustering",
+            "status": "COMPLETED",
+            "cluster_count": sum(1 for group in groups if group["cross_department"]),
+            "clusters": [
+                {
+                    "cluster_id": group["cluster_id"],
+                    "request_ids": group["request_ids"],
+                    "departments": group["departments"],
+                    "assets": sorted({str(row[11]) for row in group["requests"]}),
+                    "corridor": str(group["corridor"]),
+                    "combined_duration_min": (
+                        time_to_minutes(group["end"]) - time_to_minutes(group["start"])
+                    ) % 1440,
+                    "reasons": group["cluster_reasons"],
+                    "cross_department": group["cross_department"],
+                }
+                for group in groups
+            ],
+        },
+        {
+            "id": "CORRIDOR_MATCHING",
+            "name": "Corridor and timetable matching",
+            "status": "COMPLETED",
+            "candidate_windows_evaluated": sum(block["candidate_windows_evaluated"] for block in optimized_blocks),
+            "candidate_windows_rejected_for_train_conflict": sum(
+                block["candidate_windows_rejected_for_train_conflict"] for block in optimized_blocks
+            ),
+            "candidate_windows_rejected_for_block_overlap": sum(
+                block.get("candidate_windows_rejected_for_block_overlap", 0) for block in optimized_blocks
+            ),
+            "candidate_scoring_error_count": sum(
+                len(block.get("candidate_scoring_errors", [])) for block in optimized_blocks
+            ),
+            "path_conflicts": sum(len(block["train_conflicts"]) for block in optimized_blocks),
+            "windows": [
+                {
+                    "block_id": block["block_id"],
+                    "corridor": str(block["corridor"]),
+                    "date": str(block["date"]),
+                    "start": str(block["start"]),
+                    "end": str(block["end"]),
+                    "request_ids": block["request_ids"],
+                    "timetable_verified": block["timetable_verified"],
+                    "train_conflicts": len(block["train_conflicts"]),
+                }
+                for block in optimized_blocks
+            ],
+        },
+        {
+            "id": "MEGABLOCK_PERSISTENCE",
+            "name": "Megablock plan persistence",
+            "status": "COMPLETED",
+            "scheduled_requests": len({str(row[0]) for block in optimized_blocks for row in block["tasks"]}),
+            "persisted_blocks": len(optimized_blocks),
+            "transaction_committed": True,
+        },
+    ],
+    "metrics": {
+        "demands_ingested": len({str(row[0]) for row in requests}),
+        "demands_scheduled": len({str(row[0]) for block in optimized_blocks for row in block["tasks"]}),
+        "cross_department_clusters": sum(1 for group in groups if group["cross_department"]),
+        "megablocks": len(optimized_blocks),
+        "downtime_saved_min": None,
+        "train_delays_min": sum(float(block.get("estimated_delay", 0) or 0) for block in optimized_blocks),
+        "path_conflicts": sum(len(block["train_conflicts"]) for block in optimized_blocks),
+    },
+    "warnings": [
+        "Live COA feed is not configured; windows were checked against persisted trains and active special_train_services data only.",
+        "Downtime saved is N/A because the database has no defensible before/after baseline.",
+        *(["One or more candidate scoring attempts failed and were excluded; see corridor-matching candidate evidence."] if any(block.get("candidate_scoring_errors") for block in optimized_blocks) else []),
+    ],
+}
 
 
 # ==========================================

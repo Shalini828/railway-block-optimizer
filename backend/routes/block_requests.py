@@ -20,7 +20,6 @@ router = APIRouter(
 
 
 from db_config import DB_CONFIG
-import random
 
 
 # =========================================================
@@ -557,24 +556,10 @@ def get_block_requests(user: CurrentUser = Depends(get_current_user)):
             conn.rollback()
         except Exception:
             pass
-        # Resilient fallback: try selecting whatever exists in block_requests
-        try:
-            with conn.cursor() as cur:
-                cur.execute("SELECT * FROM block_requests LIMIT 50")
-                fallback_rows = cur.fetchall()
-                if hasattr(cur, "description") and cur.description:
-                    col_names = [d[0] for d in cur.description]
-                    res = []
-                    for r in fallback_rows:
-                        item = {}
-                        for i, name in enumerate(col_names):
-                            val = r[i]
-                            item[name] = str(val) if val is not None else None
-                        res.append(item)
-                    return res
-        except Exception:
-            pass
-        return []
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to load requisitions from PostgreSQL.",
+        ) from exc
 
     finally:
         if cursor:
@@ -610,24 +595,10 @@ def update_block_request(
 ):
     conn = get_connection()
     if not conn:
-        for r in FALLBACK_BLOCK_REQUESTS:
-            if r["request_id"] == request_id:
-                if payload.work is not None:
-                    r["description"] = payload.work
-                if payload.blockType is not None:
-                    r["block_type"] = payload.blockType
-                if payload.requested_date is not None:
-                    r["requested_date"] = payload.requested_date
-                if payload.duration is not None:
-                    r["requested_duration_min"] = int(payload.duration * 60)
-                if payload.criticality is not None:
-                    r["criticality"] = payload.criticality
-                break
-        return {
-            "status": "success",
-            "message": "Block request updated successfully (offline mode)",
-            "request_id": request_id,
-        }
+        raise HTTPException(
+            status_code=503,
+            detail="Database unavailable. The requisition was not updated.",
+        )
 
     cursor = conn.cursor()
 
@@ -727,16 +698,10 @@ def cancel_block_request(
 ):
     conn = get_connection()
     if not conn:
-        for r in FALLBACK_BLOCK_REQUESTS:
-            if r["request_id"] == request_id:
-                r["request_status"] = "CANCELLED"
-                break
-        return {
-            "status": "success",
-            "message": "Block request cancelled (offline mode)",
-            "request_id": request_id,
-            "request_status": "CANCELLED",
-        }
+        raise HTTPException(
+            status_code=503,
+            detail="Database unavailable. The requisition was not cancelled.",
+        )
 
     cursor = conn.cursor()
 
@@ -814,17 +779,10 @@ def approve_block_request(
     """Approve a requisition after review/optimization."""
     conn = get_connection()
     if not conn:
-        for r in FALLBACK_BLOCK_REQUESTS:
-            if r["request_id"] == request_id:
-                r["request_status"] = "OPTIMIZED"
-                r["review_status"] = "APPROVED"
-                break
-        return {
-            "status": "success",
-            "message": "Block request approved and optimized (offline mode)",
-            "request_id": request_id,
-            "request_status": "OPTIMIZED",
-        }
+        raise HTTPException(
+            status_code=503,
+            detail="Database unavailable. The requisition approval was not saved.",
+        )
 
     cursor = conn.cursor()
 
@@ -842,10 +800,10 @@ def approve_block_request(
             raise HTTPException(status_code=404, detail="Block request not found")
 
         req_status = (row[1] or "").upper()
-        if req_status in ("CANCELLED", "REJECTED", "COMPLETED", "OPTIMIZED"):
+        if req_status != "PENDING":
             raise HTTPException(
                 status_code=400,
-                detail=f"Cannot approve request in status {req_status}",
+                detail=f"Only PENDING requests can be approved for optimization (current status: {req_status})",
             )
 
         if user.scope != "network":
@@ -863,7 +821,6 @@ def approve_block_request(
             """
             UPDATE block_requests
             SET
-                request_status = 'OPTIMIZED',
                 review_status = 'APPROVED',
                 reviewed_by = %s,
                 reviewed_at = CURRENT_TIMESTAMP,
@@ -876,9 +833,10 @@ def approve_block_request(
 
         return {
             "status": "success",
-            "message": "Block request approved and optimized",
+            "message": "Block request approved and remains eligible for optimization",
             "request_id": request_id,
-            "request_status": "OPTIMIZED",
+            "request_status": "PENDING",
+            "review_status": "APPROVED",
         }
 
     except HTTPException:
@@ -907,18 +865,10 @@ def rework_block_request(
     """Send a requisition back for rework after officer review."""
     conn = get_connection()
     if not conn:
-        for r in FALLBACK_BLOCK_REQUESTS:
-            if r["request_id"] == request_id:
-                r["request_status"] = "PENDING"
-                r["review_status"] = "REWORK"
-                break
-        return {
-            "status": "success",
-            "message": "Block request sent for rework (offline mode)",
-            "request_id": request_id,
-            "request_status": "PENDING",
-            "review_status": "REWORK",
-        }
+        raise HTTPException(
+            status_code=503,
+            detail="Database unavailable. The requisition was not sent for rework.",
+        )
 
     cursor = conn.cursor()
 
@@ -1030,27 +980,28 @@ def reject_block_request(
 
     conn = get_connection()
     if not conn:
-        for r in FALLBACK_BLOCK_REQUESTS:
-            if r["request_id"] == request_id:
-                r["request_status"] = "REJECTED"
-                r["rejection_reason"] = payload.reason
-                break
-        return {
-            "status": "success",
-            "message": "Block request rejected (offline mode)",
-            "request_id": request_id,
-            "request_status": "REJECTED",
-        }
+        raise HTTPException(
+            status_code=503,
+            detail="Database unavailable. The requisition was not rejected.",
+        )
 
     cursor = conn.cursor()
 
     try:
         cursor.execute(
-            "SELECT request_id FROM block_requests WHERE request_id = %s",
+            "SELECT request_id, request_status FROM block_requests WHERE request_id = %s",
             (request_id,),
         )
-        if not cursor.fetchone():
+        row = cursor.fetchone()
+        if not row:
             raise HTTPException(status_code=404, detail="Block request not found")
+
+        req_status = str(row[1] or "").upper()
+        if req_status != "PENDING":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Only PENDING requests can be rejected (current status: {req_status})",
+            )
 
         approver_identity = (user.name or user.title or "SYSTEM")[:30]
         cursor.execute(
@@ -1119,46 +1070,10 @@ def create_block_request(
 
     conn = get_connection()
     if not conn:
-        new_req_id = f"REQ-{department}-{random.randint(1000, 9999)}"
-        new_req = {
-            "request_id": new_req_id,
-            "task_id": request.assetId,
-            "asset_id": request.assetId,
-            "team_id": f"TEAM-{department}-01",
-            "corridor_id": request.section,
-            "section_id": request.section,
-            "line": request.line,
-            "chainage": request.chainage,
-            "requested_date": str(date.today()),
-            "requested_start": "09:00:00",
-            "requested_end": "12:00:00",
-            "requested_duration_min": int(request.duration * 60),
-            "block_type": request.blockType,
-            "request_status": "PENDING",
-            "submitted_date": str(date.today()),
-            "requested_by": user.name or user.title or request.requestedBy,
-            "department_id": f"DEPT-{department}",
-            "criticality": request.criticality,
-            "safety_risk": request.tsrRisk,
-            "description": request.work,
-            "review_status": "PENDING_REVIEW",
-            "reviewed_by": None,
-            "reviewed_at": None,
-            "rejection_reason": None,
-            "created_at": datetime.now().isoformat(),
-            "updated_at": datetime.now().isoformat(),
-        }
-        FALLBACK_BLOCK_REQUESTS.insert(0, new_req)
-        return {
-            "status": "success",
-            "message": "Block request submitted successfully (offline mode)",
-            "request_id": new_req_id,
-            "task_id": request.assetId,
-            "work": request.work,
-            "score": 85.0,
-            "criticality": request.criticality,
-            "department": department,
-        }
+        raise HTTPException(
+            status_code=503,
+            detail="Database unavailable. The requisition was not saved; reconnect and try again.",
+        )
 
     cursor = conn.cursor()
 
@@ -1402,9 +1317,9 @@ def create_block_request(
         # 11. VALIDATE DURATION
         # =====================================================
 
-        # Frontend sends duration in minutes.
+        # The portal sends hours; persist the duration in minutes.
         duration_minutes = int(
-            round(request.duration)
+            round(request.duration * 60)
         )
 
         if duration_minutes <= 0:
@@ -1427,21 +1342,11 @@ def create_block_request(
         # 12. DETERMINE PLANNING DATE
         # =====================================================
 
-        cursor.execute(
-            """
-            SELECT MAX(requested_date)
-            FROM block_requests
-            WHERE requested_date IS NOT NULL
-            """
-        )
-
-        latest_date = cursor.fetchone()[0]
-
-        planning_date = (
-            latest_date
-            if latest_date
-            else date.today()
-        )
+        # New requisitions belong to the current operational date unless the
+        # user explicitly supplies a planning date through a supported field.
+        # Reusing MAX(requested_date) pulls a new request onto a stale historical
+        # day and can make it appear optimized into an old plan.
+        planning_date = date.today()
 
 
         # =====================================================
@@ -1866,6 +1771,7 @@ def create_block_request(
                 CURRENT_TIMESTAMP,
                 CURRENT_TIMESTAMP
             )
+            RETURNING request_id, request_status, review_status, created_at
             """,
             (
                 request_id,
@@ -1889,6 +1795,24 @@ def create_block_request(
             )
         )
 
+        persisted_request = cursor.fetchone()
+        if not persisted_request:
+            raise HTTPException(
+                status_code=500,
+                detail="The requisition insert did not return a persisted record.",
+            )
+
+        persisted_request_id, persisted_request_status, persisted_review_status, persisted_created_at = persisted_request
+        persisted_request_status = str(persisted_request_status or "").strip().upper()
+        if persisted_request_status != "PENDING":
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    "The requisition was not saved in the required initial PENDING state. "
+                    "The transaction was rolled back."
+                ),
+            )
+
 
         # =====================================================
         # 25. COMMIT TRANSACTION
@@ -1908,7 +1832,7 @@ def create_block_request(
                 "Block requisition created successfully"
             ),
 
-            "request_id": request_id,
+            "request_id": persisted_request_id,
 
             "task_id": task_id,
 
@@ -1948,9 +1872,33 @@ def create_block_request(
 
             "safety_risk": safety_risk,
 
-            "review_status": "PENDING",
+            "review_status": persisted_review_status,
 
-            "request_status": "PENDING"
+            "request_status": persisted_request_status,
+            "created_at": persisted_created_at.isoformat() if persisted_created_at else None,
+            "requisition": {
+                "request_id": persisted_request_id,
+                "task_id": task_id,
+                "asset_id": asset_id,
+                "team_id": team_id,
+                "corridor_id": corridor_id,
+                "requested_date": str(planning_date),
+                "requested_start": str(requested_start),
+                "requested_end": str(requested_end),
+                "requested_duration_min": duration_minutes,
+                "block_type": block_type,
+                "request_status": persisted_request_status,
+                "requested_by": requested_by_user_id,
+                "department_id": department_id,
+                "section_id": section_id,
+                "criticality": criticality_level,
+                "safety_risk": safety_risk,
+                "description": description,
+                "review_status": persisted_review_status,
+                "created_at": persisted_created_at.isoformat() if persisted_created_at else None,
+                "line": request.line,
+                "chainage": request.chainage,
+            }
         }
 
 

@@ -7,10 +7,6 @@ from psycopg.rows import dict_row
 import importlib
 
 from db_config import DB_CONFIG
-from logic.fallback_plan import (
-    FALLBACK_OPTIMIZED_BLOCKS,
-    FALLBACK_SHADOW_OPPORTUNITIES,
-)
 from auth.security import (
     get_current_user,
     require_permission,
@@ -249,14 +245,6 @@ def _get_shadow_opportunities(current_blocks):
     try:
         with conn.cursor() as cursor:
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS shadow_block_opportunities (
-                    opportunity_id BIGSERIAL PRIMARY KEY,
-                    opportunity_data JSONB NOT NULL,
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            conn.commit()
-            cursor.execute("""
                 SELECT opportunity_data
                 FROM shadow_block_opportunities
                 ORDER BY opportunity_id
@@ -274,48 +262,6 @@ def _get_shadow_opportunities(current_blocks):
                 pass
 
 
-def _build_fallback_plan_response(user):
-    fallback_blocks = [dict(b) for b in FALLBACK_OPTIMIZED_BLOCKS]
-    total_block_minutes = sum(float(b.get("duration") or 0) for b in fallback_blocks)
-    avg_block_duration = total_block_minutes / len(fallback_blocks) if fallback_blocks else 0.0
-    avg_utilization = sum(float(b.get("utilization") or 0) for b in fallback_blocks) / len(fallback_blocks) if fallback_blocks else 0.0
-    avg_score = sum(float(b.get("optimization_score") or 0) for b in fallback_blocks) / len(fallback_blocks) if fallback_blocks else 0.0
-    total_train_impact = sum(float(b.get("train_impact") or 0) for b in fallback_blocks)
-    return {
-        "status": "success",
-        "is_demo": True,
-        "data_source": "SYNTHETIC_DEMO",
-        "notice": "DEMO MODE: Synthetic Offline Plan (PostgreSQL disconnected)",
-        "message": "Loaded the latest saved optimized plan",
-        "block_count": len(fallback_blocks),
-        "requests_processed": 7,
-        "blocks_generated": len(fallback_blocks),
-        "run_metrics": {
-            "total_block_minutes": round(total_block_minutes, 2),
-            "average_block_duration_min": round(avg_block_duration, 2),
-            "average_utilization": round(avg_utilization, 2),
-            "average_optimization_score": round(avg_score, 2),
-            "total_train_impact": round(total_train_impact, 2),
-            "total_train_conflicts": 0,
-        },
-        "engine_metrics": {
-            "requests_processed": 7,
-            "blocks_generated": len(fallback_blocks),
-            "total_block_minutes": round(total_block_minutes, 2),
-            "average_block_duration_min": round(avg_block_duration, 2),
-            "average_utilization": round(avg_utilization, 2),
-            "average_optimization_score": round(avg_score, 2),
-            "total_train_impact": round(total_train_impact, 2),
-            "total_train_conflicts": 0,
-            "compute_time_seconds": 1.15,
-            "execution_latency_seconds": 1.15,
-        },
-        "blocks": [{**b, "is_demo": True, "data_source": "SYNTHETIC_DEMO"} for b in fallback_blocks],
-        "scope": getattr(user, "scope", "network") if user else "network",
-        "shadow_block_opportunities": FALLBACK_SHADOW_OPPORTUNITIES,
-    }
-
-
 # ============================================================
 # GET ALL OPTIMIZED BLOCKS (WITH SCOPING & REVIEW SUMMARY)
 # ============================================================
@@ -327,7 +273,10 @@ def get_optimized_plan(
 ):
     conn = get_connection()
     if not conn:
-        return _build_fallback_plan_response(user)
+        raise HTTPException(
+            status_code=503,
+            detail="Saved optimization results are unavailable because PostgreSQL could not be reached.",
+        )
 
     try:
         with conn.cursor() as cursor:
@@ -667,7 +616,7 @@ def get_optimized_plan(
 
         return {
             "status": "success",
-            "message": "Loaded the latest saved optimized plan",
+            "message": "Loaded persisted optimized blocks from PostgreSQL",
             "block_count": len(formatted_blocks),
             "requests_processed": requests_processed,
             "blocks_generated": len(formatted_blocks),
@@ -682,18 +631,21 @@ def get_optimized_plan(
             "engine_metrics": engine_metrics,
             "is_demo": False,
             "data_source": "POSTGRESQL",
-            "blocks": formatted_blocks if formatted_blocks else _build_fallback_plan_response(user)["blocks"],
+            "blocks": formatted_blocks,
             "scope": user.scope,
-            "shadow_block_opportunities": shadow_block_opportunities if shadow_block_opportunities else FALLBACK_SHADOW_OPPORTUNITIES,
+            "shadow_block_opportunities": shadow_block_opportunities,
         }
 
     except Exception as e:
-        print("[WARNING] get_optimized_plan error, returning fallback plan:", repr(e))
+        print("[OPTIMIZED PLAN] Failed to load saved PostgreSQL results:", repr(e))
         try:
             conn.rollback()
         except Exception:
             pass
-        return _build_fallback_plan_response(user)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Could not load saved optimization results: {e}",
+        ) from e
 
     finally:
         if conn:

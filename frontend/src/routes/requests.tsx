@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo } from "react";
 import {
   Send,
   AlertTriangle,
@@ -45,6 +45,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { apiFetch } from "@/lib/api";
+import { summarizeRequisitions } from "@/lib/requisition-summary";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -105,77 +106,37 @@ const STATUSES: (Status | "All")[] = [
   "Approved",
   "Active",
   "Completed",
+  "Cancelled",
+  "Rejected",
 ];
 
-function mapBackendStatus(value: unknown): Status {
-  const s = String(value ?? "")
-    .trim()
-    .toUpperCase();
-  if (["OPTIMIZED", "CLUSTERED", "SHADOWED"].includes(s)) return "Clustered / Shadowed";
-  if (s === "APPROVED") return "Approved";
-  if (["ACTIVE", "IN_PROGRESS"].includes(s)) return "Active";
-  if (["COMPLETED", "CLOSED"].includes(s)) return "Completed";
-  if (["CANCELLED", "CANCELED"].includes(s)) return "Cancelled";
-  if (s === "REJECTED") return "Rejected";
-  return "Pending AI Scheduling";
-}
-
-function mapBackendDept(value: unknown): Dept {
-  const s = String(value ?? "")
-    .trim()
-    .toUpperCase();
-  return s === "SMMS" ? "SMMS" : s === "TDMS" ? "TDMS" : "TMS";
-}
-
-function mapBackendRequisition(item: any): Requisition {
-  const minutes = Number(
-    item?.requested_duration_min ?? item?.duration_min ?? item?.duration_minutes ?? 0,
-  );
-  const criticality =
-    item?.criticality === "Medium" ? "Medium" : item?.criticality === "Low" ? "Low" : "High";
-  const daysOverdue = Number(item?.days_overdue ?? item?.overdue_days ?? 0);
-  const tsrRisk = Boolean(item?.tsr_risk ?? item?.safety_risk ?? false);
-  const blockType = item?.block_type ?? "Traffic Block";
-
-  const score =
-    item?.score != null && Number.isFinite(Number(item.score))
-      ? Number(item.score)
-      : criticalityScore({
-          criticality,
-          daysOverdue,
-          tsrRisk,
-          blockType,
-        } as Requisition);
-
-  return {
-    id: String(item?.request_id ?? item?.id ?? "—"),
-    backendId: String(item?.request_id ?? item?.id ?? ""),
-    assetId: String(item?.asset_id ?? item?.task_id ?? "—"),
-    dept: mapBackendDept(item?.department_id ?? item?.dept),
-    work: String(item?.description ?? item?.work ?? "Maintenance work"),
-    section: String(item?.corridor_id ?? item?.section_id ?? "—"),
-    line: String(item?.line ?? item?.track_line ?? "—"),
-    chainage: String(item?.chainage ?? "—"),
-    duration: minutes > 0 ? Math.round((minutes / 60) * 100) / 100 : 0,
-    crew: Number(item?.crew ?? item?.crew_strength ?? 0),
-    criticality: criticality as Requisition["criticality"],
-    daysOverdue,
-    tsrRisk,
-    blockType: blockType as Requisition["blockType"],
-    requestedBy: String(item?.requested_by ?? "—"),
-    status: mapBackendStatus(item?.request_status ?? item?.status),
-    score,
-    rejectionReason: item?.rejection_reason ? String(item.rejection_reason) : undefined,
-  } as Requisition;
-}
-
 function RequestsPage() {
-  const { role, scope, can } = useAbps();
+  const {
+    role,
+    scope,
+    can,
+    reqs,
+    visibleReqs,
+    reqsLoaded,
+    reqsError,
+    refreshAll,
+    authReady,
+    signedIn,
+    isDemoMode,
+  } = useAbps();
   const { t } = useLanguage();
 
-  const [backendReqs, setBackendReqs] = useState<Requisition[]>([]);
-  const [isLoadingRequests, setIsLoadingRequests] = useState(true);
-  const [requestLoadError, setRequestLoadError] = useState<string | null>(null);
+  const [isRefreshingRequests, setIsRefreshingRequests] = useState(false);
+  const isLoadingRequests = !authReady || (signedIn && !reqsLoaded) || isRefreshingRequests;
+  const requestLoadError = signedIn ? reqsError : null;
+  const hasLiveRequestData = signedIn && reqsLoaded && !requestLoadError && !isDemoMode;
+  const gatewayStatus = !signedIn
+    ? "DEMO"
+    : !reqsLoaded
+      ? "CHECKING"
+      : requestLoadError || isDemoMode
+        ? "UNAVAILABLE"
+        : "ONLINE";
   const defaultDept: Dept = role.dept === "COA" ? "TMS" : (role.dept as Dept);
 
   const [dept, setDept] = useState<Dept>(defaultDept);
@@ -198,137 +159,14 @@ function RequestsPage() {
   const [rejectingReq, setRejectingReq] = useState<Requisition | null>(null);
   const [rejectionReason, setRejectionReason] = useState("");
 
-  const [isDemo, setIsDemo] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showForm, setShowForm] = useState(true);
 
-  function normalizeDepartment(value: unknown): Dept | string {
-    const dept = String(value ?? "")
-      .trim()
-      .toUpperCase();
-
-    if (dept === "TMS" || dept === "DEPT-TMS" || dept === "TEAM-001") {
-      return "TMS";
-    }
-
-    if (
-      dept === "SMMS" ||
-      dept === "DEPT-SMMS" ||
-      dept === "TEAM-002" ||
-      dept === "S&T" ||
-      dept === "S&T (SMMS)"
-    ) {
-      return "SMMS";
-    }
-
-    if (dept === "TDMS" || dept === "DEPT-TDMS" || dept === "TEAM-003") {
-      return "TDMS";
-    }
-
-    return dept || "TMS";
-  }
-
-  function mapBackendRequisition(item: any): Requisition {
-    const minutes = Number(
-      item?.requested_duration_min ?? item?.duration_min ?? item?.duration_minutes ?? 0,
-    );
-
-    const criticality =
-      item?.criticality === "Medium" ? "Medium" : item?.criticality === "Low" ? "Low" : "High";
-
-    const daysOverdue = Number(item?.days_overdue ?? item?.overdue_days ?? 0);
-
-    const tsrRisk = Boolean(item?.tsr_risk ?? item?.safety_risk ?? false);
-
-    const blockType = item?.block_type ?? "Traffic Block";
-
-    const score =
-      item?.score != null && Number.isFinite(Number(item.score))
-        ? Number(item.score)
-        : criticalityScore({
-            criticality,
-            daysOverdue,
-            tsrRisk,
-            blockType,
-          } as Requisition);
-
-    const departmentValue = item?.department_id ?? item?.dept ?? item?.department ?? "";
-
-    return {
-      id: String(item?.request_id ?? item?.id ?? "—"),
-
-      backendId: String(item?.request_id ?? item?.id ?? ""),
-
-      assetId: String(item?.asset_id ?? item?.task_id ?? "—"),
-
-      // IMPORTANT:
-      // Convert backend department IDs into frontend department codes.
-      // DEPT-SMMS -> SMMS
-      // DEPT-TMS  -> TMS
-      // DEPT-TDMS -> TDMS
-      dept: normalizeDepartment(departmentValue) as Dept,
-
-      work: String(item?.description ?? item?.work ?? "Maintenance work"),
-
-      section: String(item?.corridor_id ?? item?.section_id ?? "—"),
-
-      line: String(item?.line ?? item?.track_line ?? "—"),
-
-      chainage: String(item?.chainage ?? "—"),
-
-      duration: minutes > 0 ? Math.round((minutes / 60) * 100) / 100 : 0,
-
-      crew: Number(item?.crew ?? item?.crew_strength ?? 0),
-
-      criticality: criticality as Requisition["criticality"],
-
-      daysOverdue,
-
-      tsrRisk,
-
-      blockType: blockType as Requisition["blockType"],
-
-      requestedBy: String(item?.requested_by ?? "—"),
-
-      status: mapBackendStatus(item?.request_status ?? item?.status),
-
-      score,
-
-      rejectionReason: item?.rejection_reason ? String(item.rejection_reason) : undefined,
-    } as Requisition;
-  }
-
-  const loadRequests = async () => {
-    setIsLoadingRequests(true);
-    setRequestLoadError(null);
-
-    try {
-      const response = await apiFetch("/block-requests/");
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data?.detail || data?.message || "Failed to load requisitions");
-      }
-
-      const rows = Array.isArray(data) ? data : Array.isArray(data?.requests) ? data.requests : [];
-      setIsDemo(Boolean(data?.is_demo));
-      setBackendReqs(rows.map(mapBackendRequisition));
-    } catch (error) {
-      console.error("Failed to load requisitions:", error);
-      setRequestLoadError(error instanceof Error ? error.message : "Failed to load requisitions");
-      setBackendReqs([]);
-    } finally {
-      setIsLoadingRequests(false);
-    }
-  };
-
-  useEffect(() => {
-    void loadRequests();
-  }, []);
-
-  const activeReqs = backendReqs.filter(
-  (r) => (r.status ?? "").toUpperCase() !== "CANCELLED",
-);
+  const activeReqs = signedIn
+    ? reqsLoaded && !requestLoadError && !isDemoMode
+      ? visibleReqs
+      : []
+    : reqs;
 
   const filtered = useMemo(() => {
     return activeReqs.filter((r) => {
@@ -344,12 +182,7 @@ function RequestsPage() {
   }, [activeReqs, tab, status, searchQuery]);
 
   const stats = useMemo(() => {
-    return {
-      total: activeReqs.length,
-      pending: activeReqs.filter((r) => r.status === "Pending AI Scheduling").length,
-      active: activeReqs.filter((r) => r.status === "Active").length,
-      completed: activeReqs.filter((r) => r.status === "Completed").length,
-    };
+    return summarizeRequisitions(activeReqs);
   }, [activeReqs]);
 
   const insights = useMemo(() => {
@@ -367,7 +200,7 @@ function RequestsPage() {
     };
   }, [activeReqs]);
 
-  const submit = async (runOptimizer = false) => {
+  const submit = async (openOptimizerAfterSubmit = false) => {
     if (!work.trim()) {
       toast.error(
         t("Please enter nature of work / task description", "कृपया कार्य का विवरण दर्ज करें"),
@@ -394,6 +227,8 @@ function RequestsPage() {
       tsrRisk: tsr,
       requestedBy: role.name,
     };
+    let savedRequestId = "";
+    let submissionAccepted = false;
 
     try {
       // 1. Create requisition in PostgreSQL
@@ -405,63 +240,68 @@ function RequestsPage() {
         body: JSON.stringify(payload),
       });
 
-      const requestData = await requestResponse.json();
+      const requestData = await requestResponse.json().catch(() => null);
 
       if (!requestResponse.ok) {
-        throw new Error(requestData.detail || "Failed to submit requisition");
+        throw new Error(
+          requestData?.detail || requestData?.message || `Failed to submit requisition (${requestResponse.status})`,
+        );
       }
+      const persistedStatus = String(
+        requestData?.request_status ?? requestData?.requisition?.request_status ?? "",
+      )
+        .trim()
+        .toUpperCase();
+      if (persistedStatus !== "PENDING") {
+        throw new Error(
+          `The backend returned ${persistedStatus || "no request status"} for the new requisition; it must be persisted as PENDING.`,
+        );
+      }
+      submissionAccepted = true;
+      savedRequestId = String(
+        requestData?.request_id ?? requestData?.requisition?.request_id ?? "",
+      );
 
       // PostgreSQL is the source of truth for the requisition ledger.
-      await loadRequests();
-
+      const refreshed = await refreshAll();
+      const savedId = savedRequestId;
+      const refreshedRequest = refreshed?.find((r) => r.backendId === savedId);
+      if (!savedId || !refreshedRequest) {
+        throw new Error(
+          savedId
+            ? `Requisition ${savedId} was saved, but the ledger could not confirm it after refresh. Use Retry to reload.`
+            : "Requisition was submitted, but the ledger could not confirm it after refresh. Use Retry to reload.",
+        );
+      }
+      if (refreshedRequest.backendStatus !== "PENDING") {
+        throw new Error(
+          `Requisition ${savedId} was returned as PENDING but refreshed as ${refreshedRequest.backendStatus || "unknown"}. The ledger data needs review.`,
+        );
+      }
       setWork("");
 
-      if (runOptimizer && can("optimizer.run")) {
-        // 2. Immediately run IR-ABPS optimization (Admin flow)
-        const optimizationResponse = await apiFetch("/optimization/", {
-          method: "POST",
-        });
+      toast.success(
+        <div className="flex items-center gap-2">
+          <CircleCheck className="size-4 text-emerald-600" />
+          <span>{t(`Requisition ${savedId} saved as PENDING for AI Scheduling.`, `Requisition ${savedId} saved as PENDING for AI Scheduling.`)}</span>
+        </div>,
+      );
 
-        const optimizationData = await optimizationResponse.json();
-
-        if (!optimizationResponse.ok) {
-          throw new Error(
-            optimizationData.detail || optimizationData.message || "Optimization failed",
-          );
-        }
-
-        toast.success(
-          <div className="flex items-center gap-2">
-            <CircleCheck className="size-4 text-emerald-600" />
-            <span>
-              {t(
-                "Requisition filed & optimized into Gantt schedule",
-                "मांग पत्र दर्ज और गैंट शेड्यूल में अनुकूलित",
-              )}
-            </span>
-          </div>,
-        );
-
+      // Submission only creates a pending request. Optimization is executed
+      // explicitly from the optimizer page after the user reviews readiness.
+      if (openOptimizerAfterSubmit && can("optimizer.run")) {
         setTimeout(() => {
-          window.location.href = "/planner";
+          window.location.href = "/optimizer";
         }, 700);
-      } else {
-        // Department flow or standard submit: stay on page
-        toast.success(
-          <div className="flex items-center gap-2">
-            <CircleCheck className="size-4 text-emerald-600" />
-            <span>
-              {t(
-                "Requisition submitted — Pending AI Scheduling. Control / DRM Planning will schedule it.",
-                "मांग पत्र जमा किया गया — एआई शेड्यूलिंग लंबित। नियंत्रण / डीआरएम योजना इसे निर्धारित करेगी।",
-              )}
-            </span>
-          </div>,
-        );
       }
     } catch (error) {
       console.error("Requisition submission error:", error);
-      toast.error(error instanceof Error ? error.message : "Could not complete requisition.");
+      const message = error instanceof Error ? error.message : "Could not complete requisition.";
+      toast.error(
+        submissionAccepted
+          ? `Requisition${savedRequestId ? ` ${savedRequestId}` : ""} was accepted by PostgreSQL, but ledger confirmation or the follow-up action failed: ${message}`
+          : message,
+      );
     } finally {
       setIsSubmitting(false);
     }
@@ -473,10 +313,13 @@ function RequestsPage() {
       const targetId = req.backendId || req.id;
       const res = await apiFetch(`/block-requests/${targetId}/cancel`, { method: "POST" });
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.detail || "Failed to cancel");
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.detail || "Failed to cancel");
       }
-      await loadRequests();
+      const refreshed = await refreshAll();
+      if (!refreshed?.some((item) => item.backendId === targetId && item.backendStatus === "CANCELLED")) {
+        throw new Error("Cancellation was accepted, but the refreshed ledger could not confirm it.");
+      }
       toast.success(t(`Requisition ${req.id} cancelled.`, `मांग पत्र ${req.id} रद्द कर दिया गया।`));
     } catch (e: any) {
       toast.error(e.message || "Failed to cancel requisition");
@@ -494,11 +337,14 @@ function RequestsPage() {
       });
 
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.detail || "Failed to approve");
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.detail || "Failed to approve");
       }
 
-      await loadRequests();
+      const refreshed = await refreshAll();
+      if (!refreshed?.some((item) => item.backendId === targetId && item.reviewStatus === "APPROVED")) {
+        throw new Error("Approval was accepted, but the refreshed ledger could not confirm it.");
+      }
 
       toast.success(
         t(`Requisition ${req.id} approved.`, `मांग पत्र ${req.id} स्वीकृत कर दिया गया।`),
@@ -507,6 +353,26 @@ function RequestsPage() {
       setDetail(null);
     } catch (e: any) {
       toast.error(e?.message || "Failed to approve requisition");
+    }
+  };
+
+  const handleRework = async (req: Requisition) => {
+    const targetId = req.backendId || req.id;
+    try {
+      const res = await apiFetch(`/block-requests/${targetId}/rework`, { method: "POST" });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(data?.detail || "Failed to send requisition for rework");
+      }
+
+      const refreshed = await refreshAll();
+      if (!refreshed?.some((item) => item.backendId === targetId && item.reviewStatus === "REWORK")) {
+        throw new Error("Rework was accepted, but the refreshed ledger could not confirm it.");
+      }
+      setDetail(null);
+      toast.success(`Requisition ${req.id} sent for rework.`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to send requisition for rework");
     }
   };
 
@@ -524,10 +390,13 @@ function RequestsPage() {
         body: JSON.stringify({ reason: rejectionReason }),
       });
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.detail || "Failed to reject");
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.detail || "Failed to reject");
       }
-      await loadRequests();
+      const refreshed = await refreshAll();
+      if (!refreshed?.some((item) => item.backendId === targetId && item.backendStatus === "REJECTED")) {
+        throw new Error("Rejection was accepted, but the refreshed ledger could not confirm it.");
+      }
       setRejectingReq(null);
       setRejectionReason("");
       toast.success(
@@ -605,7 +474,9 @@ function RequestsPage() {
           <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800 border border-border px-3 py-1 text-xs">
             <Server className="size-3.5 text-emerald-600" />
             <span className="font-bold text-slate-700 dark:text-slate-300">BDMS Gateway:</span>
-            <span className="font-bold text-emerald-700 dark:text-emerald-400">ONLINE</span>
+            <span className={gatewayStatus === "ONLINE" ? "font-bold text-emerald-700 dark:text-emerald-400" : "font-bold text-amber-700 dark:text-amber-400"}>
+              {gatewayStatus}
+            </span>
           </div>
         }
       />
@@ -617,37 +488,47 @@ function RequestsPage() {
             {t("Total Demands", "कुल मांग")}
           </p>
           <p className="text-xl font-bold text-slate-900 dark:text-slate-100 mt-0.5">
-            {stats.total}
+            {!hasLiveRequestData || isLoadingRequests ? "—" : stats.total}
           </p>
+          <p className="mt-1 text-[10px] text-slate-500">All requisitions in the current ledger scope.</p>
         </div>
         <div className="border border-border bg-white dark:bg-slate-900 p-3 rounded-[2px]">
           <p className="text-[10px] font-bold uppercase text-purple-700 dark:text-purple-400">
             {t("Pending AI Scheduling", "एआई शेड्यूलिंग लंबित")}
           </p>
           <p className="text-xl font-bold text-purple-700 dark:text-purple-400 mt-0.5">
-            {stats.pending}
+            {!hasLiveRequestData || isLoadingRequests ? "—" : stats.pending}
           </p>
+          <p className="mt-1 text-[10px] text-slate-500">Only persisted PENDING requests qualify.</p>
         </div>
         <div className="border border-border bg-white dark:bg-slate-900 p-3 rounded-[2px]">
           <p className="text-[10px] font-bold uppercase text-amber-700 dark:text-amber-400">
             {t("Active Execution", "सक्रिय निष्पादन")}
           </p>
           <p className="text-xl font-bold text-amber-700 dark:text-amber-400 mt-0.5">
-            {stats.active}
+            {!hasLiveRequestData || isLoadingRequests ? "—" : stats.active}
           </p>
+          <p className="mt-1 text-[10px] text-slate-500">Persisted ACTIVE requests.</p>
         </div>
         <div className="border border-border bg-white dark:bg-slate-900 p-3 rounded-[2px]">
           <p className="text-[10px] font-bold uppercase text-emerald-700 dark:text-emerald-400">
             {t("Completed & Closed", "पूर्ण एवं बंद")}
           </p>
           <p className="text-xl font-bold text-emerald-700 dark:text-emerald-400 mt-0.5">
-            {stats.completed}
+            {!hasLiveRequestData || isLoadingRequests ? "—" : stats.completed}
           </p>
+          <p className="mt-1 text-[10px] text-slate-500">Only COMPLETED is a valid terminal request status in this database.</p>
         </div>
       </div>
 
+      {requestLoadError && (
+        <div role="alert" className="mb-5 border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-900 dark:bg-red-950/30 dark:text-red-200">
+          The requisition ledger could not be confirmed from PostgreSQL: {requestLoadError}
+        </div>
+      )}
+
       {/* Pending Scheduling Banner */}
-      {stats.pending > 0 && (
+      {hasLiveRequestData && stats.pending > 0 && (
         <div className="mb-5 bg-purple-50 dark:bg-purple-950/40 border-2 border-purple-300 dark:border-purple-800 p-3.5 rounded-[2px] flex items-center justify-between flex-wrap gap-2">
           <div className="flex items-center gap-2.5">
             <CalendarClock className="size-5 text-purple-700 dark:text-purple-300" />
@@ -768,7 +649,7 @@ function RequestsPage() {
                     <span className="bg-[#FF9933] text-slate-950 text-[9px] font-bold px-1.5 py-0.5 rounded-[2px] uppercase">
                       Official
                     </span>
-                    {isDemo ? (
+                    {isDemoMode ? (
                       <span className="bg-amber-400 text-amber-950 text-[9px] font-bold px-1.5 py-0.5 rounded-[2px] uppercase">
                         Demo Records (DB Offline)
                       </span>
@@ -1233,7 +1114,10 @@ function RequestsPage() {
                             size="sm"
                             variant="outline"
                             className="h-7 text-xs"
-                            onClick={() => void loadRequests()}
+                            onClick={() => {
+                              setIsRefreshingRequests(true);
+                              void refreshAll().finally(() => setIsRefreshingRequests(false));
+                            }}
                           >
                             <RefreshCw className="mr-1.5 size-3.5" />
                             Retry
@@ -1261,7 +1145,7 @@ function RequestsPage() {
 
                       return (
                         <TableRow
-                          key={r.id}
+                          key={r.backendId || r.id}
                           className="hover:bg-slate-50 dark:hover:bg-slate-800/50"
                         >
                           <TableCell>
@@ -1383,7 +1267,6 @@ function RequestsPage() {
               </div>
 
               {/* REQUEST DETAILS */}
-              
 
               {/* RISK SUMMARY */}
               <div className="border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 rounded-md p-3">
@@ -1438,6 +1321,7 @@ function RequestsPage() {
                     size="sm"
                     variant="outline"
                     className="font-bold border-blue-300 text-blue-700 hover:bg-blue-50"
+                    onClick={() => handleRework(detail)}
                   >
                     ↻ REWORK
                   </Button>

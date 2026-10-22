@@ -31,11 +31,10 @@ def get_connection():
 def detect_conflicts(user: CurrentUser = Depends(get_current_user)):
     conn = get_connection()
     if not conn:
-        return {
-            "status": "success",
-            "conflict_count": 0,
-            "conflicts": []
-        }
+        raise HTTPException(
+            status_code=503,
+            detail="Conflict verification is unavailable because PostgreSQL could not be reached.",
+        )
 
     cursor = conn.cursor()
 
@@ -269,11 +268,10 @@ def detect_conflicts(user: CurrentUser = Depends(get_current_user)):
     except Exception as e:
 
         conn.rollback()
-
-        return {
-            "status": "error",
-            "message": str(e)
-        }
+        raise HTTPException(
+            status_code=500,
+            detail=f"Conflict verification failed: {e}",
+        )
 
     finally:
         if cursor:

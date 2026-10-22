@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   BrainCircuit,
   Layers,
@@ -48,6 +48,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { apiFetch } from "@/lib/api";
+import { optimizationFailureState, type OptimizationRunState } from "@/lib/optimization-run-state";
 import {
   Sheet,
   SheetContent,
@@ -82,12 +83,38 @@ interface OptimizationApiResponse {
   message?: string;
   requests_processed?: number;
   blocks_generated?: number;
+  execution_time?: number;
   run_metrics?: {
     total_block_minutes: number;
     average_utilization: number;
     average_optimization_score: number;
     total_train_impact: number;
     total_train_conflicts: number;
+    compute_time_seconds?: number;
+    downtime_saved_min?: number | null;
+    train_delays_min?: number | null;
+    path_conflicts?: number | null;
+  };
+  pipeline?: {
+    stages: Array<{
+      id: string;
+      name: string;
+      status: string;
+      details?: string;
+      loaded?: number;
+      eligible?: number;
+      skipped?: number;
+      scored?: number;
+      cluster_count?: number;
+      candidate_windows_evaluated?: number;
+      candidate_windows_rejected_for_train_conflict?: number;
+      candidate_windows_rejected_for_block_overlap?: number;
+      scheduled_requests?: number;
+      persisted_blocks?: number;
+      transaction_committed?: boolean;
+    }>;
+    metrics?: Record<string, number | null>;
+    warnings?: string[];
   };
   blocks?: Array<{
     block_id: string;
@@ -326,9 +353,7 @@ function getBlockAiReasons(
 ): string[] {
   const intelligenceReasons = normalizeAiReasons(intelligence?.ai_explanation?.why_selected);
   const blockReasons = normalizeAiReasons(block.ai_reasons);
-  const combinedReasons = Array.from(
-    new Set([...intelligenceReasons, ...blockReasons]),
-  );
+  const combinedReasons = Array.from(new Set([...intelligenceReasons, ...blockReasons]));
   if (combinedReasons.length > 0) return combinedReasons;
 
   if (block.reason?.trim()) return [block.reason.trim()];
@@ -357,6 +382,9 @@ async function fetchSavedOptimization(): Promise<OptimizationApiResponse | null>
   }
 
   const payload = await response.json();
+  if (payload?.is_demo || payload?.data_source === "SYNTHETIC_DEMO") {
+    throw new Error("Saved optimization data was marked as demonstration data.");
+  }
   const savedBlocks = (payload.blocks ?? []) as SavedPlanBlock[];
 
   const savedShadowOpportunities = (payload.shadow_block_opportunities ?? []) as NonNullable<
@@ -429,7 +457,17 @@ async function fetchSavedOptimization(): Promise<OptimizationApiResponse | null>
 }
 
 function OptimizerPage() {
-  const { reqs, plan, conflicts, optimize, scope } = useAbps();
+  const {
+    reqs,
+    plan,
+    conflicts,
+    optimize,
+    scope,
+    refreshAll,
+    reqsLoaded,
+    reqsError,
+    isDemoMode,
+  } = useAbps();
   const { t } = useLanguage();
 
   const [running, setRunning] = useState(false);
@@ -438,16 +476,41 @@ function OptimizerPage() {
   const [drawer, setDrawer] = useState(false);
 
   const [apiData, setApiData] = useState<OptimizationApiResponse | null>(null);
+  const [latestRunData, setLatestRunData] = useState<OptimizationApiResponse | null>(null);
+  const [historicalPlanLoaded, setHistoricalPlanLoaded] = useState(false);
   const [apiError, setApiError] = useState(false);
+  const [apiErrorMessage, setApiErrorMessage] = useState<string | null>(null);
+  const [executionState, setExecutionState] = useState<OptimizationRunState>("READY");
+  const runningRef = useRef(false);
 
   // Shadow Block Opportunities are optional in the API response.
   // Always expose a safe array to the UI so a missing/null apiData never breaks rendering.
   const shadowBlockOpportunities = apiData?.shadow_block_opportunities ?? [];
   const [lastExecution, setLastExecution] = useState<Date | null>(null);
   const [executionDuration, setExecutionDuration] = useState<number | null>(null);
+  const runStartedAt = useRef<number | null>(null);
   const [blockIntelligence, setBlockIntelligence] = useState<Record<string, BlockIntelligence>>({});
 
-  const pending = reqs.filter((r) => r.status === "Pending AI Scheduling");
+  useEffect(() => {
+    if (!running || runStartedAt.current === null) return;
+    const timer = window.setInterval(() => {
+      const startedAt = runStartedAt.current;
+      if (startedAt !== null) setExecutionDuration((Date.now() - startedAt) / 1000);
+    }, 250);
+    return () => window.clearInterval(timer);
+  }, [running]);
+
+  const pending = reqs.filter((r) => r.optimizationEligible === true);
+  const canRunOptimization = reqsLoaded && !reqsError && !isDemoMode && pending.length > 0;
+  const requestStatusSummary = Object.entries(
+    reqs.reduce<Record<string, number>>((counts, requisition) => {
+      const status = requisition.backendStatus || "UNKNOWN";
+      counts[status] = (counts[status] || 0) + 1;
+      return counts;
+    }, {}),
+  )
+    .map(([status, count]) => `${status}: ${count}`)
+    .join(" · ");
 
   // Window A vs Window B Candidate Evaluator State
   const DEFAULT_CAND_CORRIDORS = [
@@ -523,16 +586,13 @@ function OptimizerPage() {
         }
       })
       .catch(() => {});
-
   }, []);
 
   useEffect(() => {
     const planningDate = apiData?.blocks?.[0]?.date;
     if (!planningDate) return;
 
-    setCandDate((currentDate) => (
-      currentDate === planningDate ? currentDate : planningDate
-    ));
+    setCandDate((currentDate) => (currentDate === planningDate ? currentDate : planningDate));
     void evaluateCandidateWindows("C01", planningDate, "09:00", "12:00", true);
   }, [apiData]);
 
@@ -544,8 +604,9 @@ function OptimizerPage() {
         const saved = await fetchSavedOptimization();
         if (!cancelled && saved) {
           setApiData(saved);
-          setProgress(100);
-          setStage("Saved optimization loaded");
+          setHistoricalPlanLoaded(true);
+          setProgress(0);
+          setStage("Historical saved plan loaded; latest run not established.");
         }
       } catch (error) {
         console.error("Saved optimization load error:", error);
@@ -617,248 +678,105 @@ function OptimizerPage() {
   }, [apiData]);
 
   const run = async () => {
-    if (!running && pending.length === 0) {
-      try {
-        const saved = await fetchSavedOptimization();
-        if (saved) {
-          setApiData(saved);
-          setProgress(100);
-          setStage("Saved optimization loaded");
-          toast.success(`${saved.blocks_generated ?? 0} saved optimized block(s) loaded`);
-        } else {
-          toast.info("No pending requests or saved optimized blocks found.");
-        }
-      } catch (error) {
-        console.error("Saved optimization load error:", error);
-        setApiError(true);
-      }
+    if (runningRef.current) return;
+    if (!canRunOptimization) {
+      toast.error(
+        reqsError ||
+          (isDemoMode
+            ? "Optimization is unavailable because PostgreSQL requisitions could not be confirmed."
+            : !reqsLoaded
+              ? "Requisition eligibility is still loading."
+              : "No eligible demands are waiting for optimization. Submit a valid requisition or ask an authorized planner to review a specific request for rework."),
+      );
       return;
     }
-
+    runningRef.current = true;
     setRunning(true);
+    setExecutionState("RUNNING");
+    runStartedAt.current = Date.now();
+    setExecutionDuration(0);
     setProgress(0);
+    setStage("Sending optimization request to backend...");
     setApiError(false);
-
-    const startTime = Date.now();
-    const stages = [
-      "Loading maintenance requests from BDMS...",
-      "Executing USFD & P-Way criticality scoring...",
-      "Clustering overlapping TMS, SMMS & TDMS demands...",
-      "Evaluating corridor line capacity & traffic windows...",
-      "Synthesizing zero-conflict shadow megablocks...",
-      "Validating COA express train path clearance...",
-    ];
-
-    let currentStage = 0;
-
-    const timer = setInterval(() => {
-      if (currentStage >= stages.length) {
-        clearInterval(timer);
-        return;
-      }
-
-      setStage(stages[currentStage] ?? "Finalizing optimization...");
-      setProgress(Math.min(((currentStage + 1) / stages.length) * 100, 100));
-      currentStage += 1;
-
-      if (currentStage >= stages.length) {
-        clearInterval(timer);
-      }
-    }, 550);
+    setApiErrorMessage(null);
+    setLatestRunData(null);
 
     try {
-      const response = await apiFetch("/optimization/", {
-        method: "POST",
-      });
+      const response = await apiFetch("/optimization/", { method: "POST" });
+      const data = (await response.json().catch(() => ({}))) as OptimizationApiResponse & {
+        detail?: unknown;
+      };
 
-      if (!response.ok) throw new Error("API response not OK");
-
-      const data: OptimizationApiResponse = await response.json();
-
-      let finalData = data;
-
-      if (!data.blocks || data.blocks.length === 0) {
-        try {
-          const savedResponse = await apiFetch("/optimized-plan/");
-          if (savedResponse.ok) {
-            const saved = await savedResponse.json();
-            if (
-              saved.status === "success" &&
-              Array.isArray(saved.blocks) &&
-              saved.blocks.length > 0
-            ) {
-              const blocks = (
-                saved.blocks as Array<{
-                  block_id?: unknown;
-                  corridor?: unknown;
-                  corridor_id?: unknown;
-                  date?: unknown;
-                  block_date?: unknown;
-                  start?: unknown;
-                  start_time?: unknown;
-                  end?: unknown;
-                  end_time?: unknown;
-                  duration?: unknown;
-                  duration_min?: unknown;
-                  utilization?: unknown;
-                  utilization_percent?: unknown;
-                  train_impact?: unknown;
-                  train_impact_score?: unknown;
-                  number_of_tasks?: unknown;
-                  train_conflicts?: unknown;
-                  optimization_score?: unknown;
-                  maintenance_priority?: unknown;
-                  asset_risk_score?: unknown;
-                  traffic_impact_score?: unknown;
-                  goods_impact_score?: unknown;
-                  consolidation_score?: unknown;
-                  ai_reasons?: unknown;
-                  ai_explanation?: unknown;
-                  ai_decision_confidence?: unknown;
-                  reason?: unknown;
-                }>
-              ).map((block) => ({
-                block_id: String(block.block_id ?? ""),
-                corridor: String(block.corridor ?? block.corridor_id ?? ""),
-                date: String(block.date ?? block.block_date ?? ""),
-                start: String(block.start ?? block.start_time ?? ""),
-                end: String(block.end ?? block.end_time ?? ""),
-                duration: Number(block.duration ?? block.duration_min ?? 0),
-                utilization: Number(block.utilization ?? block.utilization_percent ?? 0),
-                train_impact: Number(block.train_impact ?? block.train_impact_score ?? 0),
-                train_impact_score: Number(block.train_impact_score ?? block.train_impact ?? 0),
-                number_of_tasks: Number(block.number_of_tasks ?? 0),
-                train_conflicts: Number(block.train_conflicts ?? 0),
-                conflict_count: Number(block.conflict_count ?? block.train_conflicts ?? 0),
-                estimated_delay: Number(block.estimated_delay ?? block.estimated_delay_min ?? 0),
-                optimization_score: Number(block.optimization_score ?? 0),
-                maintenance_priority: Number(block.maintenance_priority ?? 0),
-                asset_risk_score: Number(block.asset_risk_score ?? 0),
-                traffic_impact_score: Number(block.traffic_impact_score ?? 0),
-                goods_impact_score: Number(block.goods_impact_score ?? 0),
-                consolidation_score: Number(block.consolidation_score ?? 0),
-                ai_reasons: normalizeAiReasons(block.ai_reasons),
-                ai_explanation:
-                  block.ai_explanation && typeof block.ai_explanation === "object"
-                    ? (block.ai_explanation as Record<string, unknown>)
-                    : typeof block.ai_explanation === "string"
-                      ? block.ai_explanation
-                      : null,
-                ai_decision_confidence:
-                  block.ai_decision_confidence &&
-                  typeof block.ai_decision_confidence === "object"
-                    ? (block.ai_decision_confidence as {
-                        level?: string;
-                        score_gap?: number;
-                        candidates_evaluated?: number;
-                      })
-                    : null,
-                reason: typeof block.reason === "string" ? block.reason : null,
-              }));
-
-              finalData = {
-                ...data,
-                status: "success",
-                message: "Showing latest saved optimization plan.",
-                requests_processed: Number(
-                  saved.requests_processed ?? saved.request_count ?? data.requests_processed ?? 0,
-                ),
-                blocks_generated: blocks.length,
-                blocks,
-                run_metrics: {
-                  total_block_minutes: blocks.reduce((sum, b) => sum + b.duration, 0),
-                  average_utilization:
-                    blocks.reduce((sum, b) => sum + b.utilization, 0) / blocks.length,
-                  average_optimization_score: 0,
-                  total_train_impact: blocks.reduce((sum, b) => sum + b.train_impact, 0),
-                  total_train_conflicts: blocks.reduce((sum, b) => sum + b.train_conflicts, 0),
-                },
-              };
-            }
-          }
-        } catch (savedError) {
-          console.error("Failed to load saved plan:", savedError);
+      if (!response.ok) {
+        const failure = optimizationFailureState(data.detail, response.status);
+        setExecutionState(failure.state);
+        if (failure.stages) {
+          setLatestRunData({
+            status: "failed",
+            pipeline: { stages: failure.stages as NonNullable<OptimizationApiResponse["pipeline"]>["stages"] },
+          });
         }
+        if (failure.state === "NO_ELIGIBLE_DEMANDS") await refreshAll();
+        throw new Error(failure.message);
+      }
+      if (data.status !== "success") {
+        throw new Error(data.message || "The optimizer did not confirm a successful run.");
+      }
+      if (data.is_demo || data.data_source === "SYNTHETIC_DEMO") {
+        throw new Error(data.notice || "The backend returned a synthetic plan; no real optimization result was accepted.");
+      }
+      if (!Array.isArray(data.blocks) || data.blocks.length === 0) {
+        throw new Error("The backend reported success without returning optimized blocks.");
+      }
+      if (!Number(data.requests_processed) || !Number(data.blocks_generated)) {
+        throw new Error("The backend result did not confirm any processed requests and generated blocks.");
+      }
+      if (!Array.isArray(data.pipeline?.stages) || data.pipeline.stages.length !== 5 || data.pipeline.stages.some((item) => item.status !== "COMPLETED")) {
+        throw new Error("The backend did not confirm completion of all five optimization stages.");
       }
 
-      if (data.status === "error") {
-        throw new Error(data.message || "Optimization failed");
-      }
-
-      // The optimizer can successfully create/persist blocks while its
-      // in-memory request list is empty. The persisted PostgreSQL plan is
-      // authoritative for the number of BDMS requests actually bundled.
-      if (Number(data.requests_processed ?? 0) === 0 && Number(data.blocks_generated ?? 0) > 0) {
-        try {
-          const savedResponse = await apiFetch("/optimized-plan/");
-
-          if (savedResponse.ok) {
-            const saved = await savedResponse.json();
-
-            if (saved.status === "success") {
-              finalData = {
-                ...data,
-                requests_processed: Number(
-                  saved.requests_processed ?? saved.request_count ?? data.requests_processed ?? 0,
-                ),
-                blocks_generated: Number(
-                  data.blocks_generated ?? saved.blocks_generated ?? saved.block_count ?? 0,
-                ),
-                run_metrics: data.run_metrics ?? saved.run_metrics,
-                blocks: data.blocks?.length ? data.blocks : (saved.blocks ?? data.blocks),
-              };
-            }
-          }
-        } catch (savedMetricError) {
-          console.error(
-            "Could not restore persisted request count after execution:",
-            savedMetricError,
-          );
-        }
-      }
-
-      clearInterval(timer);
-      setProgress(100);
-      setStage("Optimization complete");
-
-      let displayData = finalData;
-      if ((finalData.blocks_generated ?? 0) === 0) {
-        try {
-          const saved = await fetchSavedOptimization();
-          if (saved) displayData = saved;
-        } catch (restoreError) {
-          console.error("Could not restore saved optimization:", restoreError);
-        }
-      }
-
-      setApiData(displayData);
+      const duration = Number(data.execution_time ?? data.run_metrics?.compute_time_seconds);
+      runStartedAt.current = null;
+      setApiData(data);
+      setLatestRunData(data);
+      setHistoricalPlanLoaded(false);
+      setExecutionState("SUCCESS");
       setLastExecution(new Date());
-      const duration = (Date.now() - startTime) / 1000;
-      setExecutionDuration(duration);
-      localStorage.setItem("optimizer_execution_duration", String(duration));
+      setExecutionDuration(Number.isFinite(duration) && duration >= 0 ? duration : null);
+      if (Number.isFinite(duration) && duration >= 0) {
+        localStorage.setItem("optimizer_execution_duration", String(duration));
+      }
+      setProgress(100);
+      setStage("Optimization completed and saved by PostgreSQL.");
 
-      toast.success(
-        <div className="flex flex-col gap-1">
-          <span className="font-bold flex items-center gap-2 text-emerald-800">
-            <CheckCircle2 className="size-4" /> Optimization Execution Successful
-          </span>
-          <span className="text-xs">
-            {displayData.blocks_generated ?? 0} megablocks computed ·{" "}
-            {displayData.run_metrics?.total_block_minutes ?? 0} min total window
-          </span>
-        </div>,
-      );
-    } catch (err) {
-      clearInterval(timer);
-      console.error("Optimization API error:", err);
+      const refreshedRequests = await refreshAll();
+      window.dispatchEvent(new Event("railway:optimization-saved"));
+
+      if (refreshedRequests) {
+        toast.success(
+          `${data.blocks_generated} optimized block(s) created from ${data.requests_processed} processed request(s).`,
+        );
+      } else {
+        toast.error("Optimization was saved, but the dashboard data could not be refreshed.");
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Optimization failed.";
+      console.error("Optimization API error:", error);
       setApiError(true);
-      setStage("Failed");
+      setExecutionState((current) => current === "NO_ELIGIBLE_DEMANDS" ? current : "FAILED");
+      setApiErrorMessage(message);
+      setStage("Optimization failed");
       setProgress(0);
+      toast.error(message);
     } finally {
+      if (runStartedAt.current !== null) {
+        setExecutionDuration((Date.now() - runStartedAt.current) / 1000);
+      }
+      runStartedAt.current = null;
+      runningRef.current = false;
       setRunning(false);
     }
   };
-
   const getScoreVisuals = (score: number) => {
     if (score >= 90)
       return {
@@ -889,41 +807,57 @@ function OptimizerPage() {
     };
   };
 
+  const runStagesById = new globalThis.Map((latestRunData?.pipeline?.stages ?? []).map((item) => [item.id, item]));
+  const ingestionStage = runStagesById.get("BDMS_INGESTION");
+  const scoringStage = runStagesById.get("CRITICALITY_SCORING");
+  const clusteringStage = runStagesById.get("SHADOW_CLUSTERING");
+  const matchingStage = runStagesById.get("CORRIDOR_MATCHING");
+  const persistenceStage = runStagesById.get("MEGABLOCK_PERSISTENCE");
   const pipelineStages = [
     {
       id: 1,
       name: "BDMS INGESTION",
-      desc: `${reqs.length} Demands`,
+      desc: ingestionStage
+        ? `${String(ingestionStage.loaded ?? "-")} loaded · ${String(ingestionStage.eligible ?? "-")} eligible · ${String(ingestionStage.skipped ?? "-")} skipped`
+        : reqsLoaded && !reqsError && !isDemoMode ? `${reqs.length} loaded · ${pending.length} eligible` : "Backend unavailable",
       icon: FileText,
-      done: progress >= 20 || !!apiData,
+      done: runStagesById.get("BDMS_INGESTION")?.status === "COMPLETED",
     },
     {
       id: 2,
       name: "CRITICALITY INDEX",
-      desc: "USFD Scoring",
+      desc: scoringStage
+        ? `${String(scoringStage.scored ?? "-")} scored using persisted priority and factors`
+        : "Scoring awaits a run",
       icon: Target,
-      done: progress >= 40 || !!apiData,
+      done: runStagesById.get("CRITICALITY_SCORING")?.status === "COMPLETED",
     },
     {
       id: 3,
       name: "SHADOW CLUSTERING",
-      desc: "Cross-Dept Overlap",
+      desc: clusteringStage
+        ? `${String(clusteringStage.cluster_count ?? 0)} cross-department clusters`
+        : "Clustering awaits a run",
       icon: Layers,
-      done: progress >= 60 || !!apiData,
+      done: runStagesById.get("SHADOW_CLUSTERING")?.status === "COMPLETED",
     },
     {
       id: 4,
       name: "CORRIDOR MATCHING",
-      desc: "COA Window Clearance",
+      desc: matchingStage
+        ? `${String(matchingStage.candidate_windows_evaluated ?? 0)} windows evaluated · ${String(matchingStage.candidate_windows_rejected_for_train_conflict ?? 0)} train conflicts · ${String(matchingStage.candidate_windows_rejected_for_block_overlap ?? 0)} block overlaps`
+        : "Timetable matching awaits a run",
       icon: Map,
-      done: progress >= 80 || !!apiData,
+      done: runStagesById.get("CORRIDOR_MATCHING")?.status === "COMPLETED",
     },
     {
       id: 5,
       name: "MEGABLOCK OUTPUT",
-      desc: "Optimized Schedule",
+      desc: persistenceStage
+        ? `${String(persistenceStage.scheduled_requests ?? 0)} requests · ${String(persistenceStage.persisted_blocks ?? 0)} persisted blocks · transaction ${persistenceStage.transaction_committed === true ? "committed" : "unconfirmed"}`
+        : "Persistence awaits a run",
       icon: Sparkles,
-      done: progress === 100 || !!apiData,
+      done: runStagesById.get("MEGABLOCK_PERSISTENCE")?.status === "COMPLETED",
     },
   ];
 
@@ -936,7 +870,21 @@ function OptimizerPage() {
           <div className="flex items-center gap-2">
             <span className="text-[11px] text-muted-foreground font-mono">
               Status:{" "}
-              <strong className="text-emerald-700 dark:text-emerald-400">ENGINE READY</strong>
+              <strong className={
+                !reqsLoaded || reqsError || isDemoMode
+                  ? "text-red-700 dark:text-red-400"
+                  : pending.length > 0
+                    ? "text-emerald-700 dark:text-emerald-400"
+                    : "text-amber-700 dark:text-amber-400"
+              }>
+                {!reqsLoaded
+                  ? "CHECKING"
+                  : reqsError || isDemoMode
+                    ? "UNAVAILABLE"
+                    : pending.length > 0
+                      ? "ELIGIBLE DEMANDS"
+                      : "NO ELIGIBLE DEMANDS"}
+              </strong>
             </span>
             <Can
               perm="optimizer.run"
@@ -948,7 +896,7 @@ function OptimizerPage() {
             >
               <Button
                 onClick={run}
-                disabled={running}
+                disabled={running || !canRunOptimization}
                 size="sm"
                 className="bg-[#003366] hover:bg-[#002244] text-white font-bold h-8 text-xs rounded-[2px]"
               >
@@ -979,6 +927,18 @@ function OptimizerPage() {
           </div>
         }
       />
+
+      {reqsError ? (
+        <div role="alert" className="mb-5 border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-900 dark:bg-red-950/30 dark:text-red-200">
+          Requisition eligibility could not be confirmed: {reqsError}
+        </div>
+      ) : reqsLoaded && !isDemoMode && pending.length === 0 ? (
+        <div role="status" className="mb-5 border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950 dark:bg-amber-950/30 dark:text-amber-100">
+          No eligible demands are waiting for optimization.
+          {requestStatusSummary ? ` Current requisition statuses: ${requestStatusSummary}.` : " The requisition ledger is empty."}
+          {" "}Submit a valid requisition or ask an authorized planner to review whether a previously optimized request should be reworked; existing requests were not changed.
+        </div>
+      ) : null}
 
       {/* Department Read-Only Notice Banner */}
       {scope === "department" && (
@@ -1028,17 +988,22 @@ function OptimizerPage() {
           <div>
             <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-950 dark:text-emerald-100">
               {t(
-                "LIVE PRODUCTION PLAN: Verified PostgreSQL Ledger",
+                historicalPlanLoaded ? "HISTORICAL PLAN: Persisted PostgreSQL Blocks" : "LIVE PRODUCTION PLAN: Verified PostgreSQL Ledger",
                 "लाइव प्रोडक्शन प्लान: सत्यापित पोस्टग्रेस खाता बही",
               )}
             </h4>
             <p className="text-[11px] text-emerald-800 dark:text-emerald-300 mt-0.5">
               {t(
-                "Optimization plan is verified and loaded from PostgreSQL central database.",
+                historicalPlanLoaded ? "Previously persisted blocks are shown for reference; this is not evidence of the latest run." : "Optimization plan is verified and loaded from PostgreSQL central database.",
                 "ऑप्टिमाइज़ेशन प्लान सत्यापित है और पोस्टग्रेस केंद्रीय डेटाबेस से लोड किया गया है।",
               )}
             </p>
           </div>
+        </div>
+      )}
+      {historicalPlanLoaded && (
+        <div role="status" className="mb-5 border-2 border-slate-300 bg-slate-50 p-3.5 text-sm text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+          A previously persisted plan is shown below for reference. Its blocks and metrics are historical aggregates; no current optimization run has been established.
         </div>
       )}
 
@@ -1099,7 +1064,7 @@ function OptimizerPage() {
         <div className="border border-border bg-white dark:bg-slate-900 p-3 rounded-[2px]">
           <p className="text-[10px] font-bold uppercase text-slate-500">Pending Requests</p>
           <p className="text-xl font-bold font-mono text-slate-900 dark:text-slate-100 mt-0.5">
-            {pending.length}
+            {!reqsLoaded || reqsError || isDemoMode ? "—" : pending.length}
           </p>
           <p className="text-[10px] text-slate-500 mt-0.5">In BDMS Queue</p>
         </div>
@@ -1108,7 +1073,7 @@ function OptimizerPage() {
             Megablocks Output
           </p>
           <p className="text-xl font-bold font-mono text-[#003366] dark:text-sky-400 mt-0.5">
-            {apiData?.blocks_generated ?? "-"}
+            {latestRunData?.blocks_generated ?? "-"}
           </p>
           <p className="text-[10px] text-slate-500 mt-0.5">Optimized Windows</p>
         </div>
@@ -1117,9 +1082,9 @@ function OptimizerPage() {
             Downtime Saved
           </p>
           <p className="text-xl font-bold font-mono text-emerald-700 dark:text-emerald-400 mt-0.5">
-            {apiData?.run_metrics?.total_block_minutes
-              ? `${apiData.run_metrics.total_block_minutes}m`
-              : "-"}
+            {latestRunData?.run_metrics?.downtime_saved_min == null
+              ? "N/A"
+              : `${latestRunData.run_metrics.downtime_saved_min}m`}
           </p>
           <p className="text-[10px] text-slate-500 mt-0.5">Recovered Line Time</p>
         </div>
@@ -1128,14 +1093,9 @@ function OptimizerPage() {
             Train Delays
           </p>
           <p className="text-xl font-bold font-mono text-amber-700 dark:text-amber-400 mt-0.5">
-            {apiData?.run_metrics?.total_train_impact != null
-              ? Number(
-                  apiData.blocks?.reduce(
-                    (total, block) => total + Number(block.estimated_delay ?? 0),
-                    0,
-                  ) ?? 0,
-                ).toFixed(2)
-              : "0.00"}
+            {latestRunData?.run_metrics?.train_delays_min != null
+              ? Number(latestRunData.run_metrics.train_delays_min).toFixed(2)
+              : "N/A"}
           </p>
           <p className="text-[10px] text-slate-500 mt-0.5">COA Estimated Impact</p>
         </div>
@@ -1144,7 +1104,7 @@ function OptimizerPage() {
             Path Conflicts
           </p>
           <p className="text-xl font-bold font-mono text-blue-700 dark:text-blue-400 mt-0.5">
-            {apiData?.run_metrics?.total_train_conflicts ?? "0"}
+            {latestRunData?.run_metrics?.path_conflicts ?? "N/A"}
           </p>
           <p className="text-[10px] text-slate-500 mt-0.5">Clashes Checked</p>
         </div>
@@ -1159,12 +1119,17 @@ function OptimizerPage() {
               <CardTitle className="text-xs font-bold uppercase text-[#003366] dark:text-sky-400 flex items-center gap-2">
                 <Activity className="size-4" /> AI Execution Status & Diagnostics
               </CardTitle>
-              <span className="border border-emerald-300 bg-emerald-100 text-emerald-900 px-2 py-0.5 text-[9px] uppercase font-bold rounded-[2px]">
-                {running ? "PROCESSING" : apiData ? "COMPLETED" : "STANDBY"}
+              <span className={`border px-2 py-0.5 text-[9px] uppercase font-bold rounded-[2px] ${apiError ? "border-red-300 bg-red-100 text-red-900" : running ? "border-blue-300 bg-blue-100 text-blue-900" : "border-slate-300 bg-slate-100 text-slate-800"}`}>
+                {!reqsLoaded || reqsError || isDemoMode ? (running ? "RUNNING" : "FAILED") : executionState === "READY" && pending.length === 0 ? "NO_ELIGIBLE_DEMANDS" : executionState}
               </span>
             </div>
           </CardHeader>
           <CardContent className="p-4 space-y-4">
+            {apiErrorMessage && (
+              <div role="alert" className="border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-900 dark:bg-red-950/30 dark:text-red-200">
+                Optimization failed: {apiErrorMessage}
+              </div>
+            )}
             <div>
               <div className="flex justify-between items-center text-xs mb-1.5 font-bold">
                 <span className="text-slate-800 dark:text-slate-200">{stage}</span>
@@ -1180,13 +1145,13 @@ function OptimizerPage() {
               <div className="border border-border bg-slate-50 dark:bg-slate-800 p-2.5 rounded-[2px]">
                 <p className="text-[10px] font-bold uppercase text-slate-500">Demands Bundled</p>
                 <p className="font-mono text-lg font-bold text-slate-900 dark:text-slate-100 mt-0.5">
-                  {apiData?.requests_processed ?? (running ? "..." : "-")}
+                  {latestRunData?.requests_processed ?? (running ? "..." : "-")}
                 </p>
               </div>
               <div className="border border-border bg-slate-50 dark:bg-slate-800 p-2.5 rounded-[2px]">
                 <p className="text-[10px] font-bold uppercase text-slate-500">Megablocks</p>
                 <p className="font-mono text-lg font-bold text-[#003366] dark:text-sky-400 mt-0.5">
-                  {apiData?.blocks_generated ?? (running ? "..." : "-")}
+                  {latestRunData?.blocks_generated ?? (running ? "..." : "-")}
                 </p>
               </div>
               <div className="border border-border bg-slate-50 dark:bg-slate-800 p-2.5 rounded-[2px]">
@@ -1202,21 +1167,21 @@ function OptimizerPage() {
               <div className="border border-border bg-slate-50 dark:bg-slate-800 p-2.5 rounded-[2px]">
                 <p className="text-[10px] font-bold uppercase text-slate-500">Avg Utilization</p>
                 <p className="font-mono text-lg font-bold text-emerald-700 dark:text-emerald-400 mt-0.5">
-                  {apiData?.run_metrics?.average_utilization
-                    ? `${apiData.run_metrics.average_utilization}%`
+                  {latestRunData?.run_metrics?.average_utilization != null
+                    ? `${latestRunData.run_metrics.average_utilization}%`
                     : "-"}
                 </p>
               </div>
             </div>
 
-            {apiData && (
+            {latestRunData?.status === "success" && (
               <div className="border border-border bg-slate-50 dark:bg-slate-800/60 p-3 rounded-[2px] flex items-center justify-between text-xs">
                 <div>
                   <p className="font-bold text-slate-900 dark:text-slate-100">
-                    Optimization Plan Persisted in PostgreSQL Database
+                    Optimization result returned by PostgreSQL
                   </p>
                   <p className="text-[11px] text-slate-500">
-                    Gantt Planner and Conflicts & Approvals desks have been automatically refreshed.
+                    The Planner and Conflicts pages reload their saved data after this run.
                   </p>
                 </div>
                 <Button
@@ -1452,8 +1417,8 @@ function OptimizerPage() {
                                 : "bg-slate-100 text-slate-700 border-slate-300 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300"
                             }`}
                           >
-                            Option {idx + 1}: {cand.start ? cand.start.slice(0, 5) : "—"}–{cand.end ? cand.end.slice(0, 5) : "—"} (
-                            {cand.optimization_score} pts)
+                            Option {idx + 1}: {cand.start ? cand.start.slice(0, 5) : "—"}–
+                            {cand.end ? cand.end.slice(0, 5) : "—"} ({cand.optimization_score} pts)
                           </button>
                         ))}
                       </div>
@@ -1532,7 +1497,8 @@ function OptimizerPage() {
                             </span>
                           </div>
                           <span className="font-mono font-bold text-xs text-[#003366] dark:text-sky-400">
-                            {activeCand?.start ? activeCand.start.slice(0, 5) : "—"} – {activeCand?.end ? activeCand.end.slice(0, 5) : "—"}
+                            {activeCand?.start ? activeCand.start.slice(0, 5) : "—"} –{" "}
+                            {activeCand?.end ? activeCand.end.slice(0, 5) : "—"}
                           </span>
                         </div>
 
@@ -1623,7 +1589,8 @@ function OptimizerPage() {
                         <h3 className="text-xs font-bold uppercase text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
                           <Activity className="size-3.5 text-[#003366] dark:text-sky-400" />
                           Traffic in Window B (Option {selectedCandidateIndex + 1}:{" "}
-                          {activeCand?.start ? activeCand.start.slice(0, 5) : "—"}–{activeCand?.end ? activeCand.end.slice(0, 5) : "—"})
+                          {activeCand?.start ? activeCand.start.slice(0, 5) : "—"}–
+                          {activeCand?.end ? activeCand.end.slice(0, 5) : "—"})
                         </h3>
                         {/* Freight Pressure Chip */}
                         <div className="flex items-center gap-1.5">
@@ -1758,14 +1725,20 @@ function OptimizerPage() {
         {shadowBlockOpportunities.length > 0 ? (
           <div className="p-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
             {shadowBlockOpportunities.map((opportunity, index) => {
-              const corridorLabel = opportunity.corridor || opportunity.corridor_id || "Indian Railways Network";
+              const corridorLabel =
+                opportunity.corridor || opportunity.corridor_id || "Indian Railways Network";
               const dateLabel = opportunity.date || "2026-09-01";
-              const baseStart = opportunity.base_window?.start || opportunity.shadow_window_start || "01:30";
-              const baseEnd = opportunity.base_window?.end || opportunity.shadow_window_end || "04:30";
-              const candStart = opportunity.candidate_window?.start || opportunity.shadow_window_start || "01:45";
-              const candEnd = opportunity.candidate_window?.end || opportunity.shadow_window_end || "04:15";
+              const baseStart =
+                opportunity.base_window?.start || opportunity.shadow_window_start || "01:30";
+              const baseEnd =
+                opportunity.base_window?.end || opportunity.shadow_window_end || "04:30";
+              const candStart =
+                opportunity.candidate_window?.start || opportunity.shadow_window_start || "01:45";
+              const candEnd =
+                opportunity.candidate_window?.end || opportunity.shadow_window_end || "04:15";
               const gapMin = opportunity.gap_minutes ?? 15;
-              const combinedDuration = opportunity.combined_duration_minutes ?? opportunity.shadow_duration_min ?? 180;
+              const combinedDuration =
+                opportunity.combined_duration_minutes ?? opportunity.shadow_duration_min ?? 180;
               const tasks = [
                 ...(Array.isArray(opportunity.base_tasks) ? opportunity.base_tasks : []),
                 ...(Array.isArray(opportunity.candidate_tasks) ? opportunity.candidate_tasks : []),
@@ -1780,7 +1753,8 @@ function OptimizerPage() {
                   <div className="flex items-center justify-between mb-3">
                     <div>
                       <p className="font-mono font-bold text-xs text-[#003366] dark:text-sky-400">
-                        {opportunity.opportunity_id || `SHADOW-${String(index + 1).padStart(2, "0")}`}
+                        {opportunity.opportunity_id ||
+                          `SHADOW-${String(index + 1).padStart(2, "0")}`}
                         {opportunity.department ? ` · ${opportunity.department}` : ""}
                       </p>
 
@@ -1807,7 +1781,9 @@ function OptimizerPage() {
 
                   {/* Candidate Window */}
                   <div className="mb-3">
-                    <p className="text-[9px] uppercase font-bold text-slate-500">Shadow Opportunity Window</p>
+                    <p className="text-[9px] uppercase font-bold text-slate-500">
+                      Shadow Opportunity Window
+                    </p>
 
                     <div className="mt-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 px-3 py-2 font-mono text-xs">
                       {candStart}
@@ -1884,7 +1860,7 @@ function OptimizerPage() {
         <div className="mb-6">
           <div className="border-b-2 border-[#003366] pb-1.5 mb-3 flex items-center justify-between">
             <h2 className="text-xs font-bold uppercase tracking-wider text-[#003366] dark:text-sky-400 flex items-center gap-2">
-              <CalendarCheck className="size-4" /> Generated Mega Block Schedule (
+              <CalendarCheck className="size-4" /> {latestRunData?.status === "success" ? "Latest Run Schedule" : "Saved Plan Reference"} (
               {apiData.blocks.length} Blocks)
             </h2>
             <span className="text-[11px] font-mono text-slate-500">
@@ -1986,7 +1962,8 @@ function OptimizerPage() {
                                 Selected Optimized Window
                               </span>
                               <span className="font-mono font-bold text-[#003366] dark:text-sky-400">
-                                {selectedWindow?.start ? selectedWindow.start.slice(0, 5) : "—"}–{selectedWindow?.end ? selectedWindow.end.slice(0, 5) : "—"}
+                                {selectedWindow?.start ? selectedWindow.start.slice(0, 5) : "—"}–
+                                {selectedWindow?.end ? selectedWindow.end.slice(0, 5) : "—"}
                               </span>
                             </div>
                             <div>
@@ -2001,9 +1978,7 @@ function OptimizerPage() {
                               <span className="text-[9px] uppercase font-bold text-slate-500 block">
                                 Estimated Delay
                               </span>
-                              <span className="font-mono font-bold">
-                                {selectedDelay} min
-                              </span>
+                              <span className="font-mono font-bold">{selectedDelay} min</span>
                             </div>
                           </div>
                         </div>
@@ -2149,14 +2124,13 @@ function OptimizerPage() {
                               </span>
                               <span className="ml-auto font-mono text-[10px] font-bold text-[#003366] dark:text-sky-400">
                                 Score {Number(aiScore).toFixed(2)}
-                                 Score {Number(aiScore).toFixed(2)}
+                                Score {Number(aiScore).toFixed(2)}
                               </span>
                             </div>
                             {decisionConfidence?.level && (
                               <div className="mb-2 text-[10px] font-mono text-slate-600 dark:text-slate-300">
-                                Decision confidence: {decisionConfidence.level} (score gap {Number(
-                                  decisionConfidence.score_gap ?? 0,
-                                ).toFixed(2)})
+                                Decision confidence: {decisionConfidence.level} (score gap{" "}
+                                {Number(decisionConfidence.score_gap ?? 0).toFixed(2)})
                               </div>
                             )}
 
@@ -2242,10 +2216,11 @@ function OptimizerPage() {
                     Optimizer Executive Summary
                   </p>
                   <p className="text-slate-700 dark:text-slate-300">
-                    IR-ABPS successfully scheduled{" "}
-                    <strong>{apiData.blocks.length} multi-departmental megablocks</strong> across
-                    Northern Central Railway. All high-criticality USFD rail flaws and signal
-                    overhauls have been clustered into low-density night/afternoon windows.
+                    {latestRunData?.status === "success" ? (
+                      <>This confirmed run scheduled <strong>{latestRunData.requests_processed} request(s) into {latestRunData.blocks_generated} persisted block(s)</strong>. The stage evidence and timetable limitations are shown above.</>
+                    ) : (
+                      <>These are <strong>{apiData.blocks.length} previously persisted block(s)</strong> shown for reference. They are not evidence of a successful latest run.</>
+                    )}
                   </p>
                 </div>
 

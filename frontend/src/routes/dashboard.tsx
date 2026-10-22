@@ -70,6 +70,7 @@ interface CorridorStatus {
 
 interface UrgentRisk {
   id: string;
+  record_key?: string;
   title: string;
   severity: string;
   location: string;
@@ -730,7 +731,7 @@ function DashboardPage() {
                     const order: Record<string, number> = { Critical: 1, High: 2, Medium: 3, Low: 4 };
                     return (order[a.severity] || 5) - (order[b.severity] || 5);
                   })
-                  .map((r) => {
+                  .map((r, index) => {
                     let sevClass = "bg-amber-100 text-amber-900 border-amber-300";
                     if (r.severity === "Critical") {
                       sevClass = "bg-red-100 text-red-900 border-red-300 font-black";
@@ -740,7 +741,7 @@ function DashboardPage() {
                     }
 
                     return (
-                      <div key={r.id} className="p-3 transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                      <div key={r.record_key ?? `${r.id}-${r.location}-${index}`} className="p-3 transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/50">
                         <div className="flex items-start justify-between gap-2">
                           <div className="flex items-center gap-1.5">
                             <AlertTriangle className="size-3.5 text-[#800000] shrink-0" />

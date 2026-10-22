@@ -697,7 +697,7 @@ function MaintenanceTasksPage() {
 
                   return (
                     <tr
-                      key={task.task_id}
+                      key={`${task.task_id}-${task.asset_id ?? "no-asset"}-${idx}`}
                       className={`hover:bg-amber-50/40 transition-colors ${
                         idx % 2 === 1 ? "bg-slate-50/60" : "bg-white"
                       }`}

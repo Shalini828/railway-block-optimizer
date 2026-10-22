@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 import importlib
 import sys
@@ -6,10 +6,17 @@ import time
 import psycopg
 import os
 import io
+from threading import Lock
 from contextlib import redirect_stdout
 from dotenv import load_dotenv
 
 from auth.security import require_permission
+from logic.optimization_eligibility import (
+    EligibleRequestSetChanged,
+    OPTIMIZATION_ELIGIBLE_STATUS,
+    count_eligible_requests,
+)
+from logic.ir_abps_pipeline import InfeasibleOptimizationError
 
 load_dotenv()
 
@@ -21,13 +28,10 @@ router = APIRouter(
 
 
 from db_config import DB_CONFIG
-from logic.fallback_plan import (
-    FALLBACK_OPTIMIZED_BLOCKS,
-    FALLBACK_SHADOW_OPPORTUNITIES,
-)
 
 
 _last_db_failure_time = 0.0
+_optimization_run_lock = Lock()
 
 
 def get_connection():
@@ -106,6 +110,14 @@ def format_block(block):
         "ai_reasons": block.get("ai_reasons") or [],
         "ai_explanation": block.get("ai_explanation"),
         "reason": block.get("reason") or block.get("optimization_reason"),
+        "cluster_id": block.get("cluster_id"),
+        "request_ids": block.get("request_ids") or [str(task[0]) for task in tasks if task],
+        "departments": block.get("departments") or [],
+        "cross_department_cluster": bool(block.get("cross_department_cluster", False)),
+        "cluster_reasons": block.get("cluster_reasons") or [],
+        "candidate_windows_evaluated": block.get("candidate_windows_evaluated"),
+        "candidate_windows_rejected_for_train_conflict": block.get("candidate_windows_rejected_for_train_conflict"),
+        "timetable_verified": block.get("timetable_verified"),
     }
 
 
@@ -121,7 +133,7 @@ def get_saved_blocks():
 
     conn = get_connection()
     if not conn:
-        return FALLBACK_OPTIMIZED_BLOCKS
+        return []
 
     cursor = conn.cursor()
 
@@ -179,7 +191,7 @@ def get_saved_blocks():
 
         rows = cursor.fetchall()
         if not rows:
-            return FALLBACK_OPTIMIZED_BLOCKS
+            return []
 
         blocks = []
 
@@ -215,7 +227,7 @@ def get_saved_blocks():
         return blocks
 
     except Exception:
-        return FALLBACK_OPTIMIZED_BLOCKS
+        return []
 
     finally:
         if cursor:
@@ -234,7 +246,7 @@ def get_saved_request_count():
 
     conn = get_connection()
     if not conn:
-        return 7
+        return 0
 
     cursor = conn.cursor()
 
@@ -250,10 +262,10 @@ def get_saved_request_count():
 
         row = cursor.fetchone()
         count = int((row[0] if row else 0) or 0)
-        return count if count > 0 else 7
+        return count
 
     except Exception:
-        return 7
+        return 0
 
     finally:
         if cursor:
@@ -291,41 +303,38 @@ def _time_to_minutes(value):
         return 0
 
 
-def _get_persistent_shadow_opportunities():
-    """
-    Rebuild shadow opportunities from the saved PostgreSQL optimization
-    when the in-memory optimizer state is empty.
-    """
-    conn = get_connection()
-    if not conn:
-        return FALLBACK_SHADOW_OPPORTUNITIES
-
-    try:
-        with conn.cursor() as cursor:
-            cursor.execute("""
-                SELECT opportunity_data
-                FROM shadow_block_opportunities
-                ORDER BY opportunity_id
-            """)
-            rows = cursor.fetchall()
-            if rows:
-                return [row[0] for row in rows]
-    except Exception as e:
-        print(f"Persistent shadow read fallback: {e}")
-    finally:
-        try: conn.close()
-        except Exception: pass
-
-    return FALLBACK_SHADOW_OPPORTUNITIES
-
-
-@router.post(
-    "/",
-    dependencies=[
-        Depends(require_permission("optimizer.run"))
+def _pipeline_failure(status_counts, stage, message, details=None, *, prior_stages_completed=False):
+    stage_order = [
+        ("BDMS_INGESTION", "BDMS Ingestion"),
+        ("CRITICALITY_SCORING", "Criticality Scoring"),
+        ("SHADOW_CLUSTERING", "Cross-department clustering"),
+        ("CORRIDOR_MATCHING", "Corridor and timetable matching"),
+        ("MEGABLOCK_PERSISTENCE", "Megablock plan persistence"),
     ]
-)
-def run_optimization():
+    stages = []
+    failed_seen = False
+    for stage_id, name in stage_order:
+        if stage_id == stage:
+            stages.append({"id": stage_id, "name": name, "status": "FAILED", "details": message, "evidence": details})
+            failed_seen = True
+        elif failed_seen:
+            stages.append({"id": stage_id, "name": name, "status": "SKIPPED", "details": "An earlier stage failed."})
+        elif not failed_seen and prior_stages_completed:
+            stages.append({"id": stage_id, "name": name, "status": "COMPLETED", "details": "Completed before the reported failure."})
+        else:
+            stages.append({"id": stage_id, "name": name, "status": "NOT_VERIFIED", "details": "The engine did not return evidence that this stage completed."})
+    return {
+        "code": "OPTIMIZATION_INFEASIBLE",
+        "status": "FAILED",
+        "stage": stage,
+        "message": message,
+        "details": details,
+        "status_counts": status_counts,
+        "pipeline": {"stages": stages},
+    }
+
+
+def _run_optimization_locked():
 
     start_time = time.time()
 
@@ -338,128 +347,44 @@ def run_optimization():
 
         conn = get_connection()
         if not conn:
-            pending_requests = 0
-        else:
-            try:
-                cursor = conn.cursor()
+            raise HTTPException(
+                status_code=503,
+                detail="Optimization is unavailable because PostgreSQL could not be reached.",
+            )
+
+        try:
+            with conn.cursor() as cursor:
                 cursor.execute("""
-                    SELECT COUNT(*)
+                    SELECT request_status, COUNT(*)
                     FROM block_requests
-                    WHERE request_status = 'PENDING'
+                    GROUP BY request_status
+                    ORDER BY request_status
                 """)
-                row = cursor.fetchone()
-                pending_requests = row[0] if row else 0
-                cursor.close()
-            except Exception:
-                pending_requests = 0
-            finally:
-                conn.close()
+                status_counts = {
+                    str(status or "<NULL>"): int(count)
+                    for status, count in cursor.fetchall()
+                }
+        except Exception as db_error:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Could not inspect requisition eligibility: {db_error}",
+            ) from db_error
+        finally:
+            conn.close()
 
-
-        # --------------------------------------------------
-        # STEP 2
-        # If there are NO pending requests,
-        # return the existing saved plan.
-        # --------------------------------------------------
-
+        pending_requests = count_eligible_requests(status_counts)
         if pending_requests == 0:
-
-            saved_blocks = get_saved_blocks()
-            shadow_block_opportunities = _get_persistent_shadow_opportunities()
-
-            execution_time = round(
-                time.time() - start_time,
-                2
+            counts = ", ".join(
+                f"{status}: {count}" for status, count in status_counts.items()
+            ) or "no block requests found"
+            stages = [
+                {"id": "BDMS_INGESTION", "name": "BDMS Ingestion", "status": "COMPLETED", "loaded": sum(status_counts.values()), "eligible": 0, "skipped": sum(status_counts.values()), "details": "No persisted PENDING requests were available."},
+                *[{"id": stage_id, "name": name, "status": "SKIPPED", "details": "No eligible PENDING requests."} for stage_id, name in [("CRITICALITY_SCORING", "Criticality Scoring"), ("SHADOW_CLUSTERING", "Cross-department clustering"), ("CORRIDOR_MATCHING", "Corridor and timetable matching"), ("MEGABLOCK_PERSISTENCE", "Megablock plan persistence")]],
+            ]
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "NO_ELIGIBLE_DEMANDS", "status": "NO_ELIGIBLE_DEMANDS", "message": ("No eligible demands: the optimizer only processes requests " f"whose request_status is {OPTIMIZATION_ELIGIBLE_STATUS}. Current request counts: {counts}. No statuses were changed."), "status_counts": status_counts, "demands_ingested": sum(status_counts.values()), "eligible_requests": 0, "pipeline": {"stages": stages}},
             )
-
-            total_duration = sum(
-                block["duration"]
-                for block in saved_blocks
-            )
-
-            average_utilization = (
-                sum(
-                    block["utilization"]
-                    for block in saved_blocks
-                )
-                / len(saved_blocks)
-                if saved_blocks
-                else 0
-            )
-
-            requests_processed = get_saved_request_count()
-            blocks_generated = len(saved_blocks)
-
-            average_optimization_score = (
-                sum(
-                    block["optimization_score"]
-                    for block in saved_blocks
-                ) / blocks_generated
-                if blocks_generated
-                else 0
-            )
-
-            conflicts_avoided = sum(
-                block["train_conflicts"]
-                for block in saved_blocks
-            )
-
-            return {
-                "status": "success",
-
-                "message": (
-                    "Showing the latest saved optimization plan."
-                ),
-
-                "requests_processed": requests_processed,
-
-                "blocks_generated": blocks_generated,
-
-                "execution_time": execution_time,
-
-                "total_duration": total_duration,
-
-                "average_utilization": round(
-                    average_utilization,
-                    2
-                ),
-
-                "average_optimization_score": round(
-                    average_optimization_score,
-                    2
-                ),
-
-                "train_impact": sum(
-                    block["train_impact"]
-                    for block in saved_blocks
-                ),
-
-                "conflicts_avoided": conflicts_avoided,
-
-                "run_metrics": {
-                    "total_block_minutes": round(total_duration, 2),
-                    "average_utilization": round(average_utilization, 2),
-                    "average_optimization_score": round(
-                        average_optimization_score,
-                        2
-                    ),
-                    "total_train_impact": round(
-                        sum(
-                            block["train_impact"]
-                            for block in saved_blocks
-                        ),
-                        2
-                    ),
-                    "total_train_conflicts": conflicts_avoided,
-                    "compute_time_seconds": execution_time,
-                    "execution_latency_seconds": execution_time,
-                },
-
-                "blocks": saved_blocks,
-
-                "shadow_block_opportunities":
-                    shadow_block_opportunities
-            }
 
 
         # --------------------------------------------------
@@ -502,30 +427,49 @@ def run_optimization():
                 []
             ) or []
         except Exception as opt_err:
-            print(f"[OPTIMIZER FALLBACK] Running in resilient offline mode: {opt_err}")
-            optimized_blocks = FALLBACK_OPTIMIZED_BLOCKS
-            requests = [1, 2, 3, 4, 5, 6, 7]
-            shadow_block_opportunities = FALLBACK_SHADOW_OPPORTUNITIES
-
-        # Normally this is populated by the current optimizer run.
-        # Keep a persistent fallback in case the module state is empty.
-        if not shadow_block_opportunities:
-            shadow_block_opportunities = (
-                _get_persistent_shadow_opportunities()
-            )
-
+            if isinstance(opt_err, EligibleRequestSetChanged):
+                raise HTTPException(
+                    status_code=409,
+                    detail=_pipeline_failure(status_counts, "BDMS_INGESTION", str(opt_err)),
+                ) from opt_err
+            if isinstance(opt_err, InfeasibleOptimizationError):
+                raise HTTPException(status_code=422, detail=_pipeline_failure(status_counts, opt_err.stage, str(opt_err), opt_err.details, prior_stages_completed=True)) from opt_err
+            raise HTTPException(
+                status_code=500,
+                detail=_pipeline_failure(status_counts, "OPTIMIZATION_ENGINE", f"Optimizer engine failed before returning verifiable stage results: {opt_err}"),
+            ) from opt_err
 
         # --------------------------------------------------
         # STEP 5
         # Format blocks
         # --------------------------------------------------
 
+        if not requests:
+            raise HTTPException(
+                status_code=409,
+                detail=_pipeline_failure(status_counts, "BDMS_INGESTION", "The database check found eligible requests, but the optimizer ingestion returned no PENDING requests."),
+            )
+        if not optimized_blocks:
+            raise HTTPException(
+                status_code=422,
+                detail=_pipeline_failure(status_counts, "MEGABLOCK_PERSISTENCE", "PENDING requests were found, but the optimizer produced no blocks. No success result was recorded."),
+            )
+
+        pipeline = getattr(optimizer, "pipeline_result", None)
+        if not isinstance(pipeline, dict) or not pipeline.get("stages"):
+            raise HTTPException(status_code=500, detail=_pipeline_failure(status_counts, "MEGABLOCK_PERSISTENCE", "Optimizer did not return verifiable stage results."))
+        if not all(stage.get("status") == "COMPLETED" for stage in pipeline["stages"]):
+            raise HTTPException(status_code=500, detail=_pipeline_failure(status_counts, "MEGABLOCK_PERSISTENCE", "Optimizer returned an incomplete pipeline result."))
+        persistence_stage = pipeline["stages"][-1]
+        if persistence_stage.get("transaction_committed") is not True:
+            raise HTTPException(status_code=500, detail=_pipeline_failure(status_counts, "MEGABLOCK_PERSISTENCE", "The optimizer did not confirm its plan transaction was committed."))
+
         blocks = [
             format_block(block) if isinstance(block, dict) and "tasks" in block else block
-            for block in (optimized_blocks if optimized_blocks else FALLBACK_OPTIMIZED_BLOCKS)
+            for block in optimized_blocks
         ]
 
-        requests_processed = len(requests) or 7
+        requests_processed = len(requests)
 
         blocks_generated = len(blocks)
 
@@ -574,6 +518,8 @@ def run_optimization():
         return {
 
             "status": "success",
+            "is_demo": False,
+            "data_source": "POSTGRESQL",
 
             "message": (
                 "Optimization completed successfully"
@@ -612,15 +558,21 @@ def run_optimization():
                         for block in blocks
                     ) / blocks_generated,
                     2
-                ) if blocks_generated else 89.98,
+                ) if blocks_generated else 0,
                 "total_train_impact": round(train_impact, 2),
                 "total_train_conflicts": int(conflicts_avoided),
                 "compute_time_seconds": execution_time,
                 "execution_latency_seconds": execution_time,
+                "downtime_saved_min": pipeline.get("metrics", {}).get("downtime_saved_min"),
+                "train_delays_min": pipeline.get("metrics", {}).get("train_delays_min"),
+                "path_conflicts": pipeline.get("metrics", {}).get("path_conflicts"),
             },
 
             "blocks":
                 blocks,
+
+            "pipeline": pipeline,
+            "warnings": pipeline.get("warnings", []),
 
             # ------------------------------------------
             # SHADOW BLOCK OPPORTUNITIES
@@ -631,36 +583,27 @@ def run_optimization():
         }
 
 
+    except HTTPException:
+        raise
     except Exception as e:
-        print(f"[OPTIMIZER] Unhandled error: {e}. Returning fallback plan.")
-        saved_blocks = FALLBACK_OPTIMIZED_BLOCKS
-        shadow_block_opportunities = FALLBACK_SHADOW_OPPORTUNITIES
-        total_duration = sum(block["duration"] for block in saved_blocks)
-        avg_util = sum(block["utilization"] for block in saved_blocks) / len(saved_blocks)
-        exec_time = round(time.time() - start_time, 2)
-        return {
-            "status": "success",
-            "is_demo": True,
-            "data_source": "SYNTHETIC_DEMO",
-            "notice": "DEMO MODE: Synthetic Offline Optimization Plan (PostgreSQL disconnected)",
-            "message": "Optimization completed successfully (resilient fallback mode)",
-            "requests_processed": 7,
-            "blocks_generated": len(saved_blocks),
-            "execution_time": exec_time,
-            "total_duration": total_duration,
-            "average_utilization": round(avg_util, 2),
-            "average_optimization_score": 89.98,
-            "train_impact": sum(block["train_impact"] for block in saved_blocks),
-            "conflicts_avoided": 0,
-            "run_metrics": {
-                "total_block_minutes": round(total_duration, 2),
-                "average_utilization": round(avg_util, 2),
-                "average_optimization_score": 89.98,
-                "total_train_impact": round(sum(block["train_impact"] for block in saved_blocks), 2),
-                "total_train_conflicts": 0,
-                "compute_time_seconds": exec_time,
-                "execution_latency_seconds": exec_time,
-            },
-            "blocks": saved_blocks,
-            "shadow_block_opportunities": shadow_block_opportunities,
-        }
+        print(f"[OPTIMIZER] Unhandled error: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Optimization failed: {e}",
+        ) from e
+
+
+@router.post(
+    "/",
+    dependencies=[Depends(require_permission("optimizer.run"))],
+)
+def run_optimization():
+    if not _optimization_run_lock.acquire(blocking=False):
+        raise HTTPException(
+            status_code=409,
+            detail="An optimization run is already in progress. Wait for it to finish before retrying.",
+        )
+    try:
+        return _run_optimization_locked()
+    finally:
+        _optimization_run_lock.release()

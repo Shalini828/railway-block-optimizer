@@ -78,6 +78,21 @@ type ConflictItem = {
   isConflict: boolean;
 };
 
+type RequestConflict = {
+  conflict_id: number;
+  request_1: string;
+  request_2: string;
+  corridor_id: string;
+  requested_date: string | null;
+  request_1_start: string | null;
+  request_1_end: string | null;
+  request_2_start: string | null;
+  request_2_end: string | null;
+  conflict_type: string;
+  conflict_status: string;
+  resolution_note: string | null;
+};
+
 function timeToMinutes(timeStr: string) {
   if (!timeStr) return 0;
   const [h, m] = timeStr.split(":");
@@ -85,12 +100,17 @@ function timeToMinutes(timeStr: string) {
 }
 
 function ConflictsPage() {
-  const { role, scope, can } = useAbps();
+  const { role, scope, can, authReady, signedIn, token } = useAbps();
   const { t } = useLanguage();
 
   const [blocks, setBlocks] = useState<OptimizedBlock[]>([]);
+  const [hasSavedPlan, setHasSavedPlan] = useState(false);
   const [isDemo, setIsDemo] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [requestConflicts, setRequestConflicts] = useState<RequestConflict[]>([]);
+  const [requestConflictsLoading, setRequestConflictsLoading] = useState(true);
+  const [requestConflictsError, setRequestConflictsError] = useState<string | null>(null);
 
   // Filters
   const [search, setSearch] = useState("");
@@ -105,24 +125,86 @@ function ConflictsPage() {
   const [changeReason, setChangeReason] = useState("");
   const [changeShift, setChangeShift] = useState("");
 
+  const fetchRequestConflicts = async () => {
+    setRequestConflictsLoading(true);
+    setRequestConflictsError(null);
+    try {
+      const res = await apiFetch("/conflicts/");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.detail || `Conflict verification failed (${res.status}).`);
+      }
+      if (data?.status !== "success" || !Array.isArray(data?.conflicts)) {
+        throw new Error(data?.message || "Conflict verification returned an invalid response.");
+      }
+      setRequestConflicts(data.conflicts);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Conflict verification is unavailable.";
+      setRequestConflicts([]);
+      setRequestConflictsError(message);
+    } finally {
+      setRequestConflictsLoading(false);
+    }
+  };
+
   const fetchPlan = async () => {
     setLoading(true);
+    setLoadError(null);
+    void fetchRequestConflicts();
     try {
       const res = await apiFetch("/optimized-plan/");
-      const data = await res.json();
-      setBlocks(data.blocks || []);
-      setIsDemo(Boolean(data.is_demo));
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.detail || `Saved plan request failed (${res.status}).`);
+      }
+      if (data?.is_demo || data?.data_source === "SYNTHETIC_DEMO") {
+        throw new Error("Saved optimized plan is unavailable; the API returned demo data.");
+      }
+      if (!Array.isArray(data?.blocks)) {
+        throw new Error("Saved optimized plan response did not include a block list.");
+      }
+      const rows = data.blocks;
+      // The API may include marked fallback rows when PostgreSQL has no saved
+      // blocks. Keep those out of real conflict and approval counts.
+      const savedBlocks = rows.filter(
+        (block: OptimizedBlock & { is_demo?: boolean; data_source?: string }) =>
+          !block.is_demo && block.data_source !== "SYNTHETIC_DEMO",
+      );
+      if (savedBlocks.some((block: OptimizedBlock) => !Array.isArray(block.conflicts))) {
+        throw new Error("The saved plan response is missing train conflict verification data.");
+      }
+      setBlocks(savedBlocks);
+      setHasSavedPlan(savedBlocks.length > 0);
+      setIsDemo(false);
     } catch (err) {
       console.error(err);
-      toast.error("Failed to load optimized plan data.");
+      const message = err instanceof Error ? err.message : "Failed to load optimized plan data.";
+      setBlocks([]);
+      setHasSavedPlan(false);
+      setIsDemo(false);
+      setLoadError(message);
+      toast.error(message);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchPlan();
-  }, []);
+    if (!authReady) return;
+    if (!signedIn || !token) {
+      setLoading(false);
+      setLoadError("Sign in to load saved conflicts and approvals.");
+      return;
+    }
+    void fetchPlan();
+  }, [authReady, signedIn, token]);
+
+  useEffect(() => {
+    if (!authReady || !signedIn || !token) return;
+    const refreshSavedPlan = () => void fetchPlan();
+    window.addEventListener("railway:optimization-saved", refreshSavedPlan);
+    return () => window.removeEventListener("railway:optimization-saved", refreshSavedPlan);
+  }, [authReady, signedIn, token]);
 
   const items: ConflictItem[] = useMemo(() => {
     const list: ConflictItem[] = [];
@@ -223,7 +305,7 @@ function ConflictsPage() {
       toast.success(`Block ${selectedItem.block.block_id} has been recorded as ${action.toUpperCase()}.`);
       setApprovalDialog(null);
       setSelectedItem(null);
-      fetchPlan();
+      await fetchPlan();
     } catch (err) {
       console.error(err);
       toast.error(`Failed to ${action} block.`);
@@ -242,7 +324,7 @@ function ConflictsPage() {
       if (!res.ok) throw new Error("Acknowledgement failed");
       toast.success(t("Conflict / block schedule acknowledged.", "विवाद / ब्लॉक अनुसूची स्वीकृत।"));
       setSelectedItem(null);
-      fetchPlan();
+      await fetchPlan();
     } catch (e: any) {
       toast.error(e.message || "Failed to acknowledge");
     } finally {
@@ -272,7 +354,7 @@ function ConflictsPage() {
       setChangeReason("");
       setChangeShift("");
       setSelectedItem(null);
-      fetchPlan();
+      await fetchPlan();
     } catch (e: any) {
       toast.error(e.message || "Failed to submit request");
     } finally {
@@ -312,7 +394,11 @@ function ConflictsPage() {
         }
         action={
           <div className="flex flex-wrap items-center gap-2">
-            {isDemo ? (
+            {loadError ? (
+              <span role="status" className="border border-red-300 bg-red-50 px-2.5 py-1 text-xs font-bold uppercase text-red-800 dark:bg-red-950/30 dark:text-red-200">
+                SAVED PLAN UNAVAILABLE
+              </span>
+            ) : isDemo ? (
               <span className="border border-amber-300 bg-amber-50 text-amber-800 px-2.5 py-1 text-xs font-bold rounded-[2px] uppercase">
                 DEMO PLAN: SIMULATED CONFLICTS
               </span>
@@ -333,13 +419,64 @@ function ConflictsPage() {
 
       {/* KPI Matrix Strip */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
-        <MetricCard label="Open Conflicts" value={stats.openConflicts} tone={stats.openConflicts > 0 ? "text-amber-700 dark:text-amber-400" : "text-slate-900 dark:text-slate-100"} />
-        <MetricCard label="Critical Clashes" value={stats.criticalConflicts} tone={stats.criticalConflicts > 0 ? "text-red-700 dark:text-red-400 font-bold" : "text-slate-900 dark:text-slate-100"} />
-        <MetricCard label="Pending Approval" value={stats.awaitingApproval} tone="text-blue-700 dark:text-blue-400" />
-        <MetricCard label="Authorized Today" value={stats.approvedToday} tone="text-emerald-700 dark:text-emerald-400 font-bold" />
-        <MetricCard label="Rejected / Rework" value={stats.rejected} />
-        <MetricCard label="Express Risk Impact" value={stats.highRiskImpacts} tone={stats.highRiskImpacts > 0 ? "text-red-700 dark:text-red-400" : "text-slate-900 dark:text-slate-100"} />
+        <MetricCard label="Open Conflicts" value={loadError ? "—" : stats.openConflicts} tone={stats.openConflicts > 0 ? "text-amber-700 dark:text-amber-400" : "text-slate-900 dark:text-slate-100"} />
+        <MetricCard label="Critical Clashes" value={loadError ? "—" : stats.criticalConflicts} tone={stats.criticalConflicts > 0 ? "text-red-700 dark:text-red-400 font-bold" : "text-slate-900 dark:text-slate-100"} />
+        <MetricCard label="Pending Approval" value={loadError ? "—" : stats.awaitingApproval} tone="text-blue-700 dark:text-blue-400" />
+        <MetricCard label="Authorized Today" value={loadError ? "—" : stats.approvedToday} tone="text-emerald-700 dark:text-emerald-400 font-bold" />
+        <MetricCard label="Rejected / Rework" value={loadError ? "—" : stats.rejected} />
+        <MetricCard label="Express Risk Impact" value={loadError ? "—" : stats.highRiskImpacts} tone={stats.highRiskImpacts > 0 ? "text-red-700 dark:text-red-400" : "text-slate-900 dark:text-slate-100"} />
       </div>
+
+      <Card className="mb-6 rounded-[2px] border border-border bg-white shadow-none dark:bg-slate-900">
+        <CardHeader className="border-b border-border bg-slate-100 p-3 dark:bg-slate-900/80">
+          <CardTitle className="text-xs font-bold uppercase text-[#003366] dark:text-sky-400">
+            Persisted Requisition Overlaps
+          </CardTitle>
+          <CardDescription className="text-[11px]">
+            Request conflicts loaded from PostgreSQL conflict records.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="p-0">
+          {requestConflictsLoading ? (
+            <p className="px-4 py-6 text-center text-xs text-muted-foreground">Loading persisted request conflicts...</p>
+          ) : requestConflictsError ? (
+            <p role="alert" className="px-4 py-6 text-center text-xs text-red-800 dark:text-red-200">
+              Request conflict verification is unavailable: {requestConflictsError}
+            </p>
+          ) : requestConflicts.length === 0 ? (
+            <p className="px-4 py-6 text-center text-xs text-muted-foreground">No overlapping requisitions are recorded.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse text-left text-xs">
+                <thead className="border-b border-border text-[10px] font-bold uppercase text-slate-600 dark:text-slate-300">
+                  <tr>
+                    <th className="px-4 py-2">Conflict</th>
+                    <th className="px-4 py-2">Requests</th>
+                    <th className="px-4 py-2">Corridor / Date</th>
+                    <th className="px-4 py-2">Overlapping Windows</th>
+                    <th className="px-4 py-2">Status</th>
+                    <th className="px-4 py-2">Resolution Note</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {requestConflicts.map((conflict) => (
+                    <tr key={conflict.conflict_id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                      <td className="px-4 py-2 font-mono">CF-{conflict.conflict_id}</td>
+                      <td className="px-4 py-2 font-mono">{conflict.request_1} / {conflict.request_2}</td>
+                      <td className="px-4 py-2">{conflict.corridor_id}<br /><span className="text-[10px] text-slate-500">{conflict.requested_date || "Date unavailable"}</span></td>
+                      <td className="px-4 py-2 font-mono text-[10px]">
+                        {conflict.request_1_start || "--:--"}–{conflict.request_1_end || "--:--"} / {conflict.request_2_start || "--:--"}–{conflict.request_2_end || "--:--"}
+                      </td>
+                      <td className="px-4 py-2 font-bold">{conflict.conflict_status}</td>
+                      <td className="px-4 py-2 text-slate-600 dark:text-slate-300">{conflict.resolution_note || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Filter and Search Bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4 border border-border bg-white dark:bg-slate-900 p-3 rounded-[2px]">
@@ -380,7 +517,7 @@ function ConflictsPage() {
         </div>
 
         <span className="text-xs font-mono font-bold text-slate-600 dark:text-slate-400">
-          Showing {filteredItems.length} Scrutiny Cases
+          {loadError ? "Conflict verification unavailable" : `Showing ${filteredItems.length} Scrutiny Cases`}
         </span>
       </div>
 
@@ -407,16 +544,30 @@ function ConflictsPage() {
                     Loading scrutiny queue...
                   </td>
                 </tr>
+              ) : loadError ? (
+                <tr>
+                  <td colSpan={8} role="alert" className="px-4 py-12 text-center text-sm text-red-800 dark:text-red-200">
+                    Could not verify saved conflicts or approvals: {loadError}
+                  </td>
+                </tr>
               ) : filteredItems.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="px-4 py-12 text-center">
                     <div className="flex flex-col items-center gap-1.5">
-                      <ShieldCheck className="size-8 text-emerald-600 opacity-60 mb-1" />
+                      <ShieldCheck className={`size-8 opacity-60 mb-1 ${hasSavedPlan ? "text-emerald-600" : "text-slate-400"}`} />
                       <p className="font-bold text-slate-800 dark:text-slate-200 uppercase text-xs">
-                        NO ACTIVE CONFLICTS DETECTED
+                        {!hasSavedPlan
+                          ? "NO SAVED OPTIMIZED BLOCKS"
+                          : items.length === 0
+                            ? "NO RECORDED TRAIN CONFLICTS"
+                            : "NO CASES MATCH THE SELECTED FILTERS"}
                       </p>
                       <p className="text-[11px] text-slate-500">
-                        All computed blocks are free from express path collisions.
+                        {!hasSavedPlan
+                          ? "Run the optimizer and save a plan to review its conflicts and approvals."
+                          : items.length === 0
+                            ? "The saved plan contains no recorded train conflicts."
+                            : "Change the severity or status filters to see other scrutiny cases."}
                       </p>
                     </div>
                   </td>
