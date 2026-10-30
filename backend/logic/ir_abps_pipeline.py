@@ -3,10 +3,77 @@
 from __future__ import annotations
 
 import re
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 
 SUPPORTED_DEPARTMENTS = {"TMS", "SMMS", "TDMS"}
+REGULAR_TIMETABLE_COUNT_SQL = """
+    SELECT COUNT(*)
+    FROM trains
+    WHERE corridor_id = %s AND travel_date = %s
+"""
+SPECIAL_TIMETABLE_COUNT_SQL = """
+    SELECT COUNT(*)
+    FROM special_train_services
+    WHERE corridor_id = %s
+      AND service_date = %s
+      AND status = 'SCHEDULED'
+"""
+OBSERVED_GOODS_FORECAST_SQL = """
+    SELECT expected_goods_trains
+    FROM goods_train_forecast
+    WHERE corridor_id = %s
+      AND forecast_date <= %s
+    ORDER BY forecast_date DESC, forecast_id DESC
+    LIMIT 1
+"""
+DEPARTMENT_ALIASES = {
+    "ENGINEERING": "TMS",
+    "S&T": "SMMS",
+    "TRD": "TDMS",
+}
+
+
+def normalize_department(value: Any) -> str | None:
+    department = str(value or "").strip().upper()
+    if department.startswith("DEPT-"):
+        department = department[5:]
+    department = DEPARTMENT_ALIASES.get(department, department)
+    return department if department in SUPPORTED_DEPARTMENTS else None
+
+
+def count_timetable_records(cursor: Any, corridor_id: str, service_date: Any) -> tuple[int, int]:
+    """Count persisted regular and scheduled special services for one route/date."""
+    cursor.execute(REGULAR_TIMETABLE_COUNT_SQL, (corridor_id, service_date))
+    regular_count = int((cursor.fetchone() or [0])[0] or 0)
+    cursor.execute(SPECIAL_TIMETABLE_COUNT_SQL, (corridor_id, service_date))
+    special_count = int((cursor.fetchone() or [0])[0] or 0)
+    return regular_count, special_count
+
+
+def load_goods_forecast_baseline(
+    cursor: Any,
+    corridor_id: str,
+    service_date: Any,
+    *,
+    require_observed: bool = False,
+) -> float:
+    """Use the latest persisted goods forecast on or before the service date."""
+    cursor.execute(OBSERVED_GOODS_FORECAST_SQL, (corridor_id, service_date))
+    row = cursor.fetchone()
+    if row and row[0] is not None:
+        try:
+            return float(row[0])
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(
+                f"Persisted goods forecast for corridor {corridor_id} on or before {service_date} is not numeric."
+            ) from exc
+    if require_observed:
+        raise RuntimeError(
+            f"No persisted goods forecast is available for corridor {corridor_id} on or before {service_date}."
+        )
+    return 20.0
 
 
 class InfeasibleOptimizationError(RuntimeError):
@@ -31,12 +98,33 @@ def chainage_interval(value: str | None) -> tuple[int, int] | None:
     return min(metres), max(metres)
 
 
-def track_scope(description: str | None) -> tuple[str | None, tuple[int, int] | None]:
+def _kilometres_to_metres(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(Decimal(str(value)) * 1000)
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def track_scope(
+    description: str | None,
+    *,
+    track_line: str | None = None,
+    chainage_start_km: Any = None,
+    chainage_end_km: Any = None,
+) -> tuple[str | None, tuple[int, int] | None]:
     text = str(description or "")
     line_match = re.search(r"(?:^|\|)\s*Line:\s*([^|]+)", text, re.IGNORECASE)
     chainage_match = re.search(r"(?:^|\|)\s*Chainage:\s*([^|]+)", text, re.IGNORECASE)
-    line = line_match.group(1).strip().casefold() if line_match else None
-    interval = chainage_interval(chainage_match.group(1)) if chainage_match else None
+    line_value = track_line or (line_match.group(1).strip() if line_match else None)
+    line = line_value.strip().casefold() if line_value else None
+    start_m = _kilometres_to_metres(chainage_start_km)
+    end_m = _kilometres_to_metres(chainage_end_km)
+    if start_m is not None and end_m is not None:
+        interval = (min(start_m, end_m), max(start_m, end_m))
+    else:
+        interval = chainage_interval(chainage_match.group(1)) if chainage_match else None
     return line, interval
 
 
@@ -45,6 +133,7 @@ def validate_optimizer_requests(rows: list[dict[str, Any]]) -> tuple[list[dict[s
     valid: list[dict[str, Any]] = []
     excluded: list[dict[str, str]] = []
     seen: set[str] = set()
+    excluded_by_id: dict[str, list[str]] = {}
 
     for row in rows:
         request_id = str(row.get("request_id") or "").strip()
@@ -58,11 +147,17 @@ def validate_optimizer_requests(rows: list[dict[str, Any]]) -> tuple[list[dict[s
 
         if str(row.get("request_status") or "").strip().upper() != "PENDING":
             reasons.append("request_status is not PENDING")
-        for field in ("task_id", "team_id", "corridor_id", "section_id", "requested_date", "requested_start", "requested_end", "block_type", "department", "asset_id"):
+        required_fields = ["task_id", "team_id", "corridor_id", "requested_date", "requested_start", "requested_end", "block_type", "department", "asset_id"]
+        if row.get("section_match_count") is None:
+            required_fields.append("section_id")
+        for field in required_fields:
             if row.get(field) is None or str(row.get(field)).strip() == "":
                 reasons.append(f"missing {field}")
-        if str(row.get("department") or "").strip().upper() not in SUPPORTED_DEPARTMENTS:
+        department = normalize_department(row.get("department"))
+        if department is None:
             reasons.append("unsupported department")
+        else:
+            row["department"] = department
         duration = row.get("requested_duration_min")
         if not isinstance(duration, (int, float)) or duration <= 0:
             reasons.append("requested duration must be positive")
@@ -80,23 +175,40 @@ def validate_optimizer_requests(rows: list[dict[str, Any]]) -> tuple[list[dict[s
                 reasons.append("requested window duration does not match requested_duration_min")
         except (TypeError, ValueError, IndexError):
             reasons.append("requested start or end time is invalid")
-        if row.get("section_id") and row.get("section_exists") is False:
+        section_match_count = row.get("section_match_count")
+        if section_match_count is not None and int(section_match_count) != 1:
+            reasons.append(
+                "could not resolve a unique corridor section from the task asset location "
+                f"({int(section_match_count)} matching sections)"
+            )
+        elif row.get("section_id") and row.get("section_exists") is False:
             reasons.append("section does not exist")
         if row.get("corridor_exists") is False:
             reasons.append("corridor does not exist")
         if row.get("asset_exists") is False:
             reasons.append("asset does not exist")
-        line, interval = track_scope(row.get("description"))
+        line, interval = track_scope(
+            row.get("description"),
+            track_line=row.get("track_line"),
+            chainage_start_km=row.get("chainage_start_km"),
+            chainage_end_km=row.get("chainage_end_km"),
+        )
+        row["track_line"] = line
+        row["chainage_interval"] = interval
         if not line:
-            reasons.append("missing track line in maintenance description")
+            reasons.append("missing track line in section data and maintenance description")
         if interval is None:
-            reasons.append("missing parseable chainage in maintenance description")
+            reasons.append("missing parseable chainage in section data and maintenance description")
 
         if reasons:
-            excluded.append({"request_id": request_id or "<missing>", "reason": "; ".join(dict.fromkeys(reasons))})
+            excluded_by_id.setdefault(request_id or "<missing>", []).extend(reasons)
         else:
             valid.append(row)
 
+    excluded = [
+        {"request_id": request_id, "reason": "; ".join(dict.fromkeys(reasons))}
+        for request_id, reasons in excluded_by_id.items()
+    ]
     return valid, excluded
 
 
@@ -139,7 +251,12 @@ def group_compatible_requests(
         key=lambda row: (str(row.get("corridor_id")), str(row.get("requested_date")), _time_minutes(row.get("requested_start")), str(row.get("request_id"))),
     )
     for row in ordered:
-        line, interval = track_scope(row.get("description"))
+        line, interval = track_scope(
+            row.get("description"),
+            track_line=row.get("track_line"),
+            chainage_start_km=row.get("chainage_start_km"),
+            chainage_end_km=row.get("chainage_end_km"),
+        )
         start = _time_minutes(row["requested_start"])
         end = _time_minutes(row["requested_end"])
         if end <= start:

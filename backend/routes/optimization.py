@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 from auth.security import require_permission
 from logic.optimization_eligibility import (
     EligibleRequestSetChanged,
+    OPTIMIZATION_ELIGIBLE_REVIEW_STATUS,
     OPTIMIZATION_ELIGIBLE_STATUS,
     count_eligible_requests,
 )
@@ -355,14 +356,15 @@ def _run_optimization_locked():
         try:
             with conn.cursor() as cursor:
                 cursor.execute("""
-                    SELECT request_status, COUNT(*)
+                    SELECT request_status, review_status, COUNT(*)
                     FROM block_requests
-                    GROUP BY request_status
-                    ORDER BY request_status
+                    GROUP BY request_status, review_status
+                    ORDER BY request_status, review_status
                 """)
                 status_counts = {
-                    str(status or "<NULL>"): int(count)
-                    for status, count in cursor.fetchall()
+                    f"{str(request_status or '<NULL>').strip().upper()}|"
+                    f"{str(review_status or '<NULL>').strip().upper()}": int(count)
+                    for request_status, review_status, count in cursor.fetchall()
                 }
         except Exception as db_error:
             raise HTTPException(
@@ -383,7 +385,20 @@ def _run_optimization_locked():
             ]
             raise HTTPException(
                 status_code=409,
-                detail={"code": "NO_ELIGIBLE_DEMANDS", "status": "NO_ELIGIBLE_DEMANDS", "message": ("No eligible demands: the optimizer only processes requests " f"whose request_status is {OPTIMIZATION_ELIGIBLE_STATUS}. Current request counts: {counts}. No statuses were changed."), "status_counts": status_counts, "demands_ingested": sum(status_counts.values()), "eligible_requests": 0, "pipeline": {"stages": stages}},
+                detail={
+                    "code": "NO_ELIGIBLE_DEMANDS",
+                    "status": "NO_ELIGIBLE_DEMANDS",
+                    "message": (
+                        "No eligible demands: optimization requires "
+                        f"request_status={OPTIMIZATION_ELIGIBLE_STATUS} and "
+                        f"review_status={OPTIMIZATION_ELIGIBLE_REVIEW_STATUS}. "
+                        f"Current request counts: {counts}. No statuses were changed."
+                    ),
+                    "status_counts": status_counts,
+                    "demands_ingested": sum(status_counts.values()),
+                    "eligible_requests": 0,
+                    "pipeline": {"stages": stages},
+                },
             )
 
 

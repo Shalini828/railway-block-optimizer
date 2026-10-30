@@ -1,11 +1,14 @@
 from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 import psycopg
 import os
+import logging
+import re
 
 from dotenv import load_dotenv
 from datetime import date, datetime, time, timedelta
+from uuid import uuid4
 
 from auth.security import get_current_user, require_permission, CurrentUser, RBACForbiddenException
 
@@ -18,8 +21,52 @@ router = APIRouter(
     tags=["Block Requests"]
 )
 
+REWORKABLE_REVIEW_STATES = frozenset({"PENDING", "PENDING_REVIEW", "APPROVED", "REWORK"})
+DEPARTMENT_CODE_ALIASES = {
+    "TMS": "TMS",
+    "ENGINEERING": "TMS",
+    "SMMS": "SMMS",
+    "S&T": "SMMS",
+    "TDMS": "TDMS",
+    "TRD": "TDMS",
+}
+DEPARTMENT_IDS = {"TMS": "DEPT-TMS", "SMMS": "DEPT-SMMS", "TDMS": "DEPT-TDMS"}
+TEAM_IDS = {"TMS": "ENG-01", "SMMS": "SNT-01", "TDMS": "TRD-01"}
+# The role-based authentication principal is backed by one active DB principal
+# per reviewer role. Resolve its FK dynamically and fail closed if that policy
+# is not true in the live database.
+REVIEWER_DB_ROLES = {"admin": "SYSTEM_ADMIN"}
+
 
 from db_config import DB_CONFIG
+
+logger = logging.getLogger(__name__)
+
+
+def _safe_requisition_error_details(exc: Exception):
+    """Return bounded, redacted diagnostics without logging submitted values."""
+    diag = getattr(exc, "diag", None)
+    primary_message = getattr(diag, "message_primary", None)
+    if isinstance(primary_message, str) and primary_message.strip():
+        message = re.sub(r"'[^']*'", "'[redacted]'", primary_message.strip())
+        message = re.sub(
+            r"(?i)\b(password|passwd|pwd|token|secret)\s*=\s*[^\s,;]+",
+            r"\1=[redacted]",
+            message,
+        )
+        message = re.sub(
+            r"(?i)\b(?:postgres(?:ql)?|mysql)://[^\s]+",
+            "[redacted connection URI]",
+            message,
+        )
+        message = message[:300]
+    else:
+        message = "Unexpected requisition persistence error"
+
+    sqlstate = getattr(exc, "sqlstate", None) or getattr(exc, "pgcode", None)
+    if not isinstance(sqlstate, str) or not re.fullmatch(r"[0-9A-Z]{5}", sqlstate):
+        sqlstate = None
+    return message, sqlstate
 
 
 # =========================================================
@@ -31,6 +78,36 @@ def get_connection():
         return psycopg.connect(**DB_CONFIG)
     except Exception:
         return None
+
+
+def _load_request_for_action(cursor, request_id: str):
+    """Load and lock a request with department data from its persisted task."""
+    cursor.execute(
+        """
+        SELECT br.request_id, br.request_status, br.review_status,
+               mt.department, br.task_id
+        FROM block_requests br
+        LEFT JOIN maintenance_tasks mt ON mt.task_id = br.task_id
+        WHERE br.request_id = %s
+        FOR UPDATE OF br
+        """,
+        (request_id,),
+    )
+    return cursor.fetchone()
+
+
+def _require_request_department(row, user: "CurrentUser", action: str):
+    """Department scoped callers must have a matching task department."""
+    if user.scope == "network":
+        return
+    dept = str(row[3] or "").strip().upper()
+    user_dept = str(user.dept or "").strip().upper()
+    if not user_dept or dept not in (user_dept, f"DEPT-{user_dept}"):
+        raise RBACForbiddenException(
+            required=f"department.{user.dept}",
+            role=user.role_id,
+            detail=f"Cannot {action} requisitions outside your department or without a matching task",
+        )
 
 
 FALLBACK_BLOCK_REQUESTS: List[Dict[str, Any]] = [
@@ -312,6 +389,11 @@ class BlockRequestCreate(BaseModel):
 
     requestedBy: str
 
+    @field_validator("criticality")
+    @classmethod
+    def validate_criticality(cls, value: str) -> str:
+        return normalize_criticality(value)
+
 
 # =========================================================
 # HELPERS
@@ -327,7 +409,9 @@ def normalize_criticality(value: str) -> str:
         "low": "Low",
     }
 
-    return mapping.get(value, "Low")
+    if value not in mapping:
+        raise ValueError("Criticality must be Critical, High, Medium, or Low")
+    return mapping[value]
 
 
 def criticality_to_level(value: str) -> int:
@@ -341,42 +425,76 @@ def criticality_to_level(value: str) -> int:
     return mapping.get(value, 2)
 
 
-def resolve_user_id(cursor, requested_by: str):
+def generate_requisition_ids():
+    """Generate low-collision IDs without a racy database sequence lookup."""
+    # The checked-in schema caps both identifiers at VARCHAR(30).
+    suffix = uuid4().hex[:22].upper()
+    return f"T-AUTO-{suffix}", f"BR-AUTO-{suffix}"
+
+
+def require_one_updated_row(cursor, detail: str):
+    if cursor.rowcount != 1:
+        raise HTTPException(status_code=409, detail=detail)
+
+
+def canonical_department_code(value: Optional[str]) -> Optional[str]:
+    normalized = (value or "").strip().upper()
+    if normalized.startswith("DEPT-"):
+        normalized = normalized[5:]
+    return DEPARTMENT_CODE_ALIASES.get(normalized)
+
+
+def resolve_user_id(cursor, authenticated_user: CurrentUser):
+    """Return a stable user key only when authentication supplies one.
+
+    CurrentUser currently carries a role identity, not users.user_id (or
+    employee_code/email). A role can belong to many users, so it cannot safely
+    be used to resolve an individual requester. Keep the nullable FK unset
+    until authentication provides a stable individual identity.
     """
-    Try to resolve the frontend's requestedBy value to an existing
-    users.user_id.
+    return getattr(authenticated_user, "user_id", None)
 
-    The frontend may send:
-      - user_id
-      - employee_code
-      - email
 
-    If no matching user exists, return None because requested_by
-    is intentionally nullable for backward compatibility.
+def require_reviewer_id(authenticated_user: CurrentUser) -> str:
+    """Require an individual database identity for reviewer foreign keys."""
+    user_id = getattr(authenticated_user, "user_id", None)
+    if not isinstance(user_id, str) or not user_id.strip():
+        raise HTTPException(
+            status_code=409,
+            detail="A database user identity is required to review this request. Please sign in with an individually identified account.",
+        )
+    return user_id.strip()
+
+
+def resolve_approval_reviewer_id(cursor, authenticated_user: CurrentUser) -> str:
+    """Resolve the sole active database principal backing the approver role.
+
+    The current login authenticates a role rather than an individual. The
+    deployed users table has one active SYSTEM_ADMIN principal for the admin
+    role; query it instead of writing a display label or embedding its key.
+    Ambiguous or missing role principals are rejected before the request update.
     """
-
-    if not requested_by:
-        return None
-
-    value = requested_by.strip()
-
-    if not value:
-        return None
+    db_role = REVIEWER_DB_ROLES.get(authenticated_user.role_id)
+    if not db_role:
+        raise HTTPException(status_code=409, detail="No database reviewer is configured for this role.")
 
     cursor.execute(
         """
         SELECT user_id
         FROM users
-        WHERE user_id = %s
-          OR email = %s
-        LIMIT 1
+        WHERE role = %s AND active IS TRUE
+        ORDER BY user_id
+        LIMIT 2
         """,
-        (value, value)
+        (db_role,),
     )
-
-    row = cursor.fetchone()
-
-    return row[0] if row else None
+    matches = cursor.fetchall()
+    if len(matches) != 1 or not matches[0][0]:
+        raise HTTPException(
+            status_code=409,
+            detail="Approval requires exactly one active database reviewer for the authenticated role.",
+        )
+    return matches[0][0]
 
 
 def resolve_section_id(cursor, section: str, corridor_id: str):
@@ -385,7 +503,6 @@ def resolve_section_id(cursor, section: str, corridor_id: str):
 
     We support:
       - section_id
-      - section_code
       - section_name
 
     If the current database has no matching section yet,
@@ -440,7 +557,6 @@ def get_block_requests(user: CurrentUser = Depends(get_current_user)):
         ]
 
     cursor = conn.cursor()
-
     try:
         if user.scope != "network":
             clean_dept = user.dept.upper()
@@ -460,22 +576,22 @@ def get_block_requests(user: CurrentUser = Depends(get_current_user)):
                     br.block_type,
                     br.request_status,
                     br.submitted_date,
-                    br.requested_by,
-                    br.department_id,
-                    br.section_id,
+                    br.created_by AS requested_by,
+                    mt.department AS department_id,
+                    br.corridor_id AS section_id,
                     br.criticality,
                     br.safety_risk,
-                    br.description,
+                    mt.description AS description,
                     br.review_status,
                     br.reviewed_by,
                     br.reviewed_at,
                     br.rejection_reason,
-                    br.created_at,
-                    br.updated_at
+                    br.submitted_date AS created_at,
+                    NULL::timestamp AS updated_at
                 FROM block_requests br
                 LEFT JOIN maintenance_tasks mt
                     ON mt.task_id = br.task_id
-                WHERE UPPER(COALESCE(br.department_id, '')) IN (%s, %s)
+                WHERE UPPER(COALESCE(mt.department, '')) IN (%s, %s)
                 ORDER BY
                     br.requested_date NULLS LAST,
                     br.requested_start NULLS LAST
@@ -498,18 +614,18 @@ def get_block_requests(user: CurrentUser = Depends(get_current_user)):
                     br.block_type,
                     br.request_status,
                     br.submitted_date,
-                    br.requested_by,
-                    br.department_id,
-                    br.section_id,
+                    br.created_by AS requested_by,
+                    mt.department AS department_id,
+                    br.corridor_id AS section_id,
                     br.criticality,
                     br.safety_risk,
-                    br.description,
+                    mt.description AS description,
                     br.review_status,
                     br.reviewed_by,
                     br.reviewed_at,
                     br.rejection_reason,
-                    br.created_at,
-                    br.updated_at
+                    br.submitted_date AS created_at,
+                    NULL::timestamp AS updated_at
                 FROM block_requests br
                 LEFT JOIN maintenance_tasks mt
                     ON mt.task_id = br.task_id
@@ -586,6 +702,11 @@ class BlockRequestUpdate(BaseModel):
     duration: Optional[float] = None
     criticality: Optional[str] = None
 
+    @field_validator("criticality")
+    @classmethod
+    def validate_criticality(cls, value: Optional[str]) -> Optional[str]:
+        return normalize_criticality(value) if value is not None else None
+
 
 @router.patch("/{request_id}", dependencies=[Depends(require_permission("requests.edit"))])
 def update_block_request(
@@ -601,17 +722,8 @@ def update_block_request(
         )
 
     cursor = conn.cursor()
-
     try:
-        cursor.execute(
-            """
-            SELECT request_id, request_status, department_id
-            FROM block_requests
-            WHERE request_id = %s
-            """,
-            (request_id,),
-        )
-        row = cursor.fetchone()
+        row = _load_request_for_action(cursor, request_id)
         if not row:
             raise HTTPException(status_code=404, detail="Block request not found")
 
@@ -622,21 +734,10 @@ def update_block_request(
                 detail=f"Only PENDING requests can be edited (current status: {req_status})",
             )
 
-        if user.scope != "network":
-            dept_id = (row[2] or "").upper()
-            user_dept = user.dept.upper()
-            if dept_id not in (f"DEPT-{user_dept}", user_dept):
-                raise RBACForbiddenException(
-                    required=f"department.{user.dept}",
-                    role=user.role_id,
-                    detail="Cannot edit requisitions from other departments",
-                )
+        _require_request_department(row, user, "edit")
 
         updates = []
         params = []
-        if payload.work is not None:
-            updates.append("description = %s")
-            params.append(payload.work)
         if payload.blockType is not None:
             updates.append("block_type = %s")
             params.append(payload.blockType)
@@ -657,13 +758,30 @@ def update_block_request(
             updates.append("criticality = %s")
             params.append(criticality_to_level(crit))
 
-        if updates:
-            updates.append("updated_at = CURRENT_TIMESTAMP")
+        if updates or payload.work is not None:
             params.append(request_id)
-            cursor.execute(
-                f"UPDATE block_requests SET {', '.join(updates)} WHERE request_id = %s",
-                params,
-            )
+            prior_review_status = str(row[2] or "PENDING").strip().upper()
+            params.append(prior_review_status)
+            if updates:
+                cursor.execute(
+                    f"""
+                    UPDATE block_requests
+                    SET {', '.join(updates)}
+                    WHERE request_id = %s
+                      AND request_status = 'PENDING'
+                      AND UPPER(COALESCE(review_status, 'PENDING')) = %s
+                    """,
+                    params,
+                )
+                require_one_updated_row(cursor, "The requisition changed before editing; reload and retry.")
+            if payload.work is not None:
+                if row[4] is None:
+                    raise HTTPException(status_code=409, detail="The requisition has no matching task to edit.")
+                cursor.execute(
+                    "UPDATE maintenance_tasks SET description = %s WHERE task_id = %s",
+                    (payload.work, row[4]),
+                )
+                require_one_updated_row(cursor, "The requisition task changed before editing; reload and retry.")
             conn.commit()
 
         return {
@@ -675,9 +793,9 @@ def update_block_request(
     except HTTPException:
         conn.rollback()
         raise
-    except Exception as e:
+    except Exception:
         conn.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Unable to update the requisition.")
     finally:
         if cursor:
             try: cursor.close()
@@ -706,15 +824,7 @@ def cancel_block_request(
     cursor = conn.cursor()
 
     try:
-        cursor.execute(
-            """
-            SELECT request_id, request_status, department_id
-            FROM block_requests
-            WHERE request_id = %s
-            """,
-            (request_id,),
-        )
-        row = cursor.fetchone()
+        row = _load_request_for_action(cursor, request_id)
         if not row:
             raise HTTPException(status_code=404, detail="Block request not found")
 
@@ -725,24 +835,19 @@ def cancel_block_request(
                 detail=f"Only PENDING requests can be cancelled (current status: {req_status})",
             )
 
-        if user.scope != "network":
-            dept_id = (row[2] or "").upper()
-            user_dept = user.dept.upper()
-            if dept_id not in (f"DEPT-{user_dept}", user_dept):
-                raise RBACForbiddenException(
-                    required=f"department.{user.dept}",
-                    role=user.role_id,
-                    detail="Cannot cancel requisitions from other departments",
-                )
+        _require_request_department(row, user, "cancel")
 
         cursor.execute(
             """
             UPDATE block_requests
-            SET request_status = 'CANCELLED', updated_at = CURRENT_TIMESTAMP
+            SET request_status = 'CANCELLED'
             WHERE request_id = %s
+              AND request_status = 'PENDING'
+              AND COALESCE(review_status, 'PENDING') IN ('PENDING', 'PENDING_REVIEW', 'REWORK')
             """,
             (request_id,),
         )
+        require_one_updated_row(cursor, "The requisition changed before cancellation; reload and retry.")
         conn.commit()
 
         return {
@@ -755,9 +860,9 @@ def cancel_block_request(
     except HTTPException:
         conn.rollback()
         raise
-    except Exception as e:
+    except Exception:
         conn.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Unable to cancel the requisition.")
     finally:
         if cursor:
             try: cursor.close()
@@ -771,7 +876,7 @@ def cancel_block_request(
 # APPROVE BLOCK REQUEST
 # =========================================================
 
-@router.post("/{request_id}/approve", dependencies=[Depends(require_permission("requests.reject"))])
+@router.post("/{request_id}/approve", dependencies=[Depends(require_permission("planner.approve"))])
 def approve_block_request(
     request_id: str,
     user: CurrentUser = Depends(get_current_user),
@@ -787,15 +892,7 @@ def approve_block_request(
     cursor = conn.cursor()
 
     try:
-        cursor.execute(
-            """
-            SELECT request_id, request_status, department_id
-            FROM block_requests
-            WHERE request_id = %s
-            """,
-            (request_id,),
-        )
-        row = cursor.fetchone()
+        row = _load_request_for_action(cursor, request_id)
         if not row:
             raise HTTPException(status_code=404, detail="Block request not found")
 
@@ -806,29 +903,23 @@ def approve_block_request(
                 detail=f"Only PENDING requests can be approved for optimization (current status: {req_status})",
             )
 
-        if user.scope != "network":
-            dept_id = (row[2] or "").upper()
-            user_dept = user.dept.upper()
-            if dept_id not in (f"DEPT-{user_dept}", user_dept):
-                raise RBACForbiddenException(
-                    required=f"department.{user.dept}",
-                    role=user.role_id,
-                    detail="Cannot approve requisitions from other departments",
-                )
+        _require_request_department(row, user, "approve")
+        reviewer_id = resolve_approval_reviewer_id(cursor, user)
 
-        approver_identity = (user.name or user.title or "SYSTEM")[:30]
         cursor.execute(
             """
             UPDATE block_requests
             SET
                 review_status = 'APPROVED',
                 reviewed_by = %s,
-                reviewed_at = CURRENT_TIMESTAMP,
-                updated_at = CURRENT_TIMESTAMP
+                reviewed_at = CURRENT_TIMESTAMP
             WHERE request_id = %s
+              AND request_status = 'PENDING'
+              AND COALESCE(review_status, 'PENDING') IN ('PENDING', 'PENDING_REVIEW', 'REWORK')
             """,
-            (approver_identity, request_id),
+            (reviewer_id, request_id),
         )
+        require_one_updated_row(cursor, "The requisition changed before approval; reload and retry.")
         conn.commit()
 
         return {
@@ -842,9 +933,16 @@ def approve_block_request(
     except HTTPException:
         conn.rollback()
         raise
-    except Exception as e:
+    except Exception as exc:
+        safe_message, sqlstate = _safe_requisition_error_details(exc)
+        logger.error(
+            "Failed to approve requisition (exception_class=%s sqlstate=%s message=%s)",
+            type(exc).__name__,
+            sqlstate or "unavailable",
+            safe_message,
+        )
         conn.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Unable to approve the requisition.")
     finally:
         if cursor:
             try: cursor.close()
@@ -857,7 +955,7 @@ def approve_block_request(
 # =========================================================
 # SEND BLOCK REQUEST FOR REWORK
 # =========================================================
-@router.post("/{request_id}/rework", dependencies=[Depends(require_permission("requests.reject"))])
+@router.post("/{request_id}/rework", dependencies=[Depends(require_permission("planner.rework"))])
 def rework_block_request(
     request_id: str,
     user: CurrentUser = Depends(get_current_user),
@@ -873,15 +971,7 @@ def rework_block_request(
     cursor = conn.cursor()
 
     try:
-        cursor.execute(
-            """
-            SELECT request_id, request_status, department_id
-            FROM block_requests
-            WHERE request_id = %s
-            """,
-            (request_id,),
-        )
-        row = cursor.fetchone()
+        row = _load_request_for_action(cursor, request_id)
 
         if not row:
             raise HTTPException(
@@ -891,28 +981,22 @@ def rework_block_request(
 
         req_status = (row[1] or "").upper()
 
-        # Rework is not allowed for already-final requests
-        if req_status in ("CANCELLED", "REJECTED", "COMPLETED"):
+        # Rework is only valid while a request remains in the review queue.
+        if req_status != "PENDING":
             raise HTTPException(
                 status_code=400,
                 detail=f"Cannot rework request in status {req_status}",
             )
 
-        # Department-level authorization
-        if user.scope != "network":
-            dept_id = (row[2] or "").upper()
-            user_dept = user.dept.upper()
+        prior_review_status = str(row[2] or "PENDING").strip().upper()
+        if prior_review_status not in REWORKABLE_REVIEW_STATES:
+            raise HTTPException(
+                status_code=409,
+                detail="The requisition is no longer in a reworkable review state.",
+            )
 
-            if dept_id not in (f"DEPT-{user_dept}", user_dept):
-                raise RBACForbiddenException(
-                    required=f"department.{user.dept}",
-                    role=user.role_id,
-                    detail="Cannot rework requisitions from other departments",
-                )
-
-        reviewer_identity = (
-            user.name or user.title or "SYSTEM"
-        )[:30]
+        _require_request_department(row, user, "rework")
+        reviewer_id = require_reviewer_id(user)
 
         cursor.execute(
             """
@@ -921,16 +1005,19 @@ def rework_block_request(
                 request_status = 'PENDING',
                 review_status = 'REWORK',
                 reviewed_by = %s,
-                reviewed_at = CURRENT_TIMESTAMP,
-                updated_at = CURRENT_TIMESTAMP
+                reviewed_at = CURRENT_TIMESTAMP
             WHERE request_id = %s
+              AND request_status = 'PENDING'
+              AND COALESCE(review_status, 'PENDING') = %s
             """,
             (
-                reviewer_identity,
+                reviewer_id,
                 request_id,
+                prior_review_status,
             ),
         )
 
+        require_one_updated_row(cursor, "The requisition changed before rework; reload and retry.")
         conn.commit()
 
         return {
@@ -945,11 +1032,11 @@ def rework_block_request(
         conn.rollback()
         raise
 
-    except Exception as e:
+    except Exception:
         conn.rollback()
         raise HTTPException(
             status_code=500,
-            detail=str(e),
+            detail="Unable to send the requisition for rework.",
         )
 
     finally:
@@ -969,7 +1056,7 @@ class BlockRequestReject(BaseModel):
     reason: str
 
 
-@router.post("/{request_id}/reject", dependencies=[Depends(require_permission("requests.reject"))])
+@router.post("/{request_id}/reject", dependencies=[Depends(require_permission("planner.reject"))])
 def reject_block_request(
     request_id: str,
     payload: BlockRequestReject,
@@ -988,11 +1075,7 @@ def reject_block_request(
     cursor = conn.cursor()
 
     try:
-        cursor.execute(
-            "SELECT request_id, request_status FROM block_requests WHERE request_id = %s",
-            (request_id,),
-        )
-        row = cursor.fetchone()
+        row = _load_request_for_action(cursor, request_id)
         if not row:
             raise HTTPException(status_code=404, detail="Block request not found")
 
@@ -1003,7 +1086,9 @@ def reject_block_request(
                 detail=f"Only PENDING requests can be rejected (current status: {req_status})",
             )
 
-        approver_identity = (user.name or user.title or "SYSTEM")[:30]
+        _require_request_department(row, user, "reject")
+        reviewer_id = require_reviewer_id(user)
+
         cursor.execute(
             """
             UPDATE block_requests
@@ -1011,12 +1096,14 @@ def reject_block_request(
                 request_status = 'REJECTED',
                 rejection_reason = %s,
                 reviewed_by = %s,
-                reviewed_at = CURRENT_TIMESTAMP,
-                updated_at = CURRENT_TIMESTAMP
+                reviewed_at = CURRENT_TIMESTAMP
             WHERE request_id = %s
+              AND request_status = 'PENDING'
+              AND COALESCE(review_status, 'PENDING') IN ('PENDING', 'PENDING_REVIEW', 'REWORK')
             """,
-            (payload.reason, approver_identity, request_id),
+            (payload.reason, reviewer_id, request_id),
         )
+        require_one_updated_row(cursor, "The requisition changed before rejection; reload and retry.")
         conn.commit()
 
         return {
@@ -1029,9 +1116,9 @@ def reject_block_request(
     except HTTPException:
         conn.rollback()
         raise
-    except Exception as e:
+    except Exception:
         conn.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Unable to reject the requisition.")
     finally:
         if cursor:
             try: cursor.close()
@@ -1056,9 +1143,9 @@ def create_block_request(
     # =====================================================
 
     if user.scope != "network":
-        body_dept = (request.dept or "").strip().upper()
-        user_dept = (user.dept or "").strip().upper()
-        if body_dept and body_dept != user_dept:
+        body_dept = canonical_department_code(request.dept)
+        user_dept = canonical_department_code(user.dept)
+        if not user_dept or (request.dept.strip() and body_dept != user_dept):
             raise RBACForbiddenException(
                 required=f"department.{user.dept}",
                 role=user.role_id,
@@ -1066,7 +1153,9 @@ def create_block_request(
             )
         department = user_dept
     else:
-        department = request.dept.strip().upper()
+        department = canonical_department_code(request.dept)
+        if not department:
+            raise HTTPException(status_code=400, detail=f"Invalid department: {request.dept}")
 
     conn = get_connection()
     if not conn:
@@ -1075,11 +1164,11 @@ def create_block_request(
             detail="Database unavailable. The requisition was not saved; reconnect and try again.",
         )
 
-    cursor = conn.cursor()
-
+    cursor = None
     try:
+        cursor = conn.cursor()
 
-        requester_name = user.name or user.title or request.requestedBy
+        requester_name = user.name or user.title or "Authenticated role"
         section = request.section.strip()
         asset_input = request.assetId.strip()
         block_type = request.blockType.strip()
@@ -1097,13 +1186,7 @@ def create_block_request(
         # 2. DEPARTMENT → REAL DATABASE TEAM ID
         # =====================================================
 
-        team_mapping = {
-            "TMS": "TEAM-001",
-            "SMMS": "TEAM-002",
-            "TDMS": "TEAM-003",
-        }
-
-        team_id = team_mapping.get(department)
+        team_id = TEAM_IDS.get(department)
 
         if not team_id:
             raise HTTPException(
@@ -1116,15 +1199,7 @@ def create_block_request(
         # 3. DEPARTMENT → DEPARTMENT TABLE
         # =====================================================
 
-        department_mapping = {
-            "TMS": "DEPT-TMS",
-            "SMMS": "DEPT-SMMS",
-            "TDMS": "DEPT-TDMS"
-        }
-
-        department_id = department_mapping.get(
-            department
-        )
+        department_id = DEPARTMENT_IDS.get(department)
 
         if not department_id:
             raise HTTPException(
@@ -1161,65 +1236,28 @@ def create_block_request(
         # 5. CORRIDOR MAPPING
         # =====================================================
 
-        corridor_mapping = {
-            "New Delhi (NDLS) - Ghaziabad (GZB)": "C02",
-            "Ghaziabad (GZB) - Kanpur (CNB)": "C02",
-            "Kanpur (CNB) - Prayagraj (PRYJ)": "C03",
-            "Prayagraj (PRYJ) - Varanasi (BSB)": "C04",
-            "CNB Outer": "C05",
-            "NDLS Station Limits": "C06",
-
-            # Short names
-            "NDLS-GZB": "C01",
-            "GZB-CNB": "C02",
-            "CNB-PRYJ": "C03",
-            "PRYJ-BSB": "C04"
-        }
-
-        corridor_id = corridor_mapping.get(section)
-
-
-        # =====================================================
-        # 6. ALLOW DIRECT SECTION ID
-        # =====================================================
+        # Resolve only against persisted corridor metadata. Repository labels
+        # conflict, so a hard-coded alias could silently target the wrong line.
+        cursor.execute(
+            """
+            SELECT corridor_id, section_id
+            FROM corridor_sections
+            WHERE section_id = %s OR section_name = %s
+            LIMIT 1
+            """,
+            (section, section),
+        )
+        section_row = cursor.fetchone()
+        corridor_id = section_row[0] if section_row else None
+        resolved_section_id = section_row[1] if section_row else None
 
         if not corridor_id:
             cursor.execute(
-                """
-                SELECT corridor_id
-                FROM corridor_sections
-                WHERE section_id = %s
-                LIMIT 1
-                """,
-                (section,)
+                "SELECT corridor_id FROM corridors WHERE corridor_id = %s LIMIT 1",
+                (section,),
             )
-
-            section_row = cursor.fetchone()
-
-            if section_row:
-                corridor_id = section_row[0]
-
-
-        # =====================================================
-        # 7. ALLOW DIRECT CORRIDOR ID
-        # =====================================================
-
-        if not corridor_id:
-
-            cursor.execute(
-                """
-                SELECT corridor_id
-                FROM corridors
-                WHERE corridor_id = %s
-                LIMIT 1
-                """,
-                (section,)
-            )
-
             corridor_row = cursor.fetchone()
-
-            if corridor_row:
-                corridor_id = corridor_row[0]
+            corridor_id = corridor_row[0] if corridor_row else None
 
 
         if not corridor_id:
@@ -1235,21 +1273,16 @@ def create_block_request(
         # 7. RESOLVE SECTION ID
         # =====================================================
 
-        section_id = resolve_section_id(
-            cursor,
-            section,
-            corridor_id
-        )
+        section_id = resolved_section_id or resolve_section_id(cursor, section, corridor_id)
 
 
         # =====================================================
         # 8. RESOLVE REQUESTING USER
         # =====================================================
 
-        requested_by_user_id = resolve_user_id(
-    cursor,
-    requester_name
-)
+        # CurrentUser currently has a role identity only. Never resolve an
+        # individual users.user_id from a display name or client-supplied value.
+        requested_by_user_id = resolve_user_id(cursor, user)
 
 
         # =====================================================
@@ -1441,94 +1474,15 @@ def create_block_request(
         # 16. GENERATE TASK ID
         # =====================================================
 
-        cursor.execute(
-            """
-            SELECT task_id
-            FROM maintenance_tasks
-            WHERE task_id LIKE 'T-AUTO-%'
-            ORDER BY task_id DESC
-            LIMIT 1
-            """
-        )
-
-        last_task = cursor.fetchone()
-
-        if last_task:
-
-            try:
-
-                last_number = int(
-                    last_task[0].replace(
-                        "T-AUTO-",
-                        ""
-                    )
-                )
-
-                task_number = (
-                    last_number + 1
-                )
-
-            except (
-                ValueError,
-                AttributeError
-            ):
-
-                task_number = 1
-
-        else:
-
-            task_number = 1
-
-        task_id = (
-            f"T-AUTO-{task_number:04d}"
-        )
+        # Random identifiers avoid the SELECT MAX/latest-then-increment race.
+        # Keep the existing prefixes and short VARCHAR-compatible lengths.
+        task_id, request_id = generate_requisition_ids()
 
 
         # =====================================================
         # 17. GENERATE REQUEST ID
         # =====================================================
 
-        cursor.execute(
-            """
-            SELECT request_id
-            FROM block_requests
-            WHERE request_id LIKE 'BR-AUTO-%'
-            ORDER BY request_id DESC
-            LIMIT 1
-            """
-        )
-
-        last_request = cursor.fetchone()
-
-        if last_request:
-
-            try:
-
-                last_number = int(
-                    last_request[0].replace(
-                        "BR-AUTO-",
-                        ""
-                    )
-                )
-
-                request_number = (
-                    last_number + 1
-                )
-
-            except (
-                ValueError,
-                AttributeError
-            ):
-
-                request_number = 1
-
-        else:
-
-            request_number = 1
-
-        request_id = (
-            f"BR-AUTO-{request_number:04d}"
-        )
 
 
         # =====================================================
@@ -1738,15 +1692,10 @@ def create_block_request(
                 block_type,
                 request_status,
                 submitted_date,
-                requested_by,
-                department_id,
-                section_id,
+                created_by,
                 criticality,
                 safety_risk,
-                description,
-                review_status,
-                created_at,
-                updated_at
+                review_status
             )
             VALUES
             (
@@ -1764,14 +1713,9 @@ def create_block_request(
                 %s,
                 %s,
                 %s,
-                %s,
-                %s,
-                %s,
-                %s,
-                CURRENT_TIMESTAMP,
-                CURRENT_TIMESTAMP
+                %s
             )
-            RETURNING request_id, request_status, review_status, created_at
+            RETURNING request_id, request_status, review_status, submitted_date
             """,
             (
                 request_id,
@@ -1786,11 +1730,8 @@ def create_block_request(
                 "PENDING",
                 date.today(),
                 requested_by_user_id,
-                department_id,
-                section_id,
                 criticality_level,
                 safety_risk,
-                description,
                 "PENDING",
             )
         )
@@ -1802,7 +1743,7 @@ def create_block_request(
                 detail="The requisition insert did not return a persisted record.",
             )
 
-        persisted_request_id, persisted_request_status, persisted_review_status, persisted_created_at = persisted_request
+        persisted_request_id, persisted_request_status, persisted_review_status, persisted_submitted_date = persisted_request
         persisted_request_status = str(persisted_request_status or "").strip().upper()
         if persisted_request_status != "PENDING":
             raise HTTPException(
@@ -1875,7 +1816,8 @@ def create_block_request(
             "review_status": persisted_review_status,
 
             "request_status": persisted_request_status,
-            "created_at": persisted_created_at.isoformat() if persisted_created_at else None,
+            # submitted_date is a DATE in the live schema, not a timestamp.
+            "created_at": persisted_submitted_date.isoformat() if persisted_submitted_date else None,
             "requisition": {
                 "request_id": persisted_request_id,
                 "task_id": task_id,
@@ -1895,7 +1837,7 @@ def create_block_request(
                 "safety_risk": safety_risk,
                 "description": description,
                 "review_status": persisted_review_status,
-                "created_at": persisted_created_at.isoformat() if persisted_created_at else None,
+                "created_at": persisted_submitted_date.isoformat() if persisted_submitted_date else None,
                 "line": request.line,
                 "chainage": request.chainage,
             }
@@ -1917,13 +1859,21 @@ def create_block_request(
     # DATABASE / GENERAL EXCEPTION
     # =====================================================
 
-    except Exception as e:
+    except Exception as exc:
+
+        safe_message, sqlstate = _safe_requisition_error_details(exc)
+        logger.error(
+            "Failed to save requisition (exception_class=%s sqlstate=%s message=%s)",
+            type(exc).__name__,
+            sqlstate or "unavailable",
+            safe_message,
+        )
 
         conn.rollback()
 
         raise HTTPException(
             status_code=500,
-            detail=str(e)
+            detail="Unable to save the requisition. Please retry or contact support."
         )
 
 

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Response
 from datetime import datetime, date
 from pathlib import Path
 import os
@@ -107,12 +107,54 @@ def get_status_from_intensity(intensity):
     return "Operational"
 
 
+def summarize_requisition_lifecycle(rows):
+    """Build pipeline totals from the independent review and scheduling states."""
+    pending_statuses = {"PENDING"}
+    optimized_statuses = {"OPTIMIZED", "CLUSTERED", "SHADOWED"}
+    active_statuses = {"ACTIVE", "IN_PROGRESS"}
+    completed_statuses = {"COMPLETED", "CLOSED", "DONE"}
+
+    totals = {
+        "pending": 0,
+        "optimized": 0,
+        "approved": 0,
+        "active": 0,
+        "completed": 0,
+        "optimized_requested_minutes": 0,
+    }
+    for row in rows:
+        request_status = str(row["request_status"] or "").strip().upper()
+        review_status = str(row["review_status"] or "").strip().upper()
+        row_count = int(row["count"] or 0)
+
+        if request_status in pending_statuses:
+            # Approval is a review transition only; requests remain eligible
+            # for AI scheduling until optimization persists OPTIMIZED status.
+            totals["pending"] += row_count
+        if request_status in optimized_statuses:
+            totals["optimized"] += row_count
+            totals["optimized_requested_minutes"] += float(
+                row["optimized_requested_minutes"] or 0
+            )
+        if review_status == "APPROVED":
+            totals["approved"] += row_count
+        if request_status in active_statuses:
+            totals["active"] += row_count
+        if request_status in completed_statuses:
+            totals["completed"] += row_count
+    return totals
+
+
 # ============================================================
 # DASHBOARD KPI ENDPOINT
 # ============================================================
 
 @router.get("/kpis", dependencies=[Depends(require_permission("dashboard.view"))])
-def get_dashboard_kpis(user: CurrentUser = Depends(get_current_user)):
+def get_dashboard_kpis(
+    response: Response,
+    user: CurrentUser = Depends(get_current_user),
+):
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
     conn = None
     try:
         conn = get_db_connection()
@@ -248,57 +290,30 @@ def get_dashboard_kpis(user: CurrentUser = Depends(get_current_user)):
 
             cur.execute(f"""
                 SELECT
-                    COUNT(*) AS total_requests,
-
-                    COUNT(*) FILTER (
-                        WHERE UPPER(COALESCE(request_status, ''))
-                        = 'PENDING'
-                    ) AS pending,
-
-                    COUNT(*) FILTER (
-                        WHERE UPPER(COALESCE(request_status, ''))
-                        IN ('OPTIMIZED', 'CLUSTERED', 'SHADOWED')
-                    ) AS optimized,
-
-                    COUNT(*) FILTER (
-                        WHERE UPPER(COALESCE(request_status, ''))
-                        IN ('APPROVED', 'APPROVE')
-                    ) AS approved,
-
-                    COUNT(*) FILTER (
-                        WHERE UPPER(COALESCE(request_status, ''))
-                        IN ('ACTIVE', 'IN_PROGRESS')
-                    ) AS active,
-
-                    COUNT(*) FILTER (
-                        WHERE UPPER(COALESCE(request_status, ''))
-                        IN ('COMPLETED', 'CLOSED', 'DONE')
-                    ) AS completed,
-
+                    UPPER(COALESCE(request_status, '')) AS request_status,
+                    UPPER(COALESCE(review_status, '')) AS review_status,
+                    COUNT(*) AS count,
                     COALESCE(
-                        SUM(requested_duration_min)
-                        FILTER (
+                        SUM(requested_duration_min) FILTER (
                             WHERE UPPER(COALESCE(request_status, ''))
-                        IN ('OPTIMIZED', 'CLUSTERED', 'SHADOWED')
-                        ),
-                        0
+                            IN ('OPTIMIZED', 'CLUSTERED', 'SHADOWED')
+                        ), 0
                     ) AS optimized_requested_minutes
-
                 {request_source}
                 {where_clause}
+                GROUP BY 1, 2
             """, params)
 
-            request_row = cur.fetchone()
+            request_rows = cur.fetchall()
 
-        pending_requests = int(request_row["pending"] or 0)
-        clustered_requests = int(request_row["optimized"] or 0)
-        approved_requests = int(request_row["approved"] or 0)
-        active_requests = int(request_row["active"] or 0)
-        completed_requests = int(request_row["completed"] or 0)
-
+        pipeline_totals = summarize_requisition_lifecycle(request_rows)
+        pending_requests = pipeline_totals["pending"]
+        clustered_requests = pipeline_totals["optimized"]
+        approved_requests = pipeline_totals["approved"]
+        active_requests = pipeline_totals["active"]
+        completed_requests = pipeline_totals["completed"]
         optimized_requested_minutes = safe_number(
-            request_row["optimized_requested_minutes"],
-            0
+            pipeline_totals["optimized_requested_minutes"], 0
         )
 
 

@@ -2,6 +2,7 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime, date, time, timedelta
 import threading
 import logging
+import uuid
 
 import psycopg
 from fastapi import APIRouter, HTTPException, Depends, Query, status
@@ -66,11 +67,11 @@ class SpecialTrainCreateSchema(BaseModel):
     departure_time: str
     direction: str = "UP"
     operational_priority: int = Field(4, ge=1, le=5)
-    expected_passengers: int = Field(0, ge=0)
     reason: Optional[str] = None
     origin_station: Optional[str] = None
     destination_station: Optional[str] = None
     active: bool = True
+    model_config = {"extra": "forbid"}
 
 
 class SpecialTrainUpdateSchema(BaseModel):
@@ -83,11 +84,11 @@ class SpecialTrainUpdateSchema(BaseModel):
     departure_time: Optional[str] = None
     direction: Optional[str] = None
     operational_priority: Optional[int] = Field(None, ge=1, le=5)
-    expected_passengers: Optional[int] = Field(None, ge=0)
     reason: Optional[str] = None
     origin_station: Optional[str] = None
     destination_station: Optional[str] = None
     active: Optional[bool] = None
+    model_config = {"extra": "forbid"}
 
 
 class ActiveToggleSchema(BaseModel):
@@ -126,6 +127,11 @@ def _format_special(row):
         direction,
         operational_priority,
         status_value,
+        origin_station,
+        destination_station,
+        created_by,
+        created_at,
+        updated_at,
     ) = row
 
     prio = operational_priority
@@ -145,15 +151,52 @@ def _format_special(row):
         "departure_time": str(departure_time) if departure_time else None,
         "direction": direction or "UP",
         "operational_priority": prio,
-        "expected_passengers": 1200 if prio >= 4 else 600,
+        # Passenger counts are not stored in the live schema.
+        "expected_passengers": None,
         "reason": event_name,
         "active": status_value == "SCHEDULED",
-        "origin_station": None,
-        "destination_station": None,
-        "created_by": None,
-        "created_at": None,
-        "updated_at": None,
+        "origin_station": origin_station,
+        "destination_station": destination_station,
+        "created_by": created_by,
+        "created_at": str(created_at) if created_at else None,
+        "updated_at": str(updated_at) if updated_at else None,
     }
+
+
+SPECIAL_COLUMNS = "special_id, train_number, train_name, event_name, event_type, corridor_id, service_date, departure_time, arrival_time, direction, operational_priority, status, origin_station, destination_station, created_by, created_at, updated_at"
+SPECIAL_SELECT = f"""
+    {SPECIAL_COLUMNS}
+    FROM special_train_services
+"""
+
+
+def _require_database():
+    conn = _get_db_connection()
+    if conn is None:
+        raise HTTPException(status_code=503, detail="Special train database is unavailable")
+    return conn
+
+
+def _priority_to_db(value: int) -> int:
+    return value * 20
+
+
+def _validate_service(payload):
+    if getattr(payload, "special_type", None) is not None:
+        event_type = payload.special_type.strip().upper()
+        if event_type not in VALID_SPECIAL_TYPES:
+            raise HTTPException(status_code=400, detail="Invalid special_type")
+    if getattr(payload, "direction", None) is not None:
+        direction = payload.direction.strip().upper()
+        if direction not in VALID_DIRECTIONS:
+            raise HTTPException(status_code=400, detail="Direction must be UP or DOWN")
+    for field in ("arrival_time", "departure_time"):
+        value = getattr(payload, field, None)
+        if value is not None:
+            try:
+                _parse_time(value)
+            except Exception as exc:
+                raise HTTPException(status_code=400, detail=f"Invalid {field}; use HH:MM or HH:MM:SS") from exc
 
 
 def _get_db_connection():
@@ -603,9 +646,6 @@ class InMemorySpecialTrainStore:
         }
 
 
-_mem_store = InMemorySpecialTrainStore()
-
-
 # ============================================================
 # GET ALL SPECIAL TRAINS
 # ============================================================
@@ -622,99 +662,58 @@ def get_special_trains(
     active: Optional[bool] = Query(None),
     user: CurrentUser = Depends(get_current_user),
 ):
-    conn = _get_db_connection()
-    if conn is not None:
-        try:
-            with conn:
-                with conn.cursor() as cur:
-                    allowed_corridors = None
-                    if user.scope != "network":
-                        allowed_corridors = get_relevant_corridor_ids(cur, user.dept)
-                        if not allowed_corridors:
-                            return {
-                                "status": "success",
-                                "total_count": 0,
-                                "special_trains": [],
-                            }
+    conn = _require_database()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                allowed_corridors = None
+                if user.scope != "network":
+                    allowed_corridors = get_relevant_corridor_ids(cur, user.dept)
+                    if not allowed_corridors:
+                        return {"status": "success", "total_count": 0, "special_trains": []}
 
-                    query = """
-                        SELECT
-                            special_id,
-                            train_number,
-                            train_name,
-                            event_name,
-                            event_type,
-                            corridor_id,
-                            service_date,
-                            departure_time,
-                            arrival_time,
-                            direction,
-                            operational_priority,
-                            status
-                        FROM special_train_services
-                        WHERE 1=1
-                    """
-                    params = []
+                query = f"SELECT {SPECIAL_SELECT} WHERE 1=1"
+                params = []
 
-                    if allowed_corridors is not None:
-                        query += " AND corridor_id = ANY(%s)"
-                        params.append(allowed_corridors)
+                if allowed_corridors is not None:
+                    query += " AND corridor_id = ANY(%s)"
+                    params.append(allowed_corridors)
 
-                    if corridor_id:
-                        query += " AND corridor_id = %s"
-                        params.append(corridor_id)
+                if corridor_id:
+                    query += " AND corridor_id = %s"
+                    params.append(corridor_id)
 
-                    if from_date:
-                        query += " AND service_date >= %s"
-                        params.append(_parse_date(from_date))
+                if from_date:
+                    try:
+                        parsed_from = _parse_date(from_date)
+                    except Exception as exc:
+                        raise HTTPException(status_code=400, detail="Invalid from date; use YYYY-MM-DD") from exc
+                    query += " AND service_date >= %s"
+                    params.append(parsed_from)
 
-                    if to_date:
-                        query += " AND service_date <= %s"
-                        params.append(_parse_date(to_date))
+                if to_date:
+                    try:
+                        parsed_to = _parse_date(to_date)
+                    except Exception as exc:
+                        raise HTTPException(status_code=400, detail="Invalid to date; use YYYY-MM-DD") from exc
+                    query += " AND service_date <= %s"
+                    params.append(parsed_to)
 
-                    if active is not None:
-                        if active:
-                            query += " AND status = 'SCHEDULED'"
-                        else:
-                            query += " AND status <> 'SCHEDULED'"
+                if active is not None:
+                    query += " AND status = %s" if active else " AND status <> %s"
+                    params.append("SCHEDULED")
 
-                    query += " ORDER BY service_date ASC, departure_time ASC"
-                    cur.execute(query, params)
-                    rows = cur.fetchall()
+                query += " ORDER BY service_date ASC, departure_time ASC"
+                cur.execute(query, params)
+                rows = cur.fetchall()
 
-                    if rows:
-                        items = [_format_special(row) for row in rows]
-                        return {
-                            "status": "success",
-                            "total_count": len(items),
-                            "special_trains": items,
-                        }
-        except Exception as db_err:
-            logger.warning(f"Database query failed, using in-memory store: {db_err}")
-
-    # Fallback to in-memory store
-    allowed_corridors = None
-    if user.scope != "network":
-        dept = (user.dept or "").upper()
-        if "TMS" in dept or "TRACK" in dept or "CIVIL" in dept:
-            allowed_corridors = ["C01", "C02", "C03"]
-        elif "SMMS" in dept or "SIGNAL" in dept:
-            allowed_corridors = ["C01", "C03"]
-        elif "TDMS" in dept or "TRACTION" in dept:
-            allowed_corridors = ["C01", "C02", "C04"]
-
-    items = _mem_store.list_trains(
-        corridor_id=corridor_id,
-        from_date=from_date,
-        to_date=to_date,
-        active=active,
-        allowed_corridors=allowed_corridors,
-    )
-    return {
-        "status": "success",
-        "total_count": len(items),
-        "special_trains": items,
-    }
+                items = [_format_special(row) for row in rows]
+                return {"status": "success", "total_count": len(items), "special_trains": items}
+    except HTTPException:
+        raise
+    except Exception as db_err:
+        logger.exception("Special train list query failed")
+        raise HTTPException(status_code=503, detail="Could not load special train services from database") from db_err
 
 
 # ============================================================
@@ -729,55 +728,24 @@ def get_special_train(
     special_train_id: str,
     user: CurrentUser = Depends(get_current_user),
 ):
-    conn = _get_db_connection()
-    if conn is not None:
-        try:
-            with conn:
-                with conn.cursor() as cur:
-                    cur.execute("""
-                        SELECT
-                            special_id,
-                            train_number,
-                            train_name,
-                            event_name,
-                            event_type,
-                            corridor_id,
-                            service_date,
-                            departure_time,
-                            arrival_time,
-                            direction,
-                            operational_priority,
-                            status
-                        FROM special_train_services
-                        WHERE special_id = %s
-                    """, (special_train_id,))
-                    row = cur.fetchone()
-                    if row:
-                        if user.scope != "network":
-                            allowed = get_relevant_corridor_ids(cur, user.dept)
-                            if row[5] not in allowed:
-                                raise HTTPException(
-                                    status_code=403,
-                                    detail="Corridor outside department scope",
-                                )
-                        return {
-                            "status": "success",
-                            "special_train": _format_special(row),
-                        }
-        except HTTPException:
-            raise
-        except Exception as db_err:
-            logger.warning(f"Database query failed, using in-memory store: {db_err}")
-
-    item = _mem_store.get_train(special_train_id)
-    if item is None:
+    conn = _require_database()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT {SPECIAL_SELECT} WHERE special_id = %s", (special_train_id,))
+                row = cur.fetchone()
+                if row:
+                    if user.scope != "network":
+                        allowed = get_relevant_corridor_ids(cur, user.dept)
+                        if row[5] not in allowed:
+                            raise HTTPException(status_code=403, detail="Corridor outside department scope")
+                    return {"status": "success", "special_train": _format_special(row)}
         raise HTTPException(status_code=404, detail=f"Special train {special_train_id} not found")
-    if item == "FORBIDDEN":
-        raise HTTPException(status_code=403, detail="Corridor outside department scope")
-    return {
-        "status": "success",
-        "special_train": item,
-    }
+    except HTTPException:
+        raise
+    except Exception as db_err:
+        logger.exception("Special train query failed")
+        raise HTTPException(status_code=503, detail="Could not load special train from database") from db_err
 
 
 # ============================================================
@@ -799,84 +767,80 @@ def create_special_train(
     payload: SpecialTrainCreateSchema,
     user: CurrentUser = Depends(get_current_user),
 ):
-    event_type = payload.special_type.strip().upper()
-    if event_type not in VALID_SPECIAL_TYPES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid special_type '{payload.special_type}'. Must be one of: {sorted(list(VALID_SPECIAL_TYPES))}",
-        )
-
-    direction = payload.direction.strip().upper()
-    if direction not in VALID_DIRECTIONS:
-        raise HTTPException(
-            status_code=400,
-            detail="Direction must be UP or DOWN",
-        )
-
+    _validate_service(payload)
+    if bool(payload.service_date) == bool(payload.service_date_from or payload.service_date_to):
+        raise HTTPException(status_code=400, detail="Provide either service_date or both service_date_from and service_date_to")
     try:
-        _parse_time(payload.arrival_time)
-        _parse_time(payload.departure_time)
-    except Exception:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid time format. Use HH:MM or HH:MM:SS",
-        )
+        if payload.service_date:
+            service_dates = [_parse_date(payload.service_date)]
+        else:
+            if not payload.service_date_from or not payload.service_date_to:
+                raise ValueError("Both range dates are required")
+            start, end = _parse_date(payload.service_date_from), _parse_date(payload.service_date_to)
+            if end < start:
+                raise ValueError("End date is before start date")
+            if (end - start).days > 365:
+                raise ValueError("Date range cannot exceed 366 services")
+            service_dates = [start + timedelta(days=offset) for offset in range((end - start).days + 1)]
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid service date range: {exc}") from exc
 
-    # Always persist in resilient memory store
-    created_items = _mem_store.create_trains(payload, user)
-
-    # Attempt PostgreSQL write if online
-    conn = _get_db_connection()
-    if conn is not None:
+    event_type = payload.special_type.strip().upper()
+    direction = payload.direction.strip().upper()
+    train_number = payload.train_number.strip()
+    corridor_id = payload.corridor_id.strip()
+    if not train_number or not payload.train_name.strip() or not corridor_id:
+        raise HTTPException(status_code=400, detail="Train number, train name, and corridor are required")
+    conn = _require_database()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                created = []
+                for service_date in service_dates:
+                    # A service is identified by train number, corridor, date, and direction.
+                    # This permits recurring services on other dates.
+                    identity = f"{train_number}|{corridor_id}|{service_date}|{direction}"
+                    cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s)::bigint)", (identity,))
+                    cur.execute("""
+                        SELECT special_id FROM special_train_services
+                        WHERE train_number = %s AND corridor_id = %s AND service_date = %s AND direction = %s
+                        LIMIT 1
+                    """, (train_number, corridor_id, service_date, direction))
+                    if cur.fetchone():
+                        raise HTTPException(status_code=409, detail=f"Service {train_number} already exists for {corridor_id} on {service_date} ({direction})")
+                    special_id = f"SP-{uuid.uuid4().hex[:24]}"
+                    cur.execute(f"""
+                        INSERT INTO special_train_services (
+                            special_id, train_number, train_name, event_name, event_type, corridor_id,
+                            service_date, departure_time, arrival_time, direction, operational_priority,
+                            status, origin_station, destination_station, created_by, created_at
+                        ) VALUES (
+                            %s,
+                            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP
+                        ) RETURNING {SPECIAL_COLUMNS}
+                    """, (
+                        special_id, train_number, payload.train_name.strip(), payload.reason, event_type, corridor_id,
+                        service_date, _parse_time(payload.departure_time), _parse_time(payload.arrival_time),
+                        direction, _priority_to_db(payload.operational_priority),
+                        "SCHEDULED" if payload.active else "INACTIVE", payload.origin_station,
+                        payload.destination_station, user.name or user.role_id,
+                    ))
+                    created.append(_format_special(cur.fetchone()))
+        ids = [item["special_train_id"] for item in created]
         try:
-            with conn:
-                with conn.cursor() as cur:
-                    for item in created_items:
-                        cur.execute("""
-                            INSERT INTO special_train_services (
-                                special_id,
-                                train_number,
-                                train_name,
-                                event_name,
-                                event_type,
-                                corridor_id,
-                                service_date,
-                                departure_time,
-                                arrival_time,
-                                direction,
-                                operational_priority,
-                                status
-                            )
-                            VALUES (
-                                %s, %s, %s, %s, %s,
-                                %s, %s, %s, %s, %s,
-                                %s, %s
-                            )
-                            ON CONFLICT (special_id) DO NOTHING
-                        """, (
-                            item["special_train_id"],
-                            item["train_number"],
-                            item["train_name"],
-                            item["reason"],
-                            item["special_type"],
-                            item["corridor_id"],
-                            _parse_date(item["service_date"]),
-                            _parse_time(item["departure_time"]),
-                            _parse_time(item["arrival_time"]),
-                            item["direction"],
-                            item["operational_priority"] * 20,
-                            "SCHEDULED" if item["active"] else "INACTIVE",
-                        ))
-        except Exception as db_err:
-            logger.warning(f"Database write skipped/failed: {db_err}")
-
-    return {
-        "status": "success",
-        "message": f"Successfully created {len(created_items)} special train service(s)",
-        "created_count": len(created_items),
-        "created_ids": [i["special_train_id"] for i in created_items],
-        "special_trains": created_items,
-    }
+            for special_id in ids:
+                record_audit(actor_role=user.role_id, actor_name=user.name, method="POST", path="/special-trains/",
+                    action="CREATE_SPECIAL_TRAIN", target_type="special_train", target_id=special_id,
+                    outcome="SUCCESS", detail={"train_number": train_number, "corridor_id": corridor_id})
+        except Exception:
+            logger.exception("Special train audit write failed after committed creation")
+        return {"status": "success", "message": f"Successfully created {len(created)} special train service(s)",
+            "created_count": len(created), "created_ids": ids, "special_trains": created}
+    except HTTPException:
+        raise
+    except Exception as db_err:
+        logger.exception("Special train creation failed; transaction rolled back")
+        raise HTTPException(status_code=500, detail="Could not save special train service; no changes were committed") from db_err
 
 
 # ============================================================
@@ -892,69 +856,73 @@ def update_special_train(
     payload: SpecialTrainUpdateSchema,
     user: CurrentUser = Depends(get_current_user),
 ):
-    if payload.special_type is not None:
-        val = payload.special_type.strip().upper()
-        if val not in VALID_SPECIAL_TYPES:
-            raise HTTPException(status_code=400, detail="Invalid special_type")
+    _validate_service(payload)
+    fields = payload.model_dump(exclude_unset=True)
+    mapping = {"train_number": "train_number", "train_name": "train_name", "special_type": "event_type",
+        "corridor_id": "corridor_id", "service_date": "service_date", "arrival_time": "arrival_time",
+        "departure_time": "departure_time", "direction": "direction", "operational_priority": "operational_priority",
+        "reason": "event_name", "origin_station": "origin_station", "destination_station": "destination_station", "active": "status"}
+    updates, params = [], []
+    for key, value in fields.items():
+        column = mapping[key]
+        if key == "special_type" and value is not None:
+            value = value.strip().upper()
+        elif key == "direction" and value is not None:
+            value = value.strip().upper()
+        elif key == "service_date" and value is not None:
+            try: value = _parse_date(value)
+            except Exception as exc: raise HTTPException(status_code=400, detail="Invalid service_date; use YYYY-MM-DD") from exc
+        elif key in ("arrival_time", "departure_time") and value is not None:
+            value = _parse_time(value)
+        elif key == "operational_priority" and value is not None:
+            value = _priority_to_db(value)
+        elif key == "active":
+            value = "SCHEDULED" if value else "INACTIVE"
+        if key in ("train_number", "train_name", "special_type", "corridor_id", "direction") and not value:
+            raise HTTPException(status_code=400, detail=f"{key} cannot be empty")
+        updates.append(f"{column} = %s")
+        params.append(value)
+    if not updates:
+        raise HTTPException(status_code=400, detail="No supported fields were supplied")
+    updates.append("updated_at = CURRENT_TIMESTAMP")
 
-    if payload.direction is not None:
-        d = payload.direction.strip().upper()
-        if d not in VALID_DIRECTIONS:
-            raise HTTPException(status_code=400, detail="Direction must be UP or DOWN")
-
-    updated = _mem_store.update_train(special_train_id, payload, user)
-
-    conn = _get_db_connection()
-    if conn is not None:
-        try:
-            with conn:
-                with conn.cursor() as cur:
-                    updates = []
-                    params = []
-                    if payload.train_number is not None:
-                        updates.append("train_number = %s")
-                        params.append(payload.train_number.strip())
-                    if payload.train_name is not None:
-                        updates.append("train_name = %s")
-                        params.append(payload.train_name.strip())
-                    if payload.special_type is not None:
-                        updates.append("event_type = %s")
-                        params.append(payload.special_type.strip().upper())
-                    if payload.corridor_id is not None:
-                        updates.append("corridor_id = %s")
-                        params.append(payload.corridor_id)
-                    if payload.active is not None:
-                        updates.append("status = %s")
-                        params.append("SCHEDULED" if payload.active else "INACTIVE")
-                    if updates:
-                        params.append(special_train_id)
-                        cur.execute(
-                            f"UPDATE special_train_services SET {', '.join(updates)} WHERE special_id = %s",
-                            params,
-                        )
-        except Exception as db_err:
-            logger.warning(f"Database update skipped: {db_err}")
-
+    conn = _require_database()
     try:
-        record_audit(
-            actor_role=user.role_id,
-            actor_name=user.name,
-            method="PUT",
-            path=f"/special-trains/{special_train_id}",
-            action="UPDATE_SPECIAL_TRAIN",
-            target_type="special_train",
-            target_id=special_train_id,
-            outcome="SUCCESS",
-            detail=payload.model_dump(exclude_unset=True),
-        )
-    except Exception:
-        pass
-
-    return {
-        "status": "success",
-        "message": f"Special train {special_train_id} updated successfully",
-        "special_train": updated,
-    }
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT train_number, corridor_id, service_date, direction FROM special_train_services WHERE special_id = %s FOR UPDATE", (special_train_id,))
+                prior = cur.fetchone()
+                if not prior:
+                    raise HTTPException(status_code=404, detail=f"Special train {special_train_id} not found")
+                candidate = dict(zip(("train_number", "corridor_id", "service_date", "direction"), prior))
+                candidate.update({"train_number": fields.get("train_number", candidate["train_number"]),
+                    "corridor_id": fields.get("corridor_id", candidate["corridor_id"]),
+                    "service_date": _parse_date(fields["service_date"]) if fields.get("service_date") else candidate["service_date"],
+                    "direction": fields.get("direction", candidate["direction"])})
+                identity = f"{candidate['train_number']}|{candidate['corridor_id']}|{candidate['service_date']}|{candidate['direction']}"
+                cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s)::bigint)", (identity,))
+                cur.execute("""SELECT special_id FROM special_train_services WHERE train_number = %s AND corridor_id = %s
+                    AND service_date = %s AND direction = %s AND special_id <> %s LIMIT 1""",
+                    (candidate["train_number"], candidate["corridor_id"], candidate["service_date"], candidate["direction"], special_train_id))
+                if cur.fetchone():
+                    raise HTTPException(status_code=409, detail="A service with this train number, corridor, date, and direction already exists")
+                params.append(special_train_id)
+                cur.execute(f"UPDATE special_train_services SET {', '.join(updates)} WHERE special_id = %s RETURNING {SPECIAL_COLUMNS}", params)
+                row = cur.fetchone()
+                if not row:
+                    raise HTTPException(status_code=404, detail=f"Special train {special_train_id} not found")
+        try:
+            record_audit(actor_role=user.role_id, actor_name=user.name, method="PUT", path=f"/special-trains/{special_train_id}",
+                action="UPDATE_SPECIAL_TRAIN", target_type="special_train", target_id=special_train_id,
+                outcome="SUCCESS", detail=fields)
+        except Exception:
+            logger.exception("Special train audit write failed after committed update")
+        return {"status": "success", "message": f"Special train {special_train_id} updated successfully", "special_train": _format_special(row)}
+    except HTTPException:
+        raise
+    except Exception as db_err:
+        logger.exception("Special train update failed; transaction rolled back")
+        raise HTTPException(status_code=500, detail="Could not update special train; no changes were committed") from db_err
 
 
 # ============================================================
@@ -970,42 +938,27 @@ def toggle_special_train(
     payload: ActiveToggleSchema,
     user: CurrentUser = Depends(get_current_user),
 ):
-    updated = _mem_store.toggle_active(special_train_id, payload.active, user)
-
-    conn = _get_db_connection()
-    if conn is not None:
-        try:
-            with conn:
-                with conn.cursor() as cur:
-                    new_status = "SCHEDULED" if payload.active else "INACTIVE"
-                    cur.execute(
-                        "UPDATE special_train_services SET status = %s WHERE special_id = %s",
-                        (new_status, special_train_id),
-                    )
-        except Exception as db_err:
-            logger.warning(f"Database toggle skipped: {db_err}")
-
+    conn = _require_database()
     try:
-        record_audit(
-            actor_role=user.role_id,
-            actor_name=user.name,
-            method="PATCH",
-            path=f"/special-trains/{special_train_id}/active",
-            action="ACTIVATE_SPECIAL_TRAIN" if payload.active else "DEACTIVATE_SPECIAL_TRAIN",
-            target_type="special_train",
-            target_id=special_train_id,
-            outcome="SUCCESS",
-            detail={"active": payload.active},
-        )
-    except Exception:
-        pass
-
-    return {
-        "status": "success",
-        "special_train_id": special_train_id,
-        "active": payload.active,
-        "special_train": updated,
-    }
+        with conn:
+            with conn.cursor() as cur:
+                new_status = "SCHEDULED" if payload.active else "INACTIVE"
+                cur.execute(f"UPDATE special_train_services SET status = %s, updated_at = CURRENT_TIMESTAMP WHERE special_id = %s RETURNING {SPECIAL_COLUMNS}", (new_status, special_train_id))
+                row = cur.fetchone()
+                if not row:
+                    raise HTTPException(status_code=404, detail=f"Special train {special_train_id} not found")
+        try:
+            record_audit(actor_role=user.role_id, actor_name=user.name, method="PATCH", path=f"/special-trains/{special_train_id}/active",
+                action="ACTIVATE_SPECIAL_TRAIN" if payload.active else "DEACTIVATE_SPECIAL_TRAIN", target_type="special_train",
+                target_id=special_train_id, outcome="SUCCESS", detail={"active": payload.active})
+        except Exception:
+            logger.exception("Special train audit write failed after committed status change")
+        return {"status": "success", "special_train_id": special_train_id, "active": payload.active, "special_train": _format_special(row)}
+    except HTTPException:
+        raise
+    except Exception as db_err:
+        logger.exception("Special train toggle failed; transaction rolled back")
+        raise HTTPException(status_code=500, detail="Could not update special train status; no changes were committed") from db_err
 
 
 # ============================================================
@@ -1020,7 +973,7 @@ def get_special_train_impact(
     special_train_id: str,
     user: CurrentUser = Depends(get_current_user),
 ):
-    conn = _get_db_connection()
+    conn = _require_database()
     if conn is not None:
         try:
             with conn:
@@ -1105,7 +1058,6 @@ def get_special_train_impact(
                             "arrival_time": str(arrival_time),
                             "departure_time": str(departure_time),
                             "operational_priority": prio_val,
-                            "expected_passengers": 1200,
                             "active": train_status == "SCHEDULED",
                             "has_conflicts": bool(overlapping_blocks),
                             "overlapping_blocks_count": len(overlapping_blocks),
@@ -1118,6 +1070,7 @@ def get_special_train_impact(
         except HTTPException:
             raise
         except Exception as db_err:
-            logger.warning(f"Impact calculation DB error: {db_err}")
+            logger.exception("Impact calculation database query failed")
+            raise HTTPException(status_code=503, detail="Could not load special train impact from database") from db_err
 
-    return _mem_store.get_impact(special_train_id, user)
+    raise HTTPException(status_code=404, detail=f"Special train {special_train_id} not found")

@@ -2,7 +2,9 @@ import unittest
 
 from logic.ir_abps_pipeline import (
     InfeasibleOptimizationError,
+    OBSERVED_GOODS_FORECAST_SQL,
     group_compatible_requests,
+    load_goods_forecast_baseline,
     require_timetable_availability,
     maintenance_windows_conflict,
     select_conflict_free_candidate,
@@ -45,6 +47,76 @@ class IrAbpsPipelineTests(unittest.TestCase):
         self.assertEqual(valid, [])
         self.assertIn("not PENDING", excluded[0]["reason"])
 
+    def test_department_aliases_from_screenshot_requests_are_normalized(self):
+        for request_id, department, canonical in (
+            ("BR-002", "S&T", "SMMS"),
+            ("BR-AUTO-0038", "ENGINEERING", "TMS"),
+            ("BR-AUTO-0042", "S&T", "SMMS"),
+            ("BR-TRD", "TRD", "TDMS"),
+            ("BR-DEPT", "DEPT-TMS", "TMS"),
+        ):
+            row = request(request_id)
+            row["department"] = department
+            valid, excluded = validate_optimizer_requests([row])
+            self.assertEqual(excluded, [], request_id)
+            self.assertEqual(valid[0]["department"], canonical)
+
+        unsupported = request("BR-UNKNOWN")
+        unsupported["department"] = "OPERATIONS"
+        valid, excluded = validate_optimizer_requests([unsupported])
+        self.assertEqual(valid, [])
+        self.assertIn("unsupported department", excluded[0]["reason"])
+
+    def test_structured_track_line_and_section_chainage_are_used(self):
+        row = request("BR-STRUCTURED", line="", chainage="")
+        row["description"] = "Resolve Rail Crack on asset AST-0022"
+        row["track_line"] = "MAIN"
+        row["chainage_start_km"] = 6.38
+        row["chainage_end_km"] = 12.75
+        row["section_match_count"] = 1
+        valid, excluded = validate_optimizer_requests([row])
+        self.assertEqual(excluded, [])
+        self.assertEqual(valid[0]["track_line"], "main")
+        self.assertEqual(valid[0]["chainage_interval"], (6380, 12750))
+
+    def test_description_fallback_supports_existing_chainage_formats(self):
+        valid, excluded = validate_optimizer_requests([request("BR-FORMAT")])
+        self.assertEqual(excluded, [])
+        self.assertEqual(valid[0]["track_line"], "down main")
+        self.assertEqual(valid[0]["chainage_interval"], (412010, 414005))
+
+    def test_screenshot_requests_without_metadata_get_clear_single_errors(self):
+        rows = []
+        for request_id, department in (
+            ("BR-002", "S&T"),
+            ("BR-AUTO-0038", "ENGINEERING"),
+            ("BR-AUTO-0042", "S&T"),
+        ):
+            row = request(request_id, line="", chainage="")
+            row["department"] = department
+            row["description"] = "Investigate and repair asset"
+            row.pop("section_id")
+            row["section_match_count"] = 0
+            rows.append(row)
+        valid, excluded = validate_optimizer_requests(rows)
+        self.assertEqual(valid, [])
+        self.assertEqual([item["request_id"] for item in excluded], ["BR-002", "BR-AUTO-0038", "BR-AUTO-0042"])
+        for item in excluded:
+            self.assertIn("unique corridor section", item["reason"])
+            self.assertNotIn("missing section_id", item["reason"])
+            self.assertIn("missing track line", item["reason"])
+            self.assertIn("missing parseable chainage", item["reason"])
+            self.assertNotIn("unsupported department", item["reason"])
+
+    def test_duplicate_rows_from_a_join_are_reported_once_per_request(self):
+        duplicated = request("BR-AUTO-0038")
+        duplicate_join_row = {**duplicated, "section_id": "OTHER-SECTION"}
+        valid, excluded = validate_optimizer_requests([duplicated, duplicate_join_row])
+        self.assertEqual(len(valid), 1)
+        self.assertEqual(len(excluded), 1)
+        self.assertEqual(excluded[0]["request_id"], "BR-AUTO-0038")
+        self.assertEqual(excluded[0]["reason"].count("duplicate request_id"), 1)
+
     def test_same_scope_requests_cluster_across_departments(self):
         second = request("R-2", department="SMMS")
         second["team_id"] = "TEAM-2"
@@ -80,6 +152,45 @@ class IrAbpsPipelineTests(unittest.TestCase):
             require_timetable_availability(0, 0, "C01", "2026-10-24")
         self.assertEqual(caught.exception.stage, "CORRIDOR_MATCHING")
         require_timetable_availability(1, 0, "C01", "2026-10-24")
+
+    def test_same_day_persisted_goods_forecast_is_available_to_all_nine_candidates(self):
+        class ForecastCursor:
+            def __init__(self):
+                self.calls = []
+
+            def execute(self, sql, params):
+                self.calls.append((sql, params))
+
+            def fetchone(self):
+                return (18,)
+
+        cursor = ForecastCursor()
+        service_date = "2026-08-28"
+        baselines = [
+            load_goods_forecast_baseline(
+                cursor, "C01", service_date, require_observed=True
+            )
+            for _ in range(9)
+        ]
+        self.assertEqual(baselines, [18.0] * 9)
+        self.assertEqual(len(cursor.calls), 9)
+        self.assertTrue(all(call[0] == OBSERVED_GOODS_FORECAST_SQL for call in cursor.calls))
+        self.assertTrue(all(call[1] == ("C01", service_date) for call in cursor.calls))
+        self.assertIn("forecast_date <= %s", OBSERVED_GOODS_FORECAST_SQL)
+        self.assertNotIn("forecast_date < %s", OBSERVED_GOODS_FORECAST_SQL)
+
+    def test_required_goods_forecast_does_not_fall_back_when_no_observed_row_exists(self):
+        class MissingForecastCursor:
+            def execute(self, sql, params):
+                self.params = params
+
+            def fetchone(self):
+                return None
+
+        with self.assertRaisesRegex(RuntimeError, "on or before 2026-08-28"):
+            load_goods_forecast_baseline(
+                MissingForecastCursor(), "C01", "2026-08-28", require_observed=True
+            )
 
     def test_candidate_must_be_conflict_free_and_verified(self):
         candidates = [

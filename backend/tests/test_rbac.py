@@ -1,5 +1,6 @@
 import os
 import sys
+import jwt
 import pytest
 from fastapi.testclient import TestClient
 
@@ -7,7 +8,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from main import app
-from auth.security import create_access_token
+from auth.security import JWT_SECRET, create_access_token
 from auth.permissions import ROLE_TABLE
 
 # Use raise_server_exceptions=False so that DB offline errors (500) do not mask RBAC status codes
@@ -36,7 +37,14 @@ def test_token_validation():
     assert res.status_code == 401
 
     # Expired token
-    expired_token = create_access_token("admin", custom_ttl_minutes=-10)
+    expired_payload = jwt.decode(
+        create_access_token("admin"),
+        JWT_SECRET,
+        algorithms=["HS256"],
+        options={"verify_exp": False},
+    )
+    expired_payload["exp"] = 0
+    expired_token = jwt.encode(expired_payload, JWT_SECRET, algorithm="HS256")
     res = client.get("/auth/me", headers={"Authorization": f"Bearer {expired_token}"})
     assert res.status_code == 401
 
@@ -45,6 +53,7 @@ def test_token_validation():
 def test_unauthenticated_access_returns_401():
     PUBLIC_ROUTES = {
         ("/", "get"),
+        ("/api", "get"),
         ("/health", "get"),
         ("/ai/health", "get"),
         ("/auth/login", "post"),
@@ -53,14 +62,17 @@ def test_unauthenticated_access_returns_401():
         ("/docs/oauth2-redirect", "get"),
         ("/redoc", "get"),
     }
-
     openapi_paths = app.openapi().get("paths", {})
+    # Do not let this route sweep execute an endpoint that performs DDL.
+    schema_changing_routes = {("/debug/migrate", "get")}
     tested = 0
     for path, methods in openapi_paths.items():
         for method in methods.keys():
             if method in ("options", "head"):
                 continue
             if (path, method.lower()) in PUBLIC_ROUTES:
+                continue
+            if (path, method.lower()) in schema_changing_routes:
                 continue
 
             # Parameterize path with dummy id if needed
@@ -281,7 +293,10 @@ def test_signal_authentication_and_profile():
     assert not can_report_emergency_type("signal", "OHE Snapping")
 
     # Login via /auth/login
-    login_res = client.post("/auth/login", json={"role_id": "signal", "password": "12345"})
+    login_res = client.post(
+        "/auth/login",
+        json={"role_id": "signal", "password": os.environ["DEMO_PASSWORD"]},
+    )
     assert login_res.status_code == 200
     data = login_res.json()
     assert "access_token" in data

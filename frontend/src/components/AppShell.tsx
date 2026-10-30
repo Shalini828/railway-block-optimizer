@@ -68,8 +68,8 @@ export function AppShell({ children }: { children: ReactNode }) {
       setErrorMsg(
         err.message ||
           t(
-            "Security credentials invalid. Please enter valid password (12345).",
-            "सुरक्षा क्रेडेंशियल अमान्य हैं। कृपया सही पासवर्ड (12345) दर्ज करें।"
+            "Invalid role or password.",
+            "भूमिका या पासवर्ड अमान्य है।"
           )
       );
     } finally {
@@ -157,7 +157,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                     <Label htmlFor="password-input" className="text-xs font-bold uppercase text-slate-700 dark:text-slate-300">
                       {t("Officer Security Passcode", "अधिकारी सुरक्षा पासकोड")}
                     </Label>
-                    <span className="text-[10px] text-muted-foreground font-mono">{t("DEMO PASSCODE: 12345", "डेमो पासकोड: 12345")}</span>
+                    <span className="text-[10px] text-muted-foreground">{t("Use the demo password configured for this deployment.", "इस परिनियोजन के लिए कॉन्फ़िगर किया गया डेमो पासवर्ड उपयोग करें।")}</span>
                   </div>
                   <div className="relative">
                     <Input

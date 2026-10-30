@@ -17,6 +17,23 @@ from typing import Dict, Any, List, Optional, Tuple, Union
 
 logger = logging.getLogger(__name__)
 _logged_unknown_types = set()
+SPECIAL_TRAIN_TRAFFIC_SQL = """
+    SELECT
+        special_id AS special_train_id,
+        train_number,
+        train_name,
+        event_type AS special_type,
+        corridor_id,
+        service_date,
+        departure_time,
+        arrival_time,
+        direction,
+        operational_priority
+    FROM special_train_services
+    WHERE corridor_id = %s
+      AND service_date = %s
+      AND status = 'SCHEDULED'
+"""
 
 # ============================================================
 # TRAIN CLASSIFICATION CONFIGURATION
@@ -372,24 +389,7 @@ def load_traffic_for_day(
     # 2. Load active special train services
     specials_list = []
     try:
-        cursor.execute("""
-            SELECT
-                special_train_id,
-                train_number,
-                train_name,
-                                special_type,
-                corridor_id,
-                service_date,
-                departure_time,
-                arrival_time,
-                direction,
-                operational_priority,
-                                active
-            FROM special_train_services
-            WHERE corridor_id = %s
-              AND service_date = %s
-                            AND active = TRUE
-        """, (corridor_id, target_date))
+        cursor.execute(SPECIAL_TRAIN_TRAFFIC_SQL, (corridor_id, target_date))
 
         spec_rows = cursor.fetchall()
         spec_cols = [d[0] for d in cursor.description]

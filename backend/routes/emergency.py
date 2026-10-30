@@ -8,6 +8,7 @@ from typing import Optional, List, Dict, Any
 from dotenv import load_dotenv
 
 from db_config import DB_CONFIG
+from auth.permissions import can_report_emergency_type
 from auth.security import (
     require_permission,
     get_current_user,
@@ -201,7 +202,7 @@ def serialize_incident(row):
 
 @router.post(
     "/",
-    dependencies=[Depends(require_permission("emergency.view"))]
+    dependencies=[Depends(require_permission("emergency.report"))]
 )
 def create_emergency(
     payload: EmergencyCreate,
@@ -215,6 +216,12 @@ def create_emergency(
         or payload.incident_type
         or "Other Critical Hazard"
     )
+
+    if not can_report_emergency_type(user.role_id, emergency_type):
+        raise HTTPException(
+            status_code=403,
+            detail="You are not authorized to report this emergency type",
+        )
 
     section = (
         payload.section
@@ -388,7 +395,7 @@ def create_emergency(
 
 @router.post(
     "/create",
-    dependencies=[Depends(require_permission("emergency.view"))]
+    dependencies=[Depends(require_permission("emergency.report"))]
 )
 def create_emergency_compat(
     payload: EmergencyCreate,
@@ -685,11 +692,11 @@ def check_emergency_conflicts(
 
 @router.post(
     "/{incident_id}/resolve",
-    dependencies=[Depends(require_permission("emergency.view"))]
+    dependencies=[Depends(require_permission("emergency.resolve"))]
 )
 @router.patch(
     "/{incident_id}/resolve",
-    dependencies=[Depends(require_permission("emergency.view"))]
+    dependencies=[Depends(require_permission("emergency.resolve"))]
 )
 def resolve_emergency(
     incident_id: str,

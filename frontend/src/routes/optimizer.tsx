@@ -48,7 +48,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { apiFetch } from "@/lib/api";
-import { optimizationFailureState, type OptimizationRunState } from "@/lib/optimization-run-state";
+import { isTimetableUnavailableMessage, optimizationFailureState, type OptimizationRunState } from "@/lib/optimization-run-state";
 import {
   Sheet,
   SheetContent,
@@ -686,7 +686,7 @@ function OptimizerPage() {
             ? "Optimization is unavailable because PostgreSQL requisitions could not be confirmed."
             : !reqsLoaded
               ? "Requisition eligibility is still loading."
-              : "No eligible demands are waiting for optimization. Submit a valid requisition or ask an authorized planner to review a specific request for rework."),
+              : "No approved pending requests are waiting for optimization. Ask an authorized planner to approve a pending request."),
       );
       return;
     }
@@ -812,6 +812,7 @@ function OptimizerPage() {
   const scoringStage = runStagesById.get("CRITICALITY_SCORING");
   const clusteringStage = runStagesById.get("SHADOW_CLUSTERING");
   const matchingStage = runStagesById.get("CORRIDOR_MATCHING");
+  const timetableUnavailable = isTimetableUnavailableMessage(matchingStage?.details ?? apiErrorMessage);
   const persistenceStage = runStagesById.get("MEGABLOCK_PERSISTENCE");
   const pipelineStages = [
     {
@@ -845,7 +846,9 @@ function OptimizerPage() {
       id: 4,
       name: "CORRIDOR MATCHING",
       desc: matchingStage
-        ? `${String(matchingStage.candidate_windows_evaluated ?? 0)} windows evaluated · ${String(matchingStage.candidate_windows_rejected_for_train_conflict ?? 0)} train conflicts · ${String(matchingStage.candidate_windows_rejected_for_block_overlap ?? 0)} block overlaps`
+        ? timetableUnavailable
+          ? "Timetable data unavailable · train conflicts were not evaluated"
+          : `${String(matchingStage.candidate_windows_evaluated ?? 0)} windows evaluated · ${String(matchingStage.candidate_windows_rejected_for_train_conflict ?? 0)} train conflicts · ${String(matchingStage.candidate_windows_rejected_for_block_overlap ?? 0)} block overlaps`
         : "Timetable matching awaits a run",
       icon: Map,
       done: runStagesById.get("CORRIDOR_MATCHING")?.status === "COMPLETED",
@@ -1127,7 +1130,15 @@ function OptimizerPage() {
           <CardContent className="p-4 space-y-4">
             {apiErrorMessage && (
               <div role="alert" className="border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-900 dark:bg-red-950/30 dark:text-red-200">
-                Optimization failed: {apiErrorMessage}
+                {timetableUnavailable ? (
+                  <>
+                    <strong className="block">Timetable data unavailable</strong>
+                    <span>{apiErrorMessage}</span>
+                    <span className="block mt-1">No train conflict was established; conflict verification could not run without timetable evidence.</span>
+                  </>
+                ) : (
+                  <>Optimization failed: {apiErrorMessage}</>
+                )}
               </div>
             )}
             <div>

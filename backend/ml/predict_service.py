@@ -1,4 +1,5 @@
 import os
+from logic.scoring_engine import normalize_defect_severity
 
 try:
     import joblib
@@ -145,7 +146,8 @@ def heuristic_asset_risk(
     defects_list = defects or []
     urgent_defects = sum(
         1 for d in defects_list
-        if float(d.get("severity", 0) or 0) >= 4 or float(d.get("safety_impact", 0) or 0) >= 4
+        if normalize_defect_severity(d.get("severity")) >= 4
+        or normalize_defect_severity(d.get("safety_impact")) >= 4
     )
     repeat_failures = sum(1 for d in defects_list if d.get("repeat_failure"))
 
@@ -193,6 +195,8 @@ def predict_asset_risk(
             defects=defects or [],
             maintenance_history=maintenance_history or []
         )
+    except ValueError:
+        raise
     except Exception:
         features = {}
 

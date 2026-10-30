@@ -25,18 +25,20 @@ from psycopg.types.json import Jsonb
 from dotenv import load_dotenv
 from db_config import DB_CONFIG
 from logic.optimization_eligibility import (
+    OPTIMIZATION_ELIGIBLE_REVIEW_STATUS,
     OPTIMIZATION_ELIGIBLE_STATUS,
     commit_or_rollback,
     lock_pending_requests,
-    mark_request_optimized,
+    mark_included_requests_optimized,
 )
 from logic.ir_abps_pipeline import (
     InfeasibleOptimizationError,
+    count_timetable_records,
     group_compatible_requests,
     maintenance_windows_conflict,
-    require_timetable_availability,
     validate_optimizer_requests,
     validate_request_coverage,
+    load_goods_forecast_baseline,
 )
 from logic.traffic_intelligence import evaluate_window
 
@@ -99,7 +101,7 @@ cursor.execute("""
         , mt.department
         , mt.asset_id
         , mt.description
-        , br.section_id
+        , cs.section_id
         , (c.corridor_id IS NOT NULL) AS corridor_exists
         , (a.asset_id IS NOT NULL) AS asset_exists
         , (cs.section_id IS NOT NULL) AS section_exists
@@ -107,6 +109,11 @@ cursor.execute("""
         , br.safety_risk
         , mt.overdue_days
         , mt.task_type
+        , br.review_status
+        , cs.track_line
+        , cs.chainage_start_km
+        , cs.chainage_end_km
+        , cs.match_count AS section_match_count
     FROM block_requests br
 
     LEFT JOIN maintenance_tasks mt
@@ -115,17 +122,27 @@ cursor.execute("""
         ON c.corridor_id = br.corridor_id
     LEFT JOIN assets a
         ON a.asset_id = mt.asset_id
-    LEFT JOIN corridor_sections cs
-        ON cs.section_id = br.section_id
+    LEFT JOIN LATERAL (
+        SELECT
+            CASE WHEN COUNT(*) = 1 THEN MAX(section.section_id) END AS section_id,
+            CASE WHEN COUNT(*) = 1 THEN MAX(section.line) END AS track_line,
+            CASE WHEN COUNT(*) = 1 THEN MAX(section.from_km) END AS chainage_start_km,
+            CASE WHEN COUNT(*) = 1 THEN MAX(section.to_km) END AS chainage_end_km,
+            COUNT(*) AS match_count
+        FROM corridor_sections section
+        WHERE section.corridor_id = br.corridor_id
+          AND a.location_km BETWEEN section.from_km AND section.to_km
+    ) cs ON TRUE
 
-    WHERE br.request_status = %s
+    WHERE UPPER(COALESCE(br.request_status, '')) = %s
+      AND UPPER(COALESCE(br.review_status, '')) = %s
 
     ORDER BY
         br.corridor_id,
         br.requested_date,
         mt.priority_score DESC,
         br.requested_start
-""", (OPTIMIZATION_ELIGIBLE_STATUS,))
+""", (OPTIMIZATION_ELIGIBLE_STATUS, OPTIMIZATION_ELIGIBLE_REVIEW_STATUS))
 
 requests = cursor.fetchall()
 
@@ -153,6 +170,11 @@ ingested_request_rows = [
         "safety_risk": row[18],
         "overdue_days": row[19],
         "task_type": row[20],
+        "review_status": row[21],
+        "track_line": row[22],
+        "chainage_start_km": row[23],
+        "chainage_end_km": row[24],
+        "section_match_count": row[25],
         "raw_request": row,
     }
     for row in requests
@@ -356,33 +378,12 @@ def calculate_goods_impact(
     Get predicted goods traffic for this corridor/time.
     """
 
-    previous_day_demand = None
-
-    cursor.execute("""
-        SELECT expected_goods_trains
-        FROM goods_train_forecast
-        WHERE corridor_id = %s
-          AND forecast_date < %s
-        ORDER BY forecast_date DESC, forecast_id DESC
-        LIMIT 1
-    """, (
+    previous_day_demand = load_goods_forecast_baseline(
+        cursor,
         corridor_id,
         block_date,
-    ))
-
-    previous_row = cursor.fetchone()
-
-    if previous_row:
-        previous_day_demand = safe_float(
-            previous_row[0],
-            0.0
-        )
-    elif require_observed_forecast:
-        raise RuntimeError(
-            f"No persisted goods forecast is available for corridor {corridor_id} before {block_date}."
-        )
-    else:
-        previous_day_demand = 20.0
+        require_observed=require_observed_forecast,
+    )
 
     cursor.execute("""
         SELECT traffic_level
@@ -2319,33 +2320,6 @@ for group in groups:
     if duration < 0:
         duration += 1440
 
-    # Do not interpret an empty conflict result as a verified safe window
-    # when there is no persisted timetable for this corridor and date.
-    try:
-        cursor.execute(
-            "SELECT COUNT(*) FROM trains WHERE corridor_id = %s AND travel_date = %s",
-            (corridor, block_date),
-        )
-        regular_train_count = int((cursor.fetchone() or [0])[0] or 0)
-        cursor.execute(
-            "SELECT COUNT(*) FROM special_train_services WHERE corridor_id = %s AND service_date = %s AND active = TRUE",
-            (corridor, block_date),
-        )
-        special_train_count = int((cursor.fetchone() or [0])[0] or 0)
-    except Exception as exc:
-        rollback_safely()
-        raise InfeasibleOptimizationError(
-            f"Train timetable availability could not be checked for corridor {corridor} on {block_date}: {exc}",
-            stage="CORRIDOR_MATCHING",
-            details={"corridor_id": str(corridor), "service_date": str(block_date)},
-        ) from exc
-    require_timetable_availability(
-        regular_train_count,
-        special_train_count,
-        corridor,
-        block_date,
-    )
-
     # ======================================
     # CANDIDATE WINDOW OPTIMIZATION
     # ======================================
@@ -2357,6 +2331,61 @@ for group in groups:
         search_before_minutes=120,
         search_after_minutes=120
     )
+
+    # Do not interpret an empty conflict result as a verified safe window
+    # when there is no persisted timetable for this corridor and date.
+    try:
+        regular_train_count, special_train_count = count_timetable_records(
+            cursor, corridor, block_date
+        )
+    except Exception as exc:
+        rollback_safely()
+        evidence = [
+            {
+                "start": str(candidate.get("start")),
+                "end": str(candidate.get("end")),
+                "status": "REJECTED",
+                "reason": f"Timetable evidence lookup failed: {exc}",
+            }
+            for candidate in candidate_windows
+        ]
+        raise InfeasibleOptimizationError(
+            f"Train timetable availability could not be checked for corridor {corridor} on {block_date}: {exc}",
+            stage="CORRIDOR_MATCHING",
+            details={
+                "corridor_id": str(corridor),
+                "service_date": str(block_date),
+                "candidate_evaluations": evidence,
+            },
+        ) from exc
+    if regular_train_count + special_train_count <= 0:
+        evidence = [
+            {
+                "start": str(candidate.get("start")),
+                "end": str(candidate.get("end")),
+                "status": "REJECTED",
+                "reason": (
+                    "No timetable evidence for this corridor and service date "
+                    f"(regular trains={regular_train_count}, scheduled special trains={special_train_count})."
+                ),
+            }
+            for candidate in candidate_windows
+        ]
+        raise InfeasibleOptimizationError(
+            f"No train timetable rows are available for corridor {corridor} on {block_date}: "
+            f"trains rows={regular_train_count} (corridor_id={corridor!r}, travel_date={block_date}); "
+            f"scheduled special_train_services rows={special_train_count} "
+            f"(corridor_id={corridor!r}, service_date={block_date}, status='SCHEDULED'). "
+            "Candidate windows cannot be verified and no plan was saved.",
+            stage="CORRIDOR_MATCHING",
+            details={
+                "corridor_id": str(corridor),
+                "service_date": str(block_date),
+                "regular_train_count": regular_train_count,
+                "scheduled_special_train_count": special_train_count,
+                "candidate_evaluations": evidence,
+            },
+        )
 
     print()
     print(
@@ -2458,6 +2487,7 @@ for group in groups:
     candidate_windows_rejected_for_train_conflict = 0
     candidate_windows_rejected_for_block_overlap = 0
     candidate_scoring_errors = []
+    candidate_evaluations = []
 
     print()
     print(
@@ -2471,6 +2501,38 @@ for group in groups:
         candidate_duration = candidate["duration"]
 
         if candidate_duration <= 0:
+            candidate_evaluations.append({
+                "start": str(candidate.get("start")),
+                "end": str(candidate.get("end")),
+                "status": "REJECTED",
+                "reason": f"Invalid candidate duration: {candidate_duration} minutes.",
+            })
+            continue
+
+        try:
+            candidate_start_minutes = time_to_minutes(candidate["start"])
+            candidate_end_minutes = time_to_minutes(candidate["end"])
+        except (KeyError, TypeError, ValueError, IndexError) as exc:
+            candidate_evaluations.append({
+                "start": str(candidate.get("start")),
+                "end": str(candidate.get("end")),
+                "status": "REJECTED",
+                "reason": f"Invalid candidate time window: {exc}",
+            })
+            continue
+        if candidate_end_minutes <= candidate_start_minutes:
+            candidate_end_minutes += 1440
+        if candidate_end_minutes - candidate_start_minutes != candidate_duration:
+            candidate_evaluations.append({
+                "start": str(candidate.get("start")),
+                "end": str(candidate.get("end")),
+                "status": "REJECTED",
+                "reason": (
+                    "Invalid candidate time window: calculated duration "
+                    f"{candidate_end_minutes - candidate_start_minutes} does not match "
+                    f"candidate duration {candidate_duration} minutes."
+                ),
+            })
             continue
 
         candidate_utilization = round(
@@ -2498,16 +2560,31 @@ for group in groups:
 
         except psycopg.Error as exc:
             rollback_safely()
-            raise InfeasibleOptimizationError(
-                f"Operational database data could not be evaluated for candidate {candidate.get('start')}-{candidate.get('end')}: {exc}",
-                stage="CORRIDOR_MATCHING",
-                details={"corridor_id": str(corridor), "service_date": str(block_date)},
-            ) from exc
-        except Exception as exc:
+            reason = f"Operational database data could not be evaluated: {exc}"
             candidate_scoring_errors.append({
                 "start": str(candidate.get("start")),
                 "end": str(candidate.get("end")),
-                "reason": str(exc),
+                "reason": reason,
+            })
+            candidate_evaluations.append({
+                "start": str(candidate.get("start")),
+                "end": str(candidate.get("end")),
+                "status": "REJECTED",
+                "reason": reason,
+            })
+            continue
+        except Exception as exc:
+            reason = f"Candidate scoring failed: {type(exc).__name__}: {exc}"
+            candidate_scoring_errors.append({
+                "start": str(candidate.get("start")),
+                "end": str(candidate.get("end")),
+                "reason": reason,
+            })
+            candidate_evaluations.append({
+                "start": str(candidate.get("start")),
+                "end": str(candidate.get("end")),
+                "status": "REJECTED",
+                "reason": reason,
             })
             continue
 
@@ -2517,15 +2594,63 @@ for group in groups:
 
         if result.get("conflict_check_status") != "VERIFIED":
             candidate_results.pop()
+            candidate_evaluations.append({
+                "start": str(candidate.get("start")),
+                "end": str(candidate.get("end")),
+                "status": "REJECTED",
+                "reason": result.get("conflict_check_reason")
+                or f"Train conflict check was not verified (status={result.get('conflict_check_status')!r}).",
+            })
             continue
-        if int(result.get("conflict_count", 0) or 0) > 0:
+        try:
+            conflict_count = int(result.get("conflict_count", 0) or 0)
+        except (TypeError, ValueError) as exc:
+            candidate_results.pop()
+            candidate_evaluations.append({
+                "start": str(result.get("start")),
+                "end": str(result.get("end")),
+                "status": "REJECTED",
+                "reason": f"Invalid train-conflict evidence: conflict_count is not an integer ({exc}).",
+            })
+            continue
+        if conflict_count > 0:
             candidate_results.pop()
             candidate_windows_rejected_for_train_conflict += 1
+            candidate_evaluations.append({
+                "start": str(result["start"]),
+                "end": str(result["end"]),
+                "status": "REJECTED",
+                "reason": f"{conflict_count} train conflict(s) found.",
+                "conflicts": [str(conflict) for conflict in result.get("conflicts", [])],
+            })
             continue
-        candidate_start_minutes = time_to_minutes(result["start"])
-        candidate_end_minutes = time_to_minutes(result["end"])
+        try:
+            candidate_start_minutes = time_to_minutes(result["start"])
+            candidate_end_minutes = time_to_minutes(result["end"])
+        except (KeyError, TypeError, ValueError, IndexError) as exc:
+            candidate_results.pop()
+            candidate_evaluations.append({
+                "start": str(result.get("start")),
+                "end": str(result.get("end")),
+                "status": "REJECTED",
+                "reason": f"Invalid scored time window: {exc}",
+            })
+            continue
         if candidate_end_minutes <= candidate_start_minutes:
             candidate_end_minutes += 1440
+        if candidate_end_minutes - candidate_start_minutes != candidate_duration:
+            candidate_results.pop()
+            candidate_evaluations.append({
+                "start": str(result.get("start")),
+                "end": str(result.get("end")),
+                "status": "REJECTED",
+                "reason": (
+                    "Invalid scored time window: calculated duration "
+                    f"{candidate_end_minutes - candidate_start_minutes} does not match "
+                    f"candidate duration {candidate_duration} minutes."
+                ),
+            })
+            continue
         line, interval = group["track_line"], group["chainage_interval"]
         candidate_window = {
             "corridor": corridor,
@@ -2535,14 +2660,32 @@ for group in groups:
             "start_minutes": candidate_start_minutes,
             "end_minutes": candidate_end_minutes,
         }
-        overlaps_existing_block = any(
-            maintenance_windows_conflict(candidate_window, existing)
-            for existing in selected_maintenance_windows
-        )
-        if overlaps_existing_block:
+        overlapping_blocks = [
+            existing for existing in selected_maintenance_windows
+            if maintenance_windows_conflict(candidate_window, existing)
+        ]
+        if overlapping_blocks:
             candidate_results.pop()
             candidate_windows_rejected_for_block_overlap += 1
+            candidate_evaluations.append({
+                "start": str(result["start"]),
+                "end": str(result["end"]),
+                "status": "REJECTED",
+                "reason": "Candidate overlaps an already selected maintenance block on the same track and chainage.",
+                "overlaps": [
+                    {"start": str(block.get("start")), "end": str(block.get("end")), "corridor": block.get("corridor"), "date": str(block.get("date"))}
+                    for block in overlapping_blocks
+                ],
+            })
             continue
+
+        candidate_evaluations.append({
+            "start": str(result["start"]),
+            "end": str(result["end"]),
+            "status": "ACCEPTED",
+            "reason": "Scoring completed; timetable and train-conflict checks were verified with no conflicts or selected-block overlap.",
+            "score": result["score"],
+        })
 
         print(
             f"  {str(result['start'])[:5]}-"
@@ -2560,11 +2703,22 @@ for group in groups:
 
     if not candidate_results:
         request_ids = [str(request[0]) for request in group["requests"]]
+        scoring_error_count = len(candidate_scoring_errors)
+        rejection_counts = {}
+        for item in candidate_evaluations:
+            reason = item["reason"]
+            rejection_counts[reason] = rejection_counts.get(reason, 0) + 1
+        rejection_summary = "; ".join(
+            f"{count} candidate(s): {reason}"
+            for reason, count in rejection_counts.items()
+        ) or "No candidate passed the feasibility checks."
         raise InfeasibleOptimizationError(
             f"No verified conflict-free maintenance window was found for requests {request_ids} "
             f"on corridor {corridor} at {block_date}. "
             f"Evaluated {candidate_windows_evaluated} candidate(s); "
-            f"{candidate_windows_rejected_for_train_conflict} had train conflicts. No plan was saved.",
+            f"{candidate_windows_rejected_for_train_conflict} had train conflicts, "
+            f"{candidate_windows_rejected_for_block_overlap} overlapped selected blocks, "
+            f"and {scoring_error_count} failed scoring. {rejection_summary} No plan was saved.",
             stage="CORRIDOR_MATCHING",
             details={
                 "request_ids": request_ids,
@@ -2572,6 +2726,18 @@ for group in groups:
                 "candidate_windows_rejected_for_train_conflict": candidate_windows_rejected_for_train_conflict,
                 "candidate_windows_rejected_for_block_overlap": candidate_windows_rejected_for_block_overlap,
                 "candidate_scoring_errors": candidate_scoring_errors,
+                "candidate_evaluations": candidate_evaluations,
+                "requested_window": {
+                    "start": str(group["start"]),
+                    "end": str(group["end"]),
+                    "duration_minutes": duration,
+                },
+                "track_line": group.get("track_line"),
+                "chainage_interval": group.get("chainage_interval"),
+                "timetable_evidence": {
+                    "regular_trains": regular_train_count,
+                    "scheduled_special_trains": special_train_count,
+                },
             },
         )
 
@@ -3569,14 +3735,17 @@ try:
         # SAVE
         # ==========================================
 
-        # MARK PROCESSED REQUESTS AS OPTIMIZED
-        # Only requests that actually appear in an optimized block are marked.
-        # The coverage check above prevents silent request loss.
-        for block in optimized_blocks:
-            for request in block["tasks"]:
-                request_id = request[0]
-
-                mark_request_optimized(cursor, request_id)
+        # Transition only approved eligible requests whose task links were
+        # included in the persisted blocks, within this same transaction.
+        included_request_ids = [
+            str(request[0])
+            for block in optimized_blocks
+            for request in block["tasks"]
+        ]
+        eligible_request_ids = {str(request[0]) for request in requests}
+        mark_included_requests_optimized(
+            cursor, included_request_ids, eligible_request_ids
+        )
 
 except Exception:
     connection.rollback()
@@ -3597,7 +3766,7 @@ pipeline_result = {
             "eligible": len(validated_ingested_rows),
             "skipped": 0,
             "rejected": 0,
-            "details": "Loaded unique persisted PENDING requisitions and validated task, department, asset, section, corridor, duration, and request status.",
+            "details": "Loaded unique persisted PENDING requisitions with APPROVED review status and validated task, department, asset, section, corridor, and duration.",
         },
         {
             "id": "CRITICALITY_SCORING",

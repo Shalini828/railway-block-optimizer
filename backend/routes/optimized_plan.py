@@ -663,6 +663,18 @@ class BlockApprovalRequest(BaseModel):
     approved_by: Optional[str] = None
 
 
+def check_controller_review_gate(block_id: str) -> bool:
+    """Return whether the controller endorsed this block, enforcing policy."""
+    review_summary = get_block_review_summary(block_id)
+    has_endorsement = review_summary.get("has_controller_endorsement", False)
+    if not has_endorsement and ENFORCE_CONTROLLER_REVIEW:
+        raise HTTPException(
+            status_code=409,
+            detail="Block has not yet been reviewed and endorsed by Chief Controller",
+        )
+    return has_endorsement
+
+
 # ============================================================
 # APPROVE BLOCK (FINAL AUTHORIZATION — ADMIN ONLY)
 # ============================================================
@@ -705,15 +717,8 @@ def approve_block(
                     detail="Block is already approved"
                 )
 
-            # Check controller review endorsement (soft-gate)
-            review_summary = get_block_review_summary(block_id)
-            has_endorsement = review_summary.get("has_controller_endorsement", False)
-
-            if not has_endorsement and ENFORCE_CONTROLLER_REVIEW:
-                raise HTTPException(
-                    status_code=409,
-                    detail="Block has not yet been reviewed and endorsed by Chief Controller",
-                )
+            # Enforce the shared controller review policy (soft-gate).
+            has_endorsement = check_controller_review_gate(block_id)
 
             approver_identity = f"{user.name} ({user.title})"
 

@@ -11,6 +11,11 @@ export interface OptimizationFailureState {
   stages?: Array<{ id: string; name: string; status: string; details?: string }>;
 }
 
+export function isTimetableUnavailableMessage(message: string | null | undefined): boolean {
+  if (!message) return false;
+  return /no train timetable rows are available|timetable availability could not be checked|timetable evidence[^.]*cannot be verified/i.test(message);
+}
+
 export function optimizationFailureState(detail: unknown, httpStatus: number): OptimizationFailureState {
   if (typeof detail === "object" && detail !== null) {
     const payload = detail as {

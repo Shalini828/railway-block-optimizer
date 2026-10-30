@@ -68,6 +68,31 @@ def normalize_criticality(value: Any) -> float:
     return float(mapping.get(value, 0))
 
 
+def normalize_defect_severity(value: Any) -> int:
+    """Convert the persisted defect severity category to the model's 0-5 scale."""
+    if value is None:
+        return 0
+    if isinstance(value, bool):
+        raise ValueError("Unsupported defect severity True/False; use a number from 0 to 5 or LOW, MEDIUM, HIGH, CRITICAL")
+
+    labels = {"LOW": 1, "MEDIUM": 2, "HIGH": 4, "CRITICAL": 5}
+    label = str(value).strip().upper()
+    if label in labels:
+        return labels[label]
+
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"Unsupported defect severity {value!r}; use a number from 0 to 5 or LOW, MEDIUM, HIGH, CRITICAL"
+        ) from exc
+    if not numeric.is_integer() or not 0 <= numeric <= 5:
+        raise ValueError(
+            f"Unsupported defect severity {value!r}; use a whole number from 0 to 5 or LOW, MEDIUM, HIGH, CRITICAL"
+        )
+    return int(numeric)
+
+
 def normalize_safety_risk(value: Any) -> float:
     """
     Convert safety risk from a 1-5 scale to 0-100.

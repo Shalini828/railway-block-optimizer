@@ -242,7 +242,7 @@ function DashboardPage() {
   const fetchData = async () => {
     setIsRefreshing(true);
     try {
-      const res = await apiFetch("/dashboard/kpis");
+      const res = await apiFetch("/dashboard/kpis", { cache: "no-store" });
       if (!res.ok) {
         throw new Error("Failed to fetch dashboard data");
       }

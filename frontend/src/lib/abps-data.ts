@@ -76,7 +76,7 @@ export type Requisition = {
   blockType: "Traffic Block" | "Power Block" | "Disconnection";
   duration: number; // hours
   crew: number;
-  criticality: "High" | "Medium" | "Low";
+  criticality: "Critical" | "High" | "Medium" | "Low";
   daysOverdue: number;
   tsrRisk: boolean;
   status: Status;

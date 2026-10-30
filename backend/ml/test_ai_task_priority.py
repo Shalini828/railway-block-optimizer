@@ -1,4 +1,4 @@
-from ai_task_priority import calculate_priority
+from ml.ai_task_priority import calculate_priority
 
 
 task = {

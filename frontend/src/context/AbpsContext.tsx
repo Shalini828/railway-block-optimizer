@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import {
   REQUISITIONS,
@@ -13,6 +13,15 @@ import {
 } from "@/lib/abps-data";
 
 import { apiFetch, setAuthToken, setUnauthorizedHandler } from "@/lib/api";
+import {
+  filterRequestsByDepartment,
+  getRequestNormalizationIssues,
+  isCurrentRequestRefresh,
+  normalizeBackendRequestFields,
+  normalizeRequestListResponse,
+  refreshAndFindPendingRequest,
+  updateIfCurrentRequestRefresh,
+} from "@/lib/block-request-ledger";
 
 export type Train = {
   id: string;
@@ -75,7 +84,7 @@ export type Ctx = {
 
   signedIn: boolean;
 
-  signIn: (id: RoleId, password?: string) => Promise<boolean>;
+  signIn: (id: RoleId, password: string) => Promise<boolean>;
 
   signOut: () => Promise<void>;
 
@@ -186,10 +195,12 @@ export function AbpsProvider({ children }: { children: ReactNode }) {
   const [signedOff, setSignedOff] = useState<string[]>([]);
 
   const [restored, setRestored] = useState(false);
+  const requestRefreshId = useRef(0);
 
   const refreshAll = async (): Promise<Requisition[] | null> => {
-    setReqsLoaded(false);
-    setReqsError(null);
+    const refreshId = ++requestRefreshId.current;
+    setReqsLoaded((current) => updateIfCurrentRequestRefresh(refreshId, requestRefreshId.current, () => false, current));
+    setReqsError((current) => updateIfCurrentRequestRefresh(refreshId, requestRefreshId.current, () => null, current));
     try {
       const [kpiRes, trainRes, reqsRes] = await Promise.all([
         apiFetch("/dashboard/kpis"),
@@ -199,8 +210,11 @@ export function AbpsProvider({ children }: { children: ReactNode }) {
         apiFetch("/block-requests/"),
       ]);
 
+      if (!isCurrentRequestRefresh(refreshId, requestRefreshId.current)) return null;
+
       if (kpiRes.ok) {
         const data = await kpiRes.json();
+        if (!isCurrentRequestRefresh(refreshId, requestRefreshId.current)) return null;
 
         setIsDemoMode(Boolean(data.is_demo));
 
@@ -221,6 +235,7 @@ export function AbpsProvider({ children }: { children: ReactNode }) {
 
       if (trainRes.ok) {
         const trainData = await trainRes.json();
+        if (!isCurrentRequestRefresh(refreshId, requestRefreshId.current)) return null;
 
         const trainList = Array.isArray(trainData)
           ? trainData
@@ -234,24 +249,42 @@ export function AbpsProvider({ children }: { children: ReactNode }) {
       if (reqsRes.ok) {
         const reqData = await reqsRes.json();
 
-        const rows = Array.isArray(reqData)
-          ? reqData
-          : Array.isArray(reqData?.requests)
-            ? reqData.requests
-            : [];
+        if (!isCurrentRequestRefresh(refreshId, requestRefreshId.current)) return null;
+
+        const rows = normalizeRequestListResponse(reqData);
+        if (!rows) {
+          const message = "The backend returned a malformed requisition list.";
+          setReqs((current) => updateIfCurrentRequestRefresh(refreshId, requestRefreshId.current, () => [], current));
+          setReqsError((current) => updateIfCurrentRequestRefresh(refreshId, requestRefreshId.current, () => message, current));
+          setReqsLoaded((current) => updateIfCurrentRequestRefresh(refreshId, requestRefreshId.current, () => true, current));
+          return null;
+        }
         const isDemoResponse = Boolean(reqData?.is_demo) ||
           rows.some((item: any) => item?.is_demo || item?.data_source === "SYNTHETIC_DEMO");
         setIsDemoMode(isDemoResponse);
         if (isDemoResponse) {
-          setReqs([]);
-          setReqsError("The backend returned demonstration requisitions; PostgreSQL data is unavailable.");
-          setReqsLoaded(true);
+          setReqs((current) => updateIfCurrentRequestRefresh(refreshId, requestRefreshId.current, () => [], current));
+          setReqsError((current) => updateIfCurrentRequestRefresh(refreshId, requestRefreshId.current, () => "The backend returned demonstration requisitions; PostgreSQL data is unavailable.", current));
+          setReqsLoaded((current) => updateIfCurrentRequestRefresh(refreshId, requestRefreshId.current, () => true, current));
+          return null;
+        }
+
+        const normalizedFields = rows.map(normalizeBackendRequestFields);
+        if (normalizedFields.some((fields) => fields === null)) {
+          const issues = rows.flatMap((item, index) => getRequestNormalizationIssues(item, index));
+          // Report only request IDs, field names, and validation categories; never log whole backend rows.
+          console.warn("Requisition list contains invalid required fields", issues);
+          const message = "The backend returned requisitions with missing or invalid status, ID, or department fields.";
+          setReqs((current) => updateIfCurrentRequestRefresh(refreshId, requestRefreshId.current, () => [], current));
+          setReqsError((current) => updateIfCurrentRequestRefresh(refreshId, requestRefreshId.current, () => message, current));
+          setReqsLoaded((current) => updateIfCurrentRequestRefresh(refreshId, requestRefreshId.current, () => true, current));
           return null;
         }
 
         // Always mirror the backend response, including an empty list.
         // Do not hide BR-AUTO records: these are real backend requisitions.
-        const mapped: Requisition[] = rows.map((item: any) => {
+        const mapped: Requisition[] = rows.map((item: any, index: number) => {
+          const normalized = normalizedFields[index]!;
           const minutes = Number(item?.requested_duration_min ?? item?.duration_min ?? 0);
 
           const rawCriticality = item?.criticality;
@@ -277,48 +310,8 @@ export function AbpsProvider({ children }: { children: ReactNode }) {
 
           const blockType = (item?.block_type as any) ?? "Traffic Block";
 
-          const rawStatus = String(item?.request_status ?? "")
-            .trim()
-            .toUpperCase()
-            .replace(/[\s-]+/g, "_");
-          const reviewStatus = String(item?.review_status ?? "").trim().toUpperCase();
-
-          const status: Requisition["status"] =
-            ["OPTIMIZED", "OPTIMISED", "CLUSTERED", "SHADOWED", "SCHEDULED"].includes(rawStatus)
-              ? "Clustered / Shadowed"
-              : ["APPROVED", "APPROVE", "ACCEPTED"].includes(rawStatus) ||
-                  (rawStatus === "PENDING" && reviewStatus === "APPROVED")
-                ? "Approved"
-                : ["ACTIVE", "IN_PROGRESS", "INPROGRESS", "STARTED"].includes(rawStatus)
-                ? "Active"
-                : ["COMPLETED", "CLOSED", "DONE"].includes(rawStatus)
-                  ? "Completed"
-                  : ["CANCELLED", "CANCELED"].includes(rawStatus)
-                    ? "Cancelled"
-                    : rawStatus === "REJECTED"
-                      ? "Rejected"
-                      : "Pending AI Scheduling";
-
-          const deptStr = String(
-  item?.department ??
-  item?.department_code ??
-  item?.department_id ??
-  item?.dept ??
-  ""
-).toUpperCase();
-
-          const dept: Requisition["dept"] = deptStr.includes("SMMS") || deptStr.includes("TEAM-002") || deptStr === "S&T"
-            ? "SMMS"
-            : deptStr.includes("TDMS") || deptStr.includes("TEAM-003")
-              ? "TDMS"
-              : "TMS";
-
           return {
-            id: String(item?.request_id ?? item?.id ?? "REQ-UNKNOWN"),
-
-            backendId: String(item?.request_id ?? item?.id ?? ""),
-
-            dept,
+            ...normalized,
 
             assetId: String(
   item?.asset_id ??
@@ -348,14 +341,6 @@ export function AbpsProvider({ children }: { children: ReactNode }) {
 
             tsrRisk,
 
-            status,
-
-            backendStatus: rawStatus,
-
-            optimizationEligible: rawStatus === "PENDING",
-
-            reviewStatus,
-
             score: item?.score
               ? Number(item.score)
               : criticalityScore({
@@ -372,24 +357,26 @@ export function AbpsProvider({ children }: { children: ReactNode }) {
           };
         });
 
-        setReqs(mapped);
-        setReqsLoaded(true);
-        setReqsError(null);
+        setReqs((current) => updateIfCurrentRequestRefresh(refreshId, requestRefreshId.current, () => mapped, current));
+        setReqsLoaded((current) => updateIfCurrentRequestRefresh(refreshId, requestRefreshId.current, () => true, current));
+        setReqsError((current) => updateIfCurrentRequestRefresh(refreshId, requestRefreshId.current, () => null, current));
         return mapped;
       }
 
       const responseError = await reqsRes.json().catch(() => null);
+      if (!isCurrentRequestRefresh(refreshId, requestRefreshId.current)) return null;
       const message = responseError?.detail ?? responseError?.message ?? `Could not load requisitions (${reqsRes.status})`;
-      setReqs([]);
-      setReqsError(String(message));
-      setReqsLoaded(true);
+      setReqs((current) => updateIfCurrentRequestRefresh(refreshId, requestRefreshId.current, () => [], current));
+      setReqsError((current) => updateIfCurrentRequestRefresh(refreshId, requestRefreshId.current, () => String(message), current));
+      setReqsLoaded((current) => updateIfCurrentRequestRefresh(refreshId, requestRefreshId.current, () => true, current));
       return null;
     } catch (e) {
+      if (!isCurrentRequestRefresh(refreshId, requestRefreshId.current)) return null;
       console.warn("refreshAll failed:", e);
       const message = e instanceof Error ? e.message : "Could not load requisitions";
-      setReqs([]);
-      setReqsError(message);
-      setReqsLoaded(true);
+      setReqs((current) => updateIfCurrentRequestRefresh(refreshId, requestRefreshId.current, () => [], current));
+      setReqsError((current) => updateIfCurrentRequestRefresh(refreshId, requestRefreshId.current, () => message, current));
+      setReqsLoaded((current) => updateIfCurrentRequestRefresh(refreshId, requestRefreshId.current, () => true, current));
       return null;
     }
   };
@@ -534,7 +521,7 @@ export function AbpsProvider({ children }: { children: ReactNode }) {
 
   // Authenticated signIn
 
-  const signIn = async (id: RoleId, password: string = "12345"): Promise<boolean> => {
+  const signIn = async (id: RoleId, password: string): Promise<boolean> => {
     try {
       const res = await apiFetch("/auth/login", {
         method: "POST",
@@ -545,7 +532,7 @@ export function AbpsProvider({ children }: { children: ReactNode }) {
       });
 
       if (!res.ok) {
-        let errMsg = "Security credentials invalid. Please enter valid password (12345).";
+        let errMsg = "Invalid role or password.";
 
         try {
           const errData = await res.json();
@@ -647,11 +634,7 @@ export function AbpsProvider({ children }: { children: ReactNode }) {
   // Scoped selectors for department roles
 
   const visibleReqs = useMemo(() => {
-    if (scope === "department" && dept) {
-      return reqs.filter((r) => r.dept === dept);
-    }
-
-    return reqs;
+    return filterRequestsByDepartment(reqs, scope, dept);
   }, [reqs, scope, dept]);
 
   const visiblePlan = useMemo(() => {
@@ -754,9 +737,9 @@ export function AbpsProvider({ children }: { children: ReactNode }) {
       if (!response.ok) {
         throw new Error(data?.detail ?? `Submission failed with status ${response.status}`);
       }
-      const refreshed = await refreshAll();
       const savedId = String(data?.request_id ?? data?.requisition?.request_id ?? "");
-      if (!savedId || !refreshed?.some((item) => item.backendId === savedId)) {
+      const refreshedRequest = await refreshAndFindPendingRequest(savedId, refreshAll);
+      if (!refreshedRequest) {
         throw new Error(
           savedId
             ? `Requisition ${savedId} was accepted but could not be confirmed in the ledger after refresh.`

@@ -168,11 +168,11 @@ def test_dedupe_and_inactive_specials():
                     ("direction",), ("operational_priority",)
                 ]
             elif "FROM special_train_services" in sql:
+                self.last_special_query = sql
                 self.description = [
-                    ("special_train_id",), ("train_number",), ("train_name",), ("corridor_id",),
-                    ("service_date",), ("arrival_time",), ("departure_time",), ("direction",),
-                    ("operational_priority",), ("special_type",), ("expected_passengers",),
-                    ("reason",), ("active",)
+                    ("special_train_id",), ("train_number",), ("train_name",), ("special_type",),
+                    ("corridor_id",), ("service_date",), ("departure_time",), ("arrival_time",),
+                    ("direction",), ("operational_priority",)
                 ]
 
         def fetchall(self):
@@ -180,10 +180,12 @@ def test_dedupe_and_inactive_specials():
                 self._query_index += 1
                 return [("TR-1", "12952", "Rajdhani Express", "Express", "CORR-001", "2026-09-20", time(10, 0), time(11, 0), "UP", 5)]
             else:
-                return [("SPL-1", "12952", "Rajdhani Festival Special", "CORR-001", date(2026, 9, 20), time(10, 0), time(11, 0), "UP", 5, "FESTIVAL", 1000, "Mela", True)]
+                return [("SPL-1", "12952", "Rajdhani Festival Special", "FESTIVAL", "CORR-001", date(2026, 9, 20), time(10, 0), time(11, 0), "UP", 5)]
 
     cursor = MockCursor()
     items = load_traffic_for_day(cursor, "CORR-001", "2026-09-20")
+    assert "status = 'SCHEDULED'" in cursor.last_special_query
+    assert "active" not in cursor.last_special_query.lower()
 
     # Should deduplicate and keep special_train_services
     assert len(items) == 1

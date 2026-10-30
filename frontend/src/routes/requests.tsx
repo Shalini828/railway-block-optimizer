@@ -46,6 +46,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { apiFetch } from "@/lib/api";
 import { summarizeRequisitions } from "@/lib/requisition-summary";
+import { refreshAndFindPendingRequest } from "@/lib/block-request-ledger";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -207,6 +208,26 @@ function RequestsPage() {
       );
       return;
     }
+    if (!assetId.trim()) {
+      toast.error(t("Please enter an asset / equipment tag.", "कृपया परिसंपत्ति / उपकरण टैग दर्ज करें।"));
+      return;
+    }
+
+    const durationHours = Number(duration);
+    const crewCount = Number(crew);
+    const overdueDays = Number(overdue);
+    if (!Number.isFinite(durationHours) || durationHours <= 0 || durationHours > 4) {
+      toast.error(t("Duration must be greater than 0 and no more than 4 hours.", "अवधि 0 से अधिक और अधिकतम 4 घंटे होनी चाहिए।"));
+      return;
+    }
+    if (!Number.isInteger(crewCount) || crewCount <= 0) {
+      toast.error(t("Crew requirement must be a positive whole number.", "कर्मीदल की संख्या सकारात्मक पूर्णांक होनी चाहिए।"));
+      return;
+    }
+    if (!Number.isInteger(overdueDays) || overdueDays < 0) {
+      toast.error(t("Days overdue must be a non-negative whole number.", "विलंब के दिन गैर-ऋणात्मक पूर्णांक होने चाहिए।"));
+      return;
+    }
 
     setIsSubmitting(true);
 
@@ -214,16 +235,16 @@ function RequestsPage() {
 
     const payload = {
       dept: submissionDept,
-      assetId,
-      work,
+      assetId: assetId.trim(),
+      work: work.trim(),
       section,
       line,
       chainage,
       blockType,
-      duration: Number(duration) || 1,
-      crew: Number(crew) || 1,
+      duration: durationHours,
+      crew: crewCount,
       criticality,
-      daysOverdue: Number(overdue) || 0,
+      daysOverdue: overdueDays,
       tsrRisk: tsr,
       requestedBy: role.name,
     };
@@ -263,9 +284,8 @@ function RequestsPage() {
       );
 
       // PostgreSQL is the source of truth for the requisition ledger.
-      const refreshed = await refreshAll();
       const savedId = savedRequestId;
-      const refreshedRequest = refreshed?.find((r) => r.backendId === savedId);
+      const refreshedRequest = await refreshAndFindPendingRequest(savedId, refreshAll);
       if (!savedId || !refreshedRequest) {
         throw new Error(
           savedId
@@ -826,6 +846,9 @@ function RequestsPage() {
                   <Input
                     className="h-8 font-mono text-xs rounded-[2px] bg-background"
                     type="number"
+                    min={0.01}
+                    max={4}
+                    step={0.25}
                     value={duration}
                     onChange={(e) => setDuration(e.target.value)}
                   />
@@ -838,6 +861,8 @@ function RequestsPage() {
                   <Input
                     className="h-8 font-mono text-xs rounded-[2px] bg-background"
                     type="number"
+                    min={1}
+                    step={1}
                     value={crew}
                     onChange={(e) => setCrew(e.target.value)}
                   />
@@ -871,6 +896,8 @@ function RequestsPage() {
                   <Input
                     className="h-8 text-xs rounded-[2px] bg-background"
                     type="number"
+                    min={0}
+                    step={1}
                     value={overdue}
                     onChange={(e) => setOverdue(e.target.value)}
                   />
@@ -1309,13 +1336,15 @@ function RequestsPage() {
                 </p>
 
                 <div className="grid grid-cols-2 gap-2">
-                  <Button
-                    size="sm"
-                    className="font-bold bg-green-600 hover:bg-green-700 text-white"
-                    onClick={() => handleApprove(detail)}
-                  >
-                    ✓ APPROVE / OPTIMIZE
-                  </Button>
+                  {can("planner.approve") && (
+                    <Button
+                      size="sm"
+                      className="font-bold bg-green-600 hover:bg-green-700 text-white"
+                      onClick={() => handleApprove(detail)}
+                    >
+                      ✓ APPROVE / OPTIMIZE
+                    </Button>
+                  )}
 
                   <Button
                     size="sm"
@@ -1335,14 +1364,16 @@ function RequestsPage() {
                     CANCEL
                   </Button>
 
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="font-bold border-amber-300 text-amber-700 hover:bg-amber-50"
-                    onClick={() => setRejectingReq(detail)}
-                  >
-                    REJECT
-                  </Button>
+                  {can("planner.reject") && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="font-bold border-amber-300 text-amber-700 hover:bg-amber-50"
+                      onClick={() => setRejectingReq(detail)}
+                    >
+                      REJECT
+                    </Button>
+                  )}
                 </div>
               </div>
             </div>

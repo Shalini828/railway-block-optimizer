@@ -6,9 +6,9 @@ and permission dependencies.
 """
 
 import os
-import sys
 import secrets
 import logging
+import math
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -45,24 +45,57 @@ load_dotenv()
 # JWT CONFIGURATION
 # ============================================================
 
-JWT_SECRET = os.getenv("JWT_SECRET")
-
-if not JWT_SECRET:
-    JWT_SECRET = secrets.token_hex(32)
-
-    print(
-        "[WARNING] [RBAC] JWT_SECRET not configured in environment! "
-        f"Generated ephemeral secret for development: {JWT_SECRET[:8]}...",
-        file=sys.stderr,
-    )
+APP_ENV = (os.getenv("APP_ENV") or "production").strip().lower()
 
 
-clean_demo = (os.getenv("DEMO_PASSWORD") or "").strip().strip('"').strip("'")
-DEMO_PASSWORD = clean_demo if clean_demo else "12345"
+def _resolve_jwt_secret(app_env: str, configured_secret: Optional[str]) -> str:
+    secret = (configured_secret or "").strip()
+    if secret:
+        return secret
+    if app_env == "development":
+        # Local development may use a process-local key. Set JWT_SECRET when
+        # tokens need to survive restarts or be shared across workers.
+        return secrets.token_urlsafe(32)
+    raise RuntimeError("JWT_SECRET must be configured outside development mode")
 
-TOKEN_TTL_MINUTES = int(
-    os.getenv("TOKEN_TTL_MINUTES", "480")
+
+JWT_SECRET = _resolve_jwt_secret(APP_ENV, os.getenv("JWT_SECRET"))
+
+
+# Demo login is disabled unless an operator explicitly configures a password.
+DEMO_PASSWORD = os.getenv("DEMO_PASSWORD") or None
+
+
+def _positive_int_setting(name: str, default: int) -> int:
+    raw_value = os.getenv(name)
+    try:
+        value = int(raw_value) if raw_value is not None else default
+    except ValueError as exc:
+        raise RuntimeError(f"{name} must be a positive integer") from exc
+    if value <= 0:
+        raise RuntimeError(f"{name} must be a positive integer")
+    return value
+
+
+def _positive_float_setting(name: str, default: float) -> float:
+    raw_value = os.getenv(name)
+    try:
+        value = float(raw_value) if raw_value is not None else default
+    except ValueError as exc:
+        raise RuntimeError(f"{name} must be a positive finite number") from exc
+    if not math.isfinite(value) or value <= 0:
+        raise RuntimeError(f"{name} must be a positive finite number")
+    return value
+
+
+AUTH_RATE_LIMIT_MAX_FAILURES = _positive_int_setting(
+    "AUTH_RATE_LIMIT_MAX_FAILURES", 5
 )
+AUTH_RATE_LIMIT_WINDOW_SECONDS = _positive_float_setting(
+    "AUTH_RATE_LIMIT_WINDOW_SECONDS", 60.0
+)
+
+TOKEN_TTL_MINUTES = _positive_int_setting("TOKEN_TTL_MINUTES", 480)
 
 RBAC_ENFORCE = (
     os.getenv("RBAC_ENFORCE", "true")
@@ -79,19 +112,15 @@ ENFORCE_CONTROLLER_REVIEW = (
 )
 
 
-if not RBAC_ENFORCE:
-    print(
-        "\n"
-        + "=" * 70
-        + "\n"
-        " [CRITICAL WARNING] RBAC_ENFORCE is set to FALSE!\n"
-        " Role-based access control is running in SHADOW MODE "
-        "(logging only).\n"
-        " UNAUTHORIZED REQUESTS WILL NOT BE BLOCKED!\n"
-        + "=" * 70
-        + "\n",
-        file=sys.stderr,
-    )
+def _warn_if_rbac_disabled() -> None:
+    if not RBAC_ENFORCE:
+        logger.critical(
+            "RBAC_ENFORCE is false: role-based access control is in shadow "
+            "mode and unauthorized requests will not be blocked."
+        )
+
+
+_warn_if_rbac_disabled()
 
 
 # ============================================================
@@ -127,6 +156,8 @@ class CurrentUser:
     scope: str
     system: str
     permissions: Set[str]
+    # Optional individual database identity. Role-based demo login does not set it.
+    user_id: Optional[str] = None
 
 
 # ============================================================
@@ -169,6 +200,13 @@ def create_access_token(
         raise ValueError(
             f"Unknown role: {role_id}"
         )
+
+    if custom_ttl_minutes is not None and (
+        isinstance(custom_ttl_minutes, bool)
+        or not isinstance(custom_ttl_minutes, int)
+        or custom_ttl_minutes <= 0
+    ):
+        raise ValueError("custom_ttl_minutes must be a positive integer")
 
     now = datetime.now(timezone.utc)
 
@@ -222,11 +260,11 @@ def decode_access_token(token: str) -> dict:
             detail="Token has expired",
         )
 
-    except jwt.InvalidTokenError as exc:
+    except jwt.InvalidTokenError:
         raise HTTPException(
             status_code=401,
-            detail=f"Invalid authentication token: {str(exc)}",
-        )
+            detail="Invalid authentication token",
+        ) from None
 
 
 # ============================================================
@@ -325,6 +363,7 @@ def get_current_user(
         permissions=set(
             role_info["permissions"]
         ),
+        user_id=payload.get("user_id"),
     )
 
 

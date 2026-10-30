@@ -6,7 +6,6 @@ import {
   Calendar,
   Clock,
   MapPin,
-  Users,
   ShieldAlert,
   AlertTriangle,
   CheckCircle2,
@@ -73,7 +72,6 @@ interface SpecialTrainItem {
   departure_time: string | null;
   direction: string | null;
   operational_priority: number;
-  expected_passengers: number;
   reason: string | null;
   active: boolean;
   origin_station: string | null;
@@ -127,7 +125,6 @@ interface ImpactData {
   arrival_time: string;
   departure_time: string;
   operational_priority: number;
-  expected_passengers: number;
   active: boolean;
   has_conflicts: boolean;
   overlapping_blocks_count: number;
@@ -136,6 +133,19 @@ interface ImpactData {
   overlapping_requests: OverlappingRequest[];
   recommended_shift: RecommendedShift | null;
   workflow_note: string;
+}
+
+async function responseError(response: Response, fallback: string): Promise<Error> {
+  try {
+    const body = await response.json();
+    if (typeof body.detail === "string") return new Error(body.detail);
+    if (Array.isArray(body.detail)) {
+      return new Error(body.detail.map((item: any) => item.msg || JSON.stringify(item)).join("; "));
+    }
+  } catch {
+    // Use the status-based message below if the response is not JSON.
+  }
+  return new Error(`${fallback} (${response.status})`);
 }
 
 const CORRIDORS = [
@@ -205,7 +215,6 @@ function SpecialTrainsPage() {
   const [depTime, setDepTime] = useState("10:30");
   const [direction, setDirection] = useState("UP");
   const [priority, setPriority] = useState(4);
-  const [passengers, setPassengers] = useState(1200);
   const [originStation, setOriginStation] = useState("");
   const [destStation, setDestStation] = useState("");
   const [reason, setReason] = useState("");
@@ -311,17 +320,19 @@ setImpactData(data);
   const handleToggleActive = async (item: SpecialTrainItem) => {
     const newStatus = !item.active;
     try {
-      await apiFetch(`/special-trains/${item.special_train_id}/active`, {
+      const response = await apiFetch(`/special-trains/${item.special_train_id}/active`, {
         method: "PATCH",
         body: JSON.stringify({ active: newStatus }),
       });
+      if (!response.ok) throw await responseError(response, "Status update failed");
+      const saved = await response.json();
       toast.success(
         newStatus
           ? t(`Special train ${item.train_number} activated`, `विशेष रेलगाड़ी ${item.train_number} सक्रिय की गई`)
           : t(`Special train ${item.train_number} deactivated`, `विशेष रेलगाड़ी ${item.train_number} निष्क्रिय की गई`)
       );
       setTrains((prev) =>
-        prev.map((t) => (t.special_train_id === item.special_train_id ? { ...t, active: newStatus } : t))
+        prev.map((t) => (t.special_train_id === item.special_train_id ? saved.special_train : t))
       );
     } catch (err: any) {
       toast.error(err.message || t("Status update failed", "स्थिति अद्यतन विफल"));
@@ -335,7 +346,7 @@ setImpactData(data);
     try {
       if (editingTrain) {
         // PUT
-        await apiFetch(`/special-trains/${editingTrain.special_train_id}`, {
+        const response = await apiFetch(`/special-trains/${editingTrain.special_train_id}`, {
           method: "PUT",
           body: JSON.stringify({
             train_number: formNumber,
@@ -347,12 +358,12 @@ setImpactData(data);
             departure_time: depTime.length === 5 ? `${depTime}:00` : depTime,
             direction,
             operational_priority: Number(priority),
-            expected_passengers: Number(passengers),
             origin_station: originStation || null,
             destination_station: destStation || null,
             reason: reason || null,
           }),
         });
+        if (!response.ok) throw await responseError(response, "Update failed");
         toast.success(t("Special train updated successfully", "विशेष रेलगाड़ी सफलतापूर्वक अद्यतन की गई"));
       } else {
         // POST
@@ -365,7 +376,6 @@ setImpactData(data);
           departure_time: depTime.length === 5 ? `${depTime}:00` : depTime,
           direction,
           operational_priority: Number(priority),
-          expected_passengers: Number(passengers),
           origin_station: originStation || null,
           destination_station: destStation || null,
           reason: reason || null,
@@ -383,7 +393,7 @@ setImpactData(data);
 });
 
 if (!response.ok) {
-  throw new Error(`Failed to create special train (${response.status})`);
+  throw await responseError(response, "Failed to create special train");
 }
 
 const res = await response.json();
@@ -419,7 +429,6 @@ toast.success(
     setDepTime("10:30");
     setDirection("UP");
     setPriority(4);
-    setPassengers(1200);
     setOriginStation("");
     setDestStation("");
     setReason("");
@@ -437,7 +446,6 @@ toast.success(
     setDepTime(item.departure_time ? item.departure_time.slice(0, 5) : "10:30");
     setDirection(item.direction || "UP");
     setPriority(item.operational_priority);
-    setPassengers(item.expected_passengers);
     setOriginStation(item.origin_station || "");
     setDestStation(item.destination_station || "");
     setReason(item.reason || "");
@@ -547,11 +555,11 @@ toast.success(
                 {t("Expected Pax Volume", "अपेक्षित यात्री संख्या")}
               </p>
               <p className="text-2xl font-black text-amber-700 dark:text-amber-400 mt-0.5">
-                {trains.reduce((acc, curr) => acc + (curr.expected_passengers || 0), 0).toLocaleString()}
+                {t("Not stored in live schema", "डेटाबेस में संग्रहीत नहीं")}
               </p>
             </div>
             <div className="p-2.5 bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 rounded-[2px]">
-              <Users className="size-5" />
+              <TrainFront className="size-5" />
             </div>
           </CardContent>
         </Card>
@@ -638,7 +646,6 @@ toast.success(
                 <th className="p-3">{t("Service Date", "सेवा दिनांक")}</th>
                 <th className="p-3">{t("Path Timing", "पथ समय")}</th>
                 <th className="p-3 text-center">{t("Priority", "प्राथमिकता")}</th>
-                <th className="p-3 text-right">{t("Pax Volume", "यात्री संख्या")}</th>
                 <th className="p-3 text-center">{t("Status", "स्थिति")}</th>
                 <th className="p-3 text-right">{t("Actions", "कार्यवाही")}</th>
               </tr>
@@ -646,14 +653,14 @@ toast.success(
             <tbody className="divide-y divide-border">
               {loading ? (
                 <tr>
-                  <td colSpan={9} className="p-8 text-center text-muted-foreground">
+                  <td colSpan={8} className="p-8 text-center text-muted-foreground">
                     <RefreshCw className="size-5 animate-spin mx-auto mb-2 text-[#003366]" />
                     {t("Loading special trains database...", "विशेष रेलगाड़ी डेटा लोड हो रहा है...")}
                   </td>
                 </tr>
               ) : displayedTrains.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="p-8 text-center text-muted-foreground">
+                  <td colSpan={8} className="p-8 text-center text-muted-foreground">
                     <Sparkles className="size-6 text-muted-foreground/50 mx-auto mb-2" />
                     {t("No special train services found for the selected criteria.", "चयनित मानदंडों के लिए कोई विशेष रेलगाड़ी सेवा नहीं मिली।")}
                   </td>
@@ -720,11 +727,6 @@ toast.success(
                       >
                         P{item.operational_priority}
                       </Badge>
-                    </td>
-
-                    {/* Passengers */}
-                    <td className="p-3 text-right font-mono font-medium">
-                      {item.expected_passengers ? item.expected_passengers.toLocaleString() : "0"}
                     </td>
 
                     {/* Active Toggle */}
@@ -1146,10 +1148,9 @@ toast.success(
                 <div className="space-y-1">
                   <Label className="text-[11px] font-bold">{t("Expected Passengers", "अपेक्षित यात्री भार")}</Label>
                   <Input
-                    type="number"
-                    value={passengers}
-                    onChange={(e) => setPassengers(Number(e.target.value))}
-                    min={0}
+                    type="text"
+                    value="Not stored"
+                    disabled
                     className="h-8 text-xs font-mono"
                   />
                 </div>

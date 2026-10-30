@@ -1,5 +1,5 @@
 ﻿from types import SimpleNamespace
-from datetime import datetime
+from datetime import date
 import sys
 import unittest
 from unittest.mock import patch
@@ -8,10 +8,12 @@ from fastapi import HTTPException
 
 from auth.security import CurrentUser
 from logic.optimization_eligibility import (
+    OPTIMIZATION_ELIGIBLE_REVIEW_STATUS,
     OPTIMIZATION_ELIGIBLE_STATUS,
     commit_or_rollback,
     count_eligible_requests,
     lock_pending_requests,
+    mark_included_requests_optimized,
     mark_request_optimized,
 )
 from routes import block_requests, optimization, optimized_plan
@@ -22,21 +24,28 @@ class StatefulCursor:
     def __init__(self, connection):
         self.connection = connection
         self.rowcount = 0
+        self.calls = []
 
     def execute(self, sql, params=()):
+        self.calls.append((sql, params))
         if "SELECT request_id FROM block_requests" in sql:
             self.rows = [
                 (request_id,)
                 for request_id, status in self.connection.statuses.items()
                 if status == OPTIMIZATION_ELIGIBLE_STATUS
+                and self.connection.review_statuses.get(request_id)
+                == OPTIMIZATION_ELIGIBLE_REVIEW_STATUS
             ]
         elif "INSERT INTO optimized_blocks" in sql or "INSERT INTO block_tasks" in sql:
             self.connection.plan_saved = True
         elif "UPDATE block_requests" in sql:
             if not self.connection.plan_saved:
                 raise AssertionError("A request cannot be optimized before its plan is saved")
-            request_id, expected_status = params
-            if self.connection.statuses.get(request_id) == expected_status:
+            request_id, expected_status, expected_review_status = params
+            if (
+                self.connection.statuses.get(request_id) == expected_status
+                and self.connection.review_statuses.get(request_id) == expected_review_status
+            ):
                 self.connection.statuses[request_id] = "OPTIMIZED"
                 self.rowcount = 1
             else:
@@ -49,9 +58,15 @@ class StatefulCursor:
 
 
 class StatefulConnection:
-    def __init__(self, statuses):
+    def __init__(self, statuses, review_statuses=None):
         self.statuses = dict(statuses)
         self.initial_statuses = dict(statuses)
+        self.review_statuses = dict(review_statuses or {
+            request_id: "APPROVED"
+            for request_id, status in statuses.items()
+            if status == OPTIMIZATION_ELIGIBLE_STATUS
+        })
+        self.initial_review_statuses = dict(self.review_statuses)
         self.plan_saved = False
         self.initial_plan_saved = False
         self.commits = 0
@@ -63,11 +78,13 @@ class StatefulConnection:
     def commit(self):
         self.commits += 1
         self.initial_statuses = dict(self.statuses)
+        self.initial_review_statuses = dict(self.review_statuses)
         self.initial_plan_saved = self.plan_saved
 
     def rollback(self):
         self.rollbacks += 1
         self.statuses = dict(self.initial_statuses)
+        self.review_statuses = dict(self.initial_review_statuses)
         self.plan_saved = self.initial_plan_saved
 
 
@@ -79,27 +96,27 @@ class RequisitionInsertCursor:
 
     def execute(self, sql, params=()):
         self.calls.append((sql, params))
-        if "SELECT team_id" in sql:
-            self.row = ("TEAM-001",)
+        if "SELECT corridor_id, section_id" in sql:
+            self.row = None
+        elif "SELECT corridor_id FROM corridors" in sql:
+            self.row = (params[0],) if params[0] == "C02" else None
+        elif "SELECT team_id" in sql:
+            self.row = (params[0],)
         elif "SELECT asset_id" in sql:
             self.row = ("AST-0001",)
         elif "MAX(requested_date)" in sql or "MAX(requested_end)" in sql:
             self.row = (None,)
-        elif "SELECT task_id" in sql and "T-AUTO-%" in sql:
-            self.row = None
-        elif "SELECT request_id" in sql and "BR-AUTO-%" in sql:
-            self.row = None
         elif "INSERT INTO maintenance_tasks" in sql:
             self.row = None
         elif "INSERT INTO block_requests" in sql:
             self.connection.inserted_request_status = params[9]
-            self.connection.inserted_review_status = params[17]
+            self.connection.inserted_review_status = params[14]
             self.connection.returning_sql = sql
             self.row = (
-                "BR-AUTO-0001",
+                params[0],
                 self.connection.returned_request_status,
                 self.connection.returned_review_status,
-                datetime(2026, 10, 22, 12, 0),
+                date(2026, 10, 22),
             )
         else:
             raise AssertionError(f"Unexpected requisition SQL in test: {sql}")
@@ -149,7 +166,10 @@ class StatusCursor:
         pass
 
     def fetchall(self):
-        return list(self.status_counts.items())
+        return [
+            (*str(lifecycle).split("|", 1), count)
+            for lifecycle, count in self.status_counts.items()
+        ]
 
 
 class StatusConnection:
@@ -167,12 +187,18 @@ class StatusConnection:
 class ApprovalCursor:
     def __init__(self):
         self.calls = []
+        self.rowcount = 1
 
     def execute(self, sql, params=()):
         self.calls.append((sql, params))
 
     def fetchone(self):
         return ("R-2", "PENDING", "DEPT-TMS")
+
+    def fetchall(self):
+        if self.calls and "FROM users" in self.calls[-1][0]:
+            return [("USR-DB-ADMIN",)]
+        return []
 
     def close(self):
         pass
@@ -225,13 +251,40 @@ class EmptyPlanConnection:
 
 
 class OptimizationWorkflowTests(unittest.TestCase):
+    def test_corridor_failure_api_response_preserves_per_candidate_evidence(self):
+        evaluations = [
+            {
+                "start": f"{hour:02d}:00:00",
+                "end": f"{hour + 2:02d}:00:00",
+                "status": "REJECTED",
+                "reason": "Candidate scoring failed: RuntimeError: missing observed forecast",
+            }
+            for hour in range(0, 9)
+        ]
+        evidence = {
+            "request_ids": ["BR-AUTO-0038", "BR-002"],
+            "candidate_evaluations": evaluations,
+            "requested_window": {"start": "02:00:00", "end": "04:00:00", "duration_minutes": 120},
+            "track_line": "main",
+            "chainage_interval": (12750, 12750),
+            "timetable_evidence": {"regular_trains": 4, "scheduled_special_trains": 0},
+        }
+        response = optimization._pipeline_failure(
+            {}, "CORRIDOR_MATCHING", "No candidate passed feasibility checks.", evidence
+        )
+        self.assertEqual(response["details"]["candidate_evaluations"], evaluations)
+        self.assertEqual(
+            response["pipeline"]["stages"][3]["evidence"]["timetable_evidence"],
+            {"regular_trains": 4, "scheduled_special_trains": 0},
+        )
+
     def test_new_requisition_is_persisted_pending(self):
         connection = RequisitionInsertConnection()
         request = BlockRequestCreate(
             dept="TMS",
             assetId="AST-0001",
             work="Track inspection",
-            section="NDLS-GZB",
+            section="C02",
             line="Down Main",
             chainage="KM 412/10",
             blockType="Traffic Block",
@@ -258,12 +311,13 @@ class OptimizationWorkflowTests(unittest.TestCase):
 
         self.assertEqual(connection.inserted_request_status, "PENDING")
         self.assertEqual(connection.inserted_review_status, "PENDING")
-        self.assertIn("RETURNING request_id, request_status, review_status, created_at", connection.returning_sql)
+        self.assertIn("RETURNING request_id, request_status, review_status, submitted_date", connection.returning_sql)
+        self.assertEqual(result["team_id"], "ENG-01")
         self.assertTrue(connection.committed)
         self.assertFalse(connection.rolled_back)
-        self.assertEqual(result["request_id"], "BR-AUTO-0001")
+        self.assertRegex(result["request_id"], r"^BR-AUTO-[0-9A-F]{22}$")
         self.assertEqual(result["request_status"], "PENDING")
-        self.assertEqual(result["requisition"]["request_id"], "BR-AUTO-0001")
+        self.assertEqual(result["requisition"]["request_id"], result["request_id"])
         self.assertEqual(result["requisition"]["request_status"], "PENDING")
 
     def test_requisition_insert_rolls_back_if_database_did_not_persist_pending(self):
@@ -271,7 +325,7 @@ class OptimizationWorkflowTests(unittest.TestCase):
         connection.returned_request_status = "OPTIMIZED"
         request = BlockRequestCreate(
             dept="TMS", assetId="AST-0001", work="Track inspection",
-            section="NDLS-GZB", line="Down Main", chainage="KM 412/10",
+            section="C02", line="Down Main", chainage="KM 412/10",
             blockType="Traffic Block", duration=3, crew=8,
             criticality="High", daysOverdue=2, tsrRisk=True,
             requestedBy="Planning Officer",
@@ -315,24 +369,38 @@ class OptimizationWorkflowTests(unittest.TestCase):
     def test_only_persisted_pending_requests_are_eligible(self):
         self.assertEqual(
             count_eligible_requests(
-                {"PENDING": 2, "SUBMITTED": 7, "OPTIMIZED": 133, "CANCELLED": 8}
+                {
+                    "PENDING|APPROVED": 2,
+                    "PENDING|PENDING_REVIEW": 7,
+                    "PENDING|REWORK": 3,
+                    "OPTIMIZED|APPROVED": 133,
+                    "CANCELLED|APPROVED": 8,
+                }
             ),
             2,
         )
         self.assertEqual(
-            count_eligible_requests({"pending": 1, "PENDING_OPTIMIZATION": 9}), 1
+            count_eligible_requests({"pending|approved": 1, "PENDING_OPTIMIZATION|APPROVED": 9}), 1
         )
 
     def test_successful_transition_commits_and_cannot_repeat(self):
-        connection = StatefulConnection({"R-1": "PENDING"})
+        connection = StatefulConnection(
+            {"R-1": "PENDING", "R-EXCLUDED": "PENDING", "R-REWORK": "PENDING"},
+            {"R-1": "APPROVED", "R-EXCLUDED": "PENDING_REVIEW", "R-REWORK": "REWORK"},
+        )
         cursor = connection.cursor()
         with commit_or_rollback(connection):
             cursor.execute("INSERT INTO optimized_blocks VALUES (...) ")
             cursor.execute("INSERT INTO block_tasks VALUES (...) ")
             self.assertEqual(connection.statuses["R-1"], "PENDING")
             lock_pending_requests(cursor, {"R-1"})
-            mark_request_optimized(cursor, "R-1")
-        self.assertEqual(connection.statuses, {"R-1": "OPTIMIZED"})
+            mark_included_requests_optimized(cursor, ["R-1"], {"R-1"})
+        self.assertIn("review_status", cursor.calls[2][0])
+        self.assertEqual(cursor.calls[2][1], ("PENDING", "APPROVED"))
+        self.assertEqual(cursor.calls[3][1], ("R-1", "PENDING", "APPROVED"))
+        self.assertEqual(connection.statuses, {
+            "R-1": "OPTIMIZED", "R-EXCLUDED": "PENDING", "R-REWORK": "PENDING",
+        })
         self.assertEqual(connection.commits, 1)
         self.assertEqual(connection.rollbacks, 0)
         lock_pending_requests(cursor, set())
@@ -352,22 +420,41 @@ class OptimizationWorkflowTests(unittest.TestCase):
         self.assertEqual(connection.commits, 0)
         self.assertEqual(connection.rollbacks, 1)
 
+    def test_plan_cannot_transition_a_request_outside_approved_pending_set(self):
+        connection = StatefulConnection(
+            {"R-APPROVED": "PENDING", "R-REVIEW": "PENDING"},
+            {"R-APPROVED": "APPROVED", "R-REVIEW": "PENDING_REVIEW"},
+        )
+        cursor = connection.cursor()
+        with self.assertRaisesRegex(RuntimeError, "outside the approved pending set"):
+            with commit_or_rollback(connection):
+                cursor.execute("INSERT INTO optimized_blocks VALUES (...) ")
+                cursor.execute("INSERT INTO block_tasks VALUES (...) ")
+                mark_included_requests_optimized(
+                    cursor, ["R-APPROVED", "R-REVIEW"], {"R-APPROVED"}
+                )
+        self.assertEqual(connection.statuses["R-APPROVED"], "PENDING")
+        self.assertEqual(connection.statuses["R-REVIEW"], "PENDING")
+        self.assertEqual(connection.commits, 0)
+        self.assertEqual(connection.rollbacks, 1)
+
     def test_cancelled_and_rejected_requests_are_not_eligible_or_optimized(self):
         connection = StatefulConnection(
-            {"R-PENDING": "PENDING", "R-CANCELLED": "CANCELLED", "R-REJECTED": "REJECTED"}
+            {"R-PENDING": "PENDING", "R-REVIEW": "PENDING", "R-CANCELLED": "CANCELLED", "R-REJECTED": "REJECTED"},
+            {"R-PENDING": "APPROVED", "R-REVIEW": "PENDING_REVIEW"},
         )
         cursor = connection.cursor()
 
         lock_pending_requests(cursor, {"R-PENDING"})
         self.assertEqual([row[0] for row in cursor.fetchall()], ["R-PENDING"])
         cursor.execute("INSERT INTO optimized_blocks VALUES (...) ")
-        for request_id in ("R-CANCELLED", "R-REJECTED"):
+        for request_id in ("R-REVIEW", "R-CANCELLED", "R-REJECTED"):
             with self.assertRaisesRegex(RuntimeError, "no longer pending"):
                 mark_request_optimized(cursor, request_id)
 
         self.assertEqual(
             connection.statuses,
-            {"R-PENDING": "PENDING", "R-CANCELLED": "CANCELLED", "R-REJECTED": "REJECTED"},
+            {"R-PENDING": "PENDING", "R-REVIEW": "PENDING", "R-CANCELLED": "CANCELLED", "R-REJECTED": "REJECTED"},
         )
 
     def test_optimization_preserves_existing_optimized_cancelled_and_rejected_rows(self):
@@ -397,7 +484,7 @@ class OptimizationWorkflowTests(unittest.TestCase):
 
     def test_no_eligible_requests_reports_counts_without_running_engine(self):
         connection = StatusConnection(
-            {"OPTIMIZED": 133, "CANCELLED": 8, "REJECTED": 2}
+            {"OPTIMIZED|APPROVED": 133, "CANCELLED|PENDING": 8, "REJECTED|PENDING": 2}
         )
         with patch.object(optimization, "get_connection", return_value=connection), patch.object(
             optimization.importlib,
@@ -408,10 +495,28 @@ class OptimizationWorkflowTests(unittest.TestCase):
                 optimization.run_optimization()
         self.assertEqual(caught.exception.status_code, 409)
         self.assertEqual(caught.exception.detail["code"], "NO_ELIGIBLE_DEMANDS")
-        self.assertIn("OPTIMIZED: 133", caught.exception.detail["message"])
+        self.assertIn("OPTIMIZED|APPROVED: 133", caught.exception.detail["message"])
         self.assertIn("No statuses were changed", caught.exception.detail["message"])
         self.assertEqual(caught.exception.detail["pipeline"]["stages"][-1]["status"], "SKIPPED")
         self.assertTrue(connection.closed)
+
+    def test_pending_requests_awaiting_review_do_not_run_optimizer(self):
+        connection = StatusConnection({
+            "PENDING|PENDING_REVIEW": 93,
+            "PENDING|REWORK": 1,
+            "OPTIMIZED|APPROVED": 4,
+        })
+        with patch.object(optimization, "get_connection", return_value=connection), patch.object(
+            optimization.importlib,
+            "import_module",
+            side_effect=AssertionError("optimizer must not run before approval"),
+        ):
+            with self.assertRaises(HTTPException) as caught:
+                optimization.run_optimization()
+        self.assertEqual(caught.exception.status_code, 409)
+        self.assertEqual(caught.exception.detail["code"], "NO_ELIGIBLE_DEMANDS")
+        self.assertEqual(caught.exception.detail["eligible_requests"], 0)
+        self.assertIn("PENDING|PENDING_REVIEW: 93", caught.exception.detail["message"])
 
     def test_approval_keeps_request_pending_until_plan_is_created(self):
         connection = ApprovalConnection()
@@ -422,19 +527,20 @@ class OptimizationWorkflowTests(unittest.TestCase):
             dept=None,
             scope="network",
             system="BDMS",
-            permissions={"requests.reject"},
+            permissions={"planner.approve"},
         )
         with patch.object(block_requests, "get_connection", return_value=connection):
             result = block_requests.approve_block_request("R-2", user)
-        update_sql = connection.test_cursor.calls[1][0]
+        update_sql = connection.test_cursor.calls[2][0]
         self.assertIn("review_status = 'APPROVED'", update_sql)
-        self.assertNotIn("request_status", update_sql)
+        self.assertNotIn("SET\n                request_status", update_sql)
+        self.assertIn("AND request_status = 'PENDING'", update_sql)
         self.assertEqual(result["request_status"], "PENDING")
         self.assertEqual(result["review_status"], "APPROVED")
         self.assertTrue(connection.committed)
 
     def test_optimizer_engine_failure_is_an_http_error(self):
-        connection = StatusConnection({"PENDING": 1})
+        connection = StatusConnection({"PENDING|APPROVED": 1})
         with patch.object(optimization, "get_connection", return_value=connection), patch.object(
             optimization.importlib,
             "import_module",
@@ -446,7 +552,7 @@ class OptimizationWorkflowTests(unittest.TestCase):
         self.assertIn("database write failed", caught.exception.detail["message"])
 
     def test_successful_engine_result_is_returned_without_fallback(self):
-        connection = StatusConnection({"PENDING": 1})
+        connection = StatusConnection({"PENDING|APPROVED": 1})
         block = {
             "block_id": "OPT-2026-10-22-ab12cd34-001",
             "duration": 90,
@@ -486,7 +592,7 @@ class OptimizationWorkflowTests(unittest.TestCase):
         self.assertEqual(result["pipeline"]["stages"][-1]["transaction_committed"], True)
 
     def test_api_rejects_engine_success_without_committed_pipeline_evidence(self):
-        connection = StatusConnection({"PENDING": 1})
+        connection = StatusConnection({"PENDING|APPROVED": 1})
         engine = SimpleNamespace(
             requests=[["R-4"]],
             optimized_blocks=[{"block_id": "B-1", "duration": 30, "utilization": 50, "train_impact": 0, "train_conflicts": 0}],

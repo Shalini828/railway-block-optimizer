@@ -1,4 +1,5 @@
 from datetime import date, datetime
+from logic.scoring_engine import normalize_defect_severity
 try:
     import pandas as pd
 except ImportError:
@@ -182,44 +183,8 @@ def build_asset_features(
 
     for defect in defects:
 
-        severity_value = defect.get("severity")
-
-        if isinstance(severity_value, str):
-            severity_map = {
-                "LOW": 1,
-                "MEDIUM": 2,
-                "HIGH": 4,
-                "CRITICAL": 5,
-            }
-
-            severity = severity_map.get(
-                severity_value.strip().upper(),
-                0
-            )
-        else:
-            severity = int(
-                severity_value or 0
-            )
-
-
-        safety_value = defect.get("safety_impact")
-
-        if isinstance(safety_value, str):
-            safety_map = {
-                "LOW": 1,
-                "MEDIUM": 2,
-                "HIGH": 4,
-                "CRITICAL": 5,
-            }
-
-            safety_impact = safety_map.get(
-                safety_value.strip().upper(),
-                0
-            )
-        else:
-            safety_impact = int(
-                safety_value or 0
-            )
+        severity = normalize_defect_severity(defect.get("severity"))
+        safety_impact = normalize_defect_severity(defect.get("safety_impact"))
 
         max_safety_impact = max(
             max_safety_impact,
