@@ -94,27 +94,6 @@ The frontend must feature a simulated AI Execution Engine button: **"Run IR-ABPS
 
 ---
 
-### 4. TECHNICAL & UI DESIGN SPECIFICATIONS
-
-- **UI Framework:** Clean modern dark/light mode dashboard inspired by IRCTC/Railways control rooms with a sleek Tailwind UI (Slate/Zinc neutral dark palette, Emerald green for safety/uptime, Amber for maintenance, Indigo/Sky for high-tech AI indicators).
-
-- **State Management:** Fully functional client-side React state (`useState`, `useContext`) pre-populated with realistic Indian Railways mock data (stations like NDLS, CNB, ALD, DDU, BSB; asset IDs like TRK-ENG-982, SIG-AXLE-401, OHE-MAST-112).
-
-- **Self-Contained Code:** Output clean, modular, and copy-pasteable React code with all sub-components, modal views, and mock data included in one cohesive deliverable.
-
-
-Create all the pages necessary for the website and make it clean and all the pages should work and have working buttons and should lead to other working pages
-
-This project was built with [Lovable](https://lovable.dev).
-
-## Build with Lovable
-
-Continue developing this project in the [Lovable editor](https://lovable.dev/projects/b9405552-0002-4319-9d36-94c248f96a1e).
-
-- **Ship faster**: describe what you want to build and Lovable handles the code.
-- **Stay in sync**: every change made in Lovable is committed straight to this repository.
-- **Full ownership**: this code is yours. Push to `main` on GitHub and your changes sync back into Lovable, ready for your next prompt.
-
 ## Development
 
 Prefer working locally? You need Node.js and npm — [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating).
